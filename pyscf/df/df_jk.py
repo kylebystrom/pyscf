@@ -64,7 +64,6 @@ def density_fit(mf, auxbasis=None, with_df=None, only_dfj=False):
     '''
     from pyscf import df
     from pyscf.scf import dhf
-    from pyscf.soscf import newton_ah
     assert(isinstance(mf, scf.hf.SCF))
 
     if with_df is None:
@@ -109,6 +108,10 @@ def density_fit(mf, auxbasis=None, with_df=None, only_dfj=False):
             self.with_df = df
             self.only_dfj = only_dfj
             self._keys = self._keys.union(['with_df', 'only_dfj'])
+
+        def reset(self, mol=None):
+            self.with_df.reset(mol)
+            return mf_class.reset(self, mol)
 
         def get_jk(self, mol=None, dm=None, hermi=1, with_j=True, with_k=True,
                    omega=None):
@@ -186,8 +189,14 @@ class _DFHF(object):
     MP2 = method_not_implemented
     CISD = method_not_implemented
     CCSD = method_not_implemented
-    CASCI = method_not_implemented
-    CASSCF = method_not_implemented
+
+    def CASCI(self, ncas, nelecas, auxbasis=None, ncore=None):
+        from pyscf import mcscf
+        return mcscf.DFCASCI(self, ncas, nelecas, auxbasis, ncore)
+
+    def CASSCF(self, ncas, nelecas, auxbasis=None, ncore=None, frozen=None):
+        from pyscf import mcscf
+        return mcscf.DFCASSCF(self, ncas, nelecas, auxbasis, ncore, frozen)
 
 
 def get_jk(dfobj, dm, hermi=1, with_j=True, with_k=True, direct_scf_tol=1e-13):

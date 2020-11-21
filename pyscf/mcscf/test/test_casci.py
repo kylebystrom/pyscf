@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Copyright 2014-2018 The PySCF Developers. All Rights Reserved.
+# Copyright 2014-2020 The PySCF Developers. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -95,6 +95,11 @@ class KnownValues(unittest.TestCase):
 
         self.assertAlmostEqual(float(abs(mo1-mo2).max()), 0, 9)
         self.assertAlmostEqual(ci1.ravel().dot(ci2.ravel()), 1, 9)
+
+        # Make sure that mc.mo_occ has been set and that the NOONs add to nelectron
+        mo_occ = getattr(mc1, "mo_occ", numpy.array([]))
+        self.assertNotEqual(mo_occ, numpy.array([]))
+        self.assertAlmostEqual(numpy.sum(mo_occ), mc1.mol.nelectron, 9)
 
     def test_multi_roots(self):
         mc1 = mcscf.CASCI(m, 4, 4)
@@ -218,6 +223,14 @@ class KnownValues(unittest.TestCase):
         self.assertAlmostEqual(mc.e_states[3], -108.83741684447352, 9)
         self.assertAlmostEqual(abs((civec[0]*mc.ci[0]).sum()), 1, 9)
         self.assertAlmostEqual(abs((civec[3]*mc.ci[3]).sum()), 1, 9)
+
+    def test_reset(self):
+        myci = mcscf.CASCI(scf.RHF(molsym), 4, 4).density_fit()
+        myci.reset(mol)
+        self.assertTrue(myci.mol is mol)
+        self.assertTrue(myci._scf.mol is mol)
+        self.assertTrue(myci.fcisolver.mol is mol)
+        self.assertTrue(myci.with_df.mol is mol)
 
 
 if __name__ == "__main__":

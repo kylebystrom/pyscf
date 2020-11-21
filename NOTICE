@@ -1,4 +1,4 @@
-Copyright 2014-2018 The PySCF Developers.
+Copyright 2014-2020 The PySCF Developers.
 PySCF (www.pyscf.org) was developed by:
 
 Qiming Sun (Princeton University; Caltech; Tencent America LLC)
@@ -53,10 +53,8 @@ Tianyu Zhu (Caltech)
 Lee-Ping Wang (UC Davis)
 Kevin Gasperich (University of Pittsburgh)
 Jesse Gorzinski (IBM)
-
-Developers who contribute debug/test code which are removed or not included in
-the source code
-
+Zhi Wang (University of Chicago)
+Max Scheurer (Ruprecht-Karls University)
+Peng Bao (Chinese Academy of Sciences)
 Jun Yang (Hong Kong University)
-
-
+Peter Pinski (HQS Quantum Simulations)

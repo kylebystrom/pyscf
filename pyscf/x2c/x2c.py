@@ -25,6 +25,7 @@ from pyscf.lib import logger
 from pyscf.scf import hf
 from pyscf.scf import dhf
 from pyscf.scf import _vhf
+from pyscf.data import nist
 from pyscf import __config__
 
 LINEAR_DEP_THRESHOLD = 1e-9
@@ -80,7 +81,13 @@ class X2C(lib.StreamObject):
         t = xmol.intor_symmetric('int1e_spsp_spinor') * .5
         v = xmol.intor_symmetric('int1e_nuc_spinor')
         w = xmol.intor_symmetric('int1e_spnucsp_spinor')
-        if 'ATOM' in self.approx.upper():
+        if 'get_xmat' in self.__dict__:
+            # If the get_xmat method is overwritten by user, build the X
+            # matrix with the external get_xmat method
+            x = self.get_xmat(xmol)
+            h1 = _get_hcore_fw(t, v, w, s, x, c)
+
+        elif 'ATOM' in self.approx.upper():
             atom_slices = xmol.offset_2c_by_atom()
             n2c = xmol.nao_2c()
             x = numpy.zeros((n2c,n2c), dtype=numpy.complex)
@@ -95,6 +102,7 @@ class X2C(lib.StreamObject):
                     w1 = z*xmol.intor('int1e_sprinvsp_spinor', shls_slice=shls_slice)
                 x[p0:p1,p0:p1] = _x2c1e_xmatrix(t1, v1, w1, s1, c)
             h1 = _get_hcore_fw(t, v, w, s, x, c)
+
         else:
             h1 = _x2c1e_get_hcore(t, v, w, s, c)
 
@@ -330,6 +338,7 @@ class X2C_UHF(hf.SCF):
         if self.verbose >= logger.WARN:
             self.check_sanity()
         self.opt = None
+        return self
 
     def dump_flags(self, verbose=None):
         hf.SCF.dump_flags(self, verbose)
@@ -473,6 +482,16 @@ class X2C_UHF(hf.SCF):
 
 UHF = X2C_UHF
 
+class X2C_RHF(X2C_UHF):
+    def __init__(self, mol):
+        if dhf.zquatev is None:
+            raise RuntimeError('zquatev library is required to perform Kramers-restricted X2C-RHF')
+
+    def _eigh(self, h, s):
+        return dhf.zquatev.solve_KR_FCSCE(self.mol, h, s)
+
+RHF = X2C_RHF
+
 try:
     from pyscf.dft import rks, dks, r_numint
     class X2C_UKS(X2C_UHF, rks.KohnShamDFT):
@@ -492,6 +511,17 @@ try:
         energy_elec = rks.energy_elec
 
     UKS = X2C_UKS
+
+    class X2C_RKS(X2C_UKS):
+        def __init__(self, mol):
+            if dhf.zquatev is None:
+                raise RuntimeError('zquatev library is required to perform Kramers-restricted X2C-RHF')
+
+        def _eigh(self, h, s):
+            return dhf.zquatev.solve_KR_FCSCE(self.mol, h, s)
+
+    RKS = X2C_RKS
+
 except ImportError:
     pass
 

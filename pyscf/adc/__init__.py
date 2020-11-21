@@ -26,8 +26,8 @@ Algebraic Diagrammatic Construction
 from pyscf import scf
 from pyscf.adc import uadc
 
-def ADC(mf, frozen=0, mo_coeff=None, mo_occ=None):
-    if (frozen != 0):
+def ADC(mf, frozen=None, mo_coeff=None, mo_occ=None):
+    if not (frozen is None or frozen == 0):
         raise NotImplementedError
 
     if isinstance(mf, scf.uhf.UHF):
@@ -36,11 +36,11 @@ def ADC(mf, frozen=0, mo_coeff=None, mo_occ=None):
         mf = scf.addons.convert_to_uhf(mf)
         return UADC(mf, frozen, mo_coeff, mo_occ)
 
+ADC.__doc__ = uadc.UADC.__doc__
 
-def UADC(mf, frozen=0, mo_coeff=None, mo_occ=None):
-    __doc__ = uadc.UADC.__doc__
 
-    if (frozen != 0):
+def UADC(mf, frozen=None, mo_coeff=None, mo_occ=None):
+    if not (frozen is None or frozen == 0):
         raise NotImplementedError
 
     from pyscf.soscf import newton_ah
@@ -52,3 +52,5 @@ def UADC(mf, frozen=0, mo_coeff=None, mo_occ=None):
         raise NotImplementedError('DF-UADC')
     else:
         return uadc.UADC(mf, frozen, mo_coeff, mo_occ)
+
+UADC.__doc__ = uadc.UADC.__doc__

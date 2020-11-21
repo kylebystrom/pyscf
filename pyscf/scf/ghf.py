@@ -508,7 +508,7 @@ class GHF(hf.SCF):
         from pyscf.scf import addons
         return addons.convert_to_ghf(mf, out=self)
 
-    def stability(self, verbose=None):
+    def stability(self, internal=None, external=None, verbose=None):
         from pyscf.scf.stability import ghf_stability
         return ghf_stability(self, verbose)
 
@@ -528,7 +528,6 @@ del(PRE_ORTH_METHOD)
 
 
 if __name__ == '__main__':
-    from pyscf import gto
     mol = gto.Mole()
     mol.verbose = 3
     mol.atom = 'H 0 0 0; H 0 0 1; O .5 .6 .2'

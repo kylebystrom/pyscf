@@ -43,7 +43,6 @@ from pyscf.lib import logger
 from pyscf.df import addons
 from pyscf.df.outcore import _guess_shell_ranges
 from pyscf.pbc.gto.cell import _estimate_rcut
-from pyscf.pbc import gto as pbcgto
 from pyscf.pbc import tools
 from pyscf.pbc.df import outcore
 from pyscf.pbc.df import ft_ao
@@ -51,7 +50,7 @@ from pyscf.pbc.df import aft
 from pyscf.pbc.df import df_jk
 from pyscf.pbc.df import df_ao2mo
 from pyscf.pbc.df.aft import estimate_eta, get_nuc
-from pyscf.pbc.df.df_jk import zdotCN, zdotNN, zdotNC
+from pyscf.pbc.df.df_jk import zdotCN
 from pyscf.pbc.lib.kpts_helper import (is_zero, gamma_point, member, unique,
                                        KPT_DIFF_TOL)
 from pyscf.pbc.df.aft import _sub_df_jk_
@@ -212,7 +211,7 @@ def _make_j3c(mydf, cell, auxcell, kptij_lst, cderi_file):
         try:
             j2c = scipy.linalg.cholesky(j2c, lower=True)
             j2ctag = 'CD'
-        except scipy.linalg.LinAlgError as e:
+        except scipy.linalg.LinAlgError:
             #msg =('===================================\n'
             #      'J-metric not positive definite.\n'
             #      'It is likely that mesh is not enough.\n'
@@ -327,7 +326,7 @@ def _make_j3c(mydf, cell, auxcell, kptij_lst, cderi_file):
         with lib.call_in_background(pw_contract) as compute:
             col1 = 0
             for istep, sh_range in enumerate(shranges):
-                log.debug1('int3c2e [%d/%d], AO [%d:%d], ncol = %d', \
+                log.debug1('int3c2e [%d/%d], AO [%d:%d], ncol = %d',
                            istep+1, len(shranges), *sh_range)
                 bstart, bend, ncol = sh_range
                 col0, col1 = col1, col1+ncol
@@ -533,11 +532,15 @@ class GDF(aft.AFTDF):
         self.auxcell = make_modrho_basis(self.cell, self.auxbasis,
                                          self.exp_to_discard)
 
+        # Remove duplicated k-points. Duplicated kpts may lead to a buffer
+        # located in incore.wrap_int3c larger than necessary. Integral code
+        # only fills necessary part of the buffer, leaving some space in the
+        # buffer unfilled.
+        uniq_idx = unique(self.kpts)[1]
+        kpts = numpy.asarray(self.kpts)[uniq_idx]
         if self.kpts_band is None:
-            kpts = self.kpts
             kband_uniq = numpy.zeros((0,3))
         else:
-            kpts = self.kpts
             kband_uniq = [k for k in self.kpts_band if len(member(k, kpts))==0]
         if j_only is None:
             j_only = self._j_only
@@ -726,7 +729,7 @@ class GDF(aft.AFTDF):
     ao2mo_7d = df_ao2mo.ao2mo_7d
 
     def update_mp(self):
-        mf = copy.copy(mf)
+        mf = copy.copy(self)
         mf.with_df = self
         return mf
 
@@ -879,7 +882,7 @@ class _load3c(object):
                 raise KeyError('Key "%s" not found' % self.label)
 
         kpti_kptj = numpy.asarray(self.kpti_kptj)
-        kptij_lst = self.feri[self.kptij_label].value
+        kptij_lst = self.feri[self.kptij_label][()]
         return _getitem(self.feri, self.label, kpti_kptj, kptij_lst,
                         self.ignore_key_error)
 
