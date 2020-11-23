@@ -113,6 +113,26 @@ def treutler_ahlrichs(n, *args, **kwargs):
 treutler = treutler_ahlrichs
 
 
+from scipy.optimize import root_scalar
+def double_exponential(n, *args, **kwargs):
+    '''
+    DE2 approach used by Dasgupta and Herbet for SG-2 and SG-3
+    JCC 38, 869 (2017); DOI:10.1002/jcc.24761s
+    '''
+    alpha = 2.5
+    ln2 = 1 / numpy.log(2)
+    x = numpy.cos(numpy.pi * numpy.array([n, 1]) / (n+1))
+    r = -ln2*(1+x)**.6 * numpy.log((1-x)/2)
+    rmin, rmax = r[0], r[1]
+    def fopt(x, r0):
+        return alpha*x - numpy.exp(-x) - numpy.log(r0), alpha + numpy.exp(-x)
+    xmin = root_scalar(fopt, args=(rmin), x0=-1.5, fprime=True).root
+    xmax = root_scalar(fopt, args=(rmax), x0=1.2, fprime=True).root
+    x = numpy.linspace(xmin, xmax, n)
+    h = x[1] - x[0]
+    r = numpy.exp(alpha * x - numpy.exp(-x))
+    dr = h * r * (alpha + numpy.exp(-x))
+    return r, dr
 
 
 def becke_atomic_radii_adjust(mol, atomic_radii):
