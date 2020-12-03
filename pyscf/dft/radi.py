@@ -95,6 +95,65 @@ def gauss_chebyshev(n, *args, **kwargs):
     dr = fac * numpy.sin(x1)**4 * ln2/(1+xi)
     return r, dr
 
+def gauss_chebyshev_m4(n, *args, **kwargs):
+    '''
+    Treutler-Ahlrichs [JCP 102, 346 (1995); DOI:10.1063/1.469408] (M4) radial grids
+    '''
+    alphap = 0.0
+    ln2 = 1.0 / numpy.log(2)
+    fac = 16./3 / (n+1)
+    x1 = numpy.arange(1,n+1) * numpy.pi / (n+1)
+    xi = ((n-1-numpy.arange(n)*2) / (n+1.) +
+          (1+2./3*numpy.sin(x1)**2) * numpy.sin(2*x1) / numpy.pi)
+    x = (xi - xi[::-1])/2
+    r = -ln2*(1+x)**alphap * numpy.log((1-x)/2)
+    dr = fac * numpy.sin(x1)**4 \
+         * ln2*(1+x)**alphap *(-alphap/(1+x)*numpy.log((1-x)/2)+1/(1-x))
+    return r[::-1], dr[::-1]
+
+def fejer_1(n, *args, **kwargs):
+    ln2 = 1 / numpy.log(2)
+    from quadpy import c1
+    alphap = 1.2
+    scheme = c1.fejer_1(n)
+    x = scheme.points
+    w = scheme.weights
+    r = -ln2*(1+x)**alphap * numpy.log((1-x)/2)
+    dr = w * ln2*(1+x)**alphap *(-alphap/(1+x)*numpy.log((1-x)/2)+1/(1-x))
+    return r[::-1], dr[::-1]
+
+def fejer_2(n, *args, **kwargs):
+    ln2 = 1 / numpy.log(2)
+    from quadpy import c1
+    alphap = 1.2
+    scheme = c1.fejer_2(n)
+    x = scheme.points
+    w = scheme.weights
+    r = -ln2*(1+x)**alphap * numpy.log((1-x)/2)
+    dr = w * ln2*(1+x)**alphap *(-alphap/(1+x)*numpy.log((1-x)/2)+1/(1-x))
+    return r[::-1], dr[::-1]
+
+def clenshaw_curtis(n, *args, **kwargs):
+    ln2 = 1 / numpy.log(2)
+    from quadpy import c1
+    alphap = 0.8
+    scheme = c1.clenshaw_curtis(n+2)
+    x = scheme.points[1:-1]
+    w = scheme.weights[1:-1]
+    r = -ln2*(1+x)**alphap * numpy.log((1-x)/2)
+    dr = w * ln2*(1+x)**alphap *(-alphap/(1+x)*numpy.log((1-x)/2)+1/(1-x))
+    return r[::-1], dr[::-1]
+
+def gauss_lobatto(n, *args, **kwargs):
+    ln2 = 1 / numpy.log(2)
+    from quadpy import c1
+    alphap = 1.0
+    scheme = c1.gauss_lobatto(n+2)
+    x = scheme.points[1:-1]
+    w = scheme.weights[1:-1]
+    r = -ln2*(1+x)**alphap * numpy.log((1-x)/2)
+    dr = w * ln2*(1+x)**alphap *(-alphap/(1+x)*numpy.log((1-x)/2)+1/(1-x))
+    return r[::-1], dr[::-1]
 
 def treutler_ahlrichs(n, *args, **kwargs):
     '''
