@@ -155,6 +155,52 @@ def gauss_lobatto(n, *args, **kwargs):
     dr = w * ln2*(1+x)**alphap *(-alphap/(1+x)*numpy.log((1-x)/2)+1/(1-x))
     return r[::-1], dr[::-1]
 
+def gauss_lobatto2(n, *args, **kwargs):
+    from quadpy import c1
+    alphap = -0.4
+    scheme = c1.gauss_lobatto(n+2)
+    x = scheme.points[1:-1]
+    w = scheme.weights[1:-1]
+    r = zeta * (1+x) / numpy.sqrt(1-x**2)
+    dr = zeta * w * (numpy.sqrt(1-x**2) + x*(1+x)) / (1-x**2)**1.5
+    return r, dr
+
+def gauss_lobatto3(n, *args, **kwargs):
+    from quadpy import c1
+    scheme = c1.gauss_lobatto(n+2)
+    x = scheme.points[1:-1]
+    w = scheme.weights[1:-1]
+    r = (1+x) / (1-x) / 20
+    dr = w * 2 / (1-x**2) / 20
+    print (r, dr)
+    return r, dr
+
+def gauss_jacobi(n, *args, **kwargs):
+    """
+    ln2 = 1 / numpy.log(2)
+    from quadpy import c1
+    scheme = c1.gauss_jacobi(n, 0.5, 0.5)
+    x = scheme.points
+    w = scheme.weights
+    alphap = 0.0
+    r = -ln2*(1+x)**alphap * numpy.log((1-x)/2)
+    dr = w * ln2*(1+x)**alphap *(-alphap/(1+x)*numpy.log((1-x)/2)+1/(1-x))
+    return r[::-1], dr[::-1]
+    """
+    ln2 = 1 / numpy.log(2)
+    from quadpy import c1
+    alphap = 0.6
+    #alpha, beta = 0.4, 0.4
+    alpha, beta = 0.5, 2.0
+    scheme = c1.gauss_jacobi(n, alpha, beta)
+    x = scheme.points
+    w = scheme.weights
+    scale = (1-x)**-alpha * (1+x)**-beta
+    r = -ln2*(1+x)**alphap * numpy.log((1-x)/2)
+    dr = w * ln2*(1+x)**alphap *(-alphap/(1+x)*numpy.log((1-x)/2)+1/(1-x)) * scale
+    return r[::-1], dr[::-1]
+
+
 def treutler_ahlrichs(n, *args, **kwargs):
     '''
     Treutler-Ahlrichs [JCP 102, 346 (1995); DOI:10.1063/1.469408] (M4) radial grids
