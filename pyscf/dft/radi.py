@@ -34,8 +34,15 @@ SG1RADII = numpy.array((
 
 
 # Murray, N.C. Handy, G.J. Laming,  Mol. Phys. 78, 997(1993)
-def murray(n, *args, **kwargs):
-    raise RuntimeError('Not implemented')
+def murray(n, charge=None, *args, **kwargs):
+    q = (numpy.arange(n)+1)/(n+1)
+    if charge is None:
+        raise NotImplementedError
+    alpha = BRAGG_RADII[charge]
+    m = 3
+    r = alpha * q**m * (1-q)**-m
+    dr = (alpha * m * q**(m-1) * (1-q)**(-m-1)) / (n+1)
+    return r, dr
 
 # Gauss-Chebyshev of the first kind,  and the transformed interval [0,\infty)
 def becke(n, charge, *args, **kwargs):
