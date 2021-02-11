@@ -21,4 +21,4 @@
 
 from pyscf.pbc.pwscf import krhf
 
-KRHF = krhf.PWKRHF
+PWKRHF = KRHF = krhf.PWKRHF

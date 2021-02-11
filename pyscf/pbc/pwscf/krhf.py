@@ -423,11 +423,11 @@ class PWKRHF(lib.StreamObject):
 
     def kernel(self, **kwargs):
         self.dump_flags()
-        kernel(self, kpts, C0_ks=None,
-               conv_tol=mf.conv_tol, max_cycle=mf.max_cycle,
-               conv_tol_davidson=mf.conv_tol_davidson,
-               max_cycle_davidson=mf.max_cycle_davidson,
-               verbose_davidson=mf.verbose_davidson,
+        kernel(self, self.kpts, C0_ks=None,
+               conv_tol=self.conv_tol, max_cycle=self.max_cycle,
+               conv_tol_davidson=self.conv_tol_davidson,
+               max_cycle_davidson=self.max_cycle_davidson,
+               verbose_davidson=self.verbose_davidson,
                conv_check=self.conv_check,
                callback=self.callback,
                **kwargs)
