@@ -4,6 +4,7 @@
 
 import copy
 import numpy as np
+import scipy.linalg
 
 from pyscf.pbc import tools, df
 from pyscf.pbc.gto import pseudo
@@ -205,7 +206,17 @@ def apply_vj_kpt(mf, C_k, kpt, mesh=None, Gv=None, vj_R=None):
 """ Exchange energy
 """
 def apply_vk_kpt(mf, C_k, kpt1, C_ks, kpts, mesh=None, Gv=None, exxdiv=None):
+    r""" Apply the EXX operator to given MOs
 
+    Math:
+        Cbar_k(G) = \sum_{j,k'} \sum_{G'} rho_{jk',ik}(G') v(k-k'+G') C_k(G-G')
+    Code:
+        rho_r = C_ik_r * C_jk'_r.conj()
+        rho_G = FFT(rho_r)
+        coulG = get_coulG(k-k')
+        v_r = iFFT(rho_G * coulG)
+        Cbar_ik_G = FFT(v_r * C_ik_r)
+    """
     cell = mf.cell
     if mesh is None: mesh = cell.mesh
     if Gv is None: Gv = cell.get_Gv(mesh)
@@ -237,3 +248,55 @@ def apply_vk_kpt(mf, C_k, kpt1, C_ks, kpts, mesh=None, Gv=None, exxdiv=None):
     Cbar_k = tools.fft(Cbar_k, mesh) * fac
 
     return Cbar_k
+
+
+def initialize_ACE(mf, C_ks, ace_exx=True, kpts=None, exxdiv=None):
+    if not ace_exx:
+        return None
+
+    cell = mf.cell
+    mesh = cell.mesh
+    Gv = cell.get_Gv(mesh)
+    if exxdiv is None: exxdiv = mf.exxdiv
+    if kpts is None: kpts = mf.kpts
+    nkpts = len(kpts)
+
+    xi_ks = [None] * nkpts
+    for k in range(nkpts):
+        C_k = C_ks[k]
+        W_k = mf.apply_vk_kpt(C_k, kpts[k], C_ks, kpts,
+                              mesh=mesh, Gv=Gv, exxdiv=exxdiv)
+        L_k = scipy.linalg.cholesky(C_k.conj()@W_k.T, lower=True)
+        xi_ks[k] = scipy.linalg.solve_triangular(L_k.conj(), W_k, lower=True)
+
+        # debug
+        # W_k_prime = (C_k @ xi_ks[k].conj().T) @ xi_ks[k]
+        # assert(np.linalg.norm(W_k - W_k_prime) < 1e-8)
+
+    return xi_ks
+
+
+""" Charge mixing methods
+"""
+class SimpleMixing:
+    def __init__(self, mf, beta=0.3):
+        self.beta = beta
+        self.cycle = 0
+
+    def next_step(self, mf, f, ferr):
+        self.cycle += 1
+
+        return f - ferr * self.beta
+
+from pyscf.lib.diis import DIIS
+class AndersonMixing:
+    def __init__(self, mf, ndiis=5, diis_start=1):
+        self.diis = DIIS()
+        self.diis.space = ndiis
+        self.diis.min_space = diis_start
+        self.cycle = 0
+
+    def next_step(self, mf, f, ferr):
+        self.cycle += 1
+
+        return self.diis.update(f, ferr)

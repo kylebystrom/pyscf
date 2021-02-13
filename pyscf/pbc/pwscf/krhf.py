@@ -18,7 +18,7 @@ import pyscf.lib.parameters as param
 
 
 def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
-           max_cycle=100, max_cycle_davidson=100, verbose_davidson=0,
+           max_cycle=100, max_cycle_davidson=10, verbose_davidson=0,
            dump_chk=True, conv_check=True, callback=None, **kwargs):
     ''' Kernel function for SCF in a PW basis
     '''
@@ -29,20 +29,22 @@ def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
     nkpts = len(kpts)
 
     if C0_ks is None:
-        C0_ks = mf.get_init_guess()
+        C_ks = mf.get_init_guess()
+    else:
+        C_ks = C0_ks
 
     # init E
     vpplocR = mf.get_vpplocR()
-    vj_R = mf.get_vj_R(C0_ks)
-    moe_ks = mf.get_mo_energy(C0_ks, vpplocR=vpplocR, vj_R=vj_R)
-    e_tot = mf.energy_tot(C0_ks, moe_ks=moe_ks, vpplocR=vpplocR)
+    vj_R = mf.get_vj_R(C_ks)
+    moe_ks = mf.get_mo_energy(C_ks, vpplocR=vpplocR, vj_R=vj_R)
+    e_tot = mf.energy_tot(C_ks, moe_ks=moe_ks, vpplocR=vpplocR)
     logger.info(mf, 'init E= %.15g', e_tot)
     mf.dump_moe(moe_ks)
 
     scf_conv = False
 
     if mf.max_cycle <= 0:
-        return scf_conv, e_tot, moe_ks, C0_ks
+        return scf_conv, e_tot, moe_ks, C_ks
 
     if dump_chk and mf.chkfile:
         # Explicit overwrite the mol object in chkfile
@@ -55,11 +57,10 @@ def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
     for cycle in range(max_cycle):
 
         if cycle > 0:   # already built for init E at cycle 0
-            vpplocR = mf.get_vpplocR()
-            vj_R = mf.get_vj_R(C0_ks)
+            vj_R = mf.get_vj_R(C_ks)
 
-        conv_ks, moe_ks, C0_ks, fc_ks = mf.converge_band(
-                            C0_ks, kpts, moe_ks=moe_ks,
+        conv_ks, moe_ks, C_ks, fc_ks = mf.converge_band(
+                            C_ks, kpts, moe_ks=moe_ks,
                             vpplocR=vpplocR, vj_R=vj_R,
                             conv_tol_davidson=conv_tol_davidson,
                             max_cycle_davidson=max_cycle_davidson,
@@ -68,7 +69,7 @@ def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
         fc_tot += fc_this
 
         last_hf_e = e_tot
-        e_tot = mf.energy_tot(C0_ks, moe_ks=moe_ks, vpplocR=vpplocR)
+        e_tot = mf.energy_tot(C_ks, moe_ks=moe_ks, vpplocR=vpplocR)
         de = e_tot-last_hf_e if cycle > 0 else 10
         logger.info(mf, 'cycle= %d E= %.15g  delta_E= %4.3g  %d FC (%d tot)',
                     cycle+1, e_tot, de, fc_this, fc_tot)
@@ -93,8 +94,8 @@ def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
     if scf_conv and conv_check:
         # An extra diagonalization, to remove level shift
         #fock = mf.get_fock(h1e, s1e, vhf, dm)  # = h1e + vhf
-        conv_ks, moe_ks, C0_ks, fc_ks = mf.converge_band(
-                            C0_ks, kpts, moe_ks=moe_ks,
+        conv_ks, moe_ks, C_ks, fc_ks = mf.converge_band(
+                            C_ks, kpts, moe_ks=moe_ks,
                             vpplocR=vpplocR, vj_R=vj_R,
                             conv_tol_davidson=conv_tol_davidson,
                             max_cycle_davidson=max_cycle_davidson,
@@ -102,7 +103,7 @@ def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
         fc_this = sum(fc_ks)
         fc_tot += fc_this
         last_hf_e = e_tot
-        e_tot = mf.energy_tot(C0_ks, moe_ks=moe_ks, vpplocR=vpplocR)
+        e_tot = mf.energy_tot(C_ks, moe_ks=moe_ks, vpplocR=vpplocR)
         de = e_tot-last_hf_e if cycle > 0 else 10
         if callable(mf.check_convergence):
             scf_conv = mf.check_convergence(locals())
@@ -118,11 +119,225 @@ def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
     logger.timer(mf, 'scf_cycle', *cput0)
     # A post-processing hook before return
     mf.post_kernel(locals())
-    return scf_conv, e_tot, moe_ks, C0_ks
+    return scf_conv, e_tot, moe_ks, C_ks
 
 
-def dump_moe(mf, moe_ks):
-    if mf.verbose >= logger.DEBUG:
+def kernel_doubleloop(
+            mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
+            max_cycle=100, max_cycle_davidson=10, verbose_davidson=0,
+            ace_exx=True, damp_type="anderson", damp_factor=0.3,
+            dump_chk=True, conv_check=True, callback=None, **kwargs):
+    ''' Kernel function for SCF in a PW basis
+        Note:
+            This double-loop implementation follows closely the implementation in Quantum ESPRESSO.
+    '''
+
+    cput0 = (time.clock(), time.time())
+
+    cell = mf.cell
+    nkpts = len(kpts)
+
+    if C0_ks is None:
+        C_ks = mf.get_init_guess()
+    else:
+        C_ks = C0_ks
+
+    # init E
+    vpplocR = mf.get_vpplocR()
+    vj_R = mf.get_vj_R(C_ks)
+    ace_xi_ks = pw_helper.initialize_ACE(mf, C_ks, ace_exx)
+    C_ks_exx = list(C_ks) if ace_xi_ks is None else None
+    moe_ks = mf.get_mo_energy(C_ks, ace_xi_ks=ace_xi_ks,
+                              vpplocR=vpplocR, vj_R=vj_R)
+    e_tot = mf.energy_tot(C_ks, moe_ks=moe_ks, vpplocR=vpplocR)
+    logger.info(mf, 'init E= %.15g', e_tot)
+    mf.dump_moe(moe_ks)
+
+    scf_conv = False
+
+    if mf.max_cycle <= 0:
+        return scf_conv, e_tot, moe_ks, C_ks
+
+    if dump_chk and mf.chkfile:
+        # Explicit overwrite the mol object in chkfile
+        # Note in pbc.scf, mf.mol == mf.cell, cell is saved under key "mol"
+        chkfile.save_mol(cell, mf.chkfile)
+
+    fc_tot = 0
+    fc_this = 0
+    cput1 = logger.timer(mf, 'initialize pwscf', *cput0)
+
+    chg_conv_tol = 1e-2
+    for cycle in range(max_cycle):
+
+        if cycle > 0:
+            chg_conv_tol = min(chg_conv_tol, max(conv_tol, 0.1*abs(de)))
+        conv_tol_davidson = max(conv_tol*0.1, chg_conv_tol*0.01)
+        logger.debug(mf, "  Performing charge SCF with conv_tol= %.3g conv_tol_davidson= %.3g", chg_conv_tol, conv_tol_davidson)
+
+        # charge SCF
+        chg_scf_conv, fc_this, C_ks, moe_ks, e_tot = mf.kernel_charge(
+                                C_ks, kpts,
+                                max_cycle=max_cycle, conv_tol=chg_conv_tol,
+                                max_cycle_davidson=max_cycle_davidson,
+                                conv_tol_davidson=conv_tol_davidson,
+                                verbose_davidson=verbose_davidson,
+                                damp_type=damp_type, damp_factor=damp_factor,
+                                moe_ks=moe_ks,
+                                C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
+                                vpplocR=vpplocR, vj_R=vj_R,
+                                last_hf_e=e_tot)
+        fc_tot += fc_this
+        if not chg_scf_conv:
+            logger.warn(mf, "  Charge SCF not converged.")
+
+        # update coulomb potential, ace_xi_ks, and energies
+        vj_R = mf.get_vj_R(C_ks)
+        ace_xi_ks = pw_helper.initialize_ACE(mf, C_ks, ace_exx)
+        C_ks_exx = list(C_ks) if ace_xi_ks is None else None
+        moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
+                                  vpplocR=vpplocR, vj_R=vj_R)
+        last_hf_e = e_tot
+        e_tot = mf.energy_tot(C_ks, C_ks_exx=C_ks_exx, moe_ks=moe_ks,
+                              vpplocR=vpplocR, vj_R=vj_R)
+        de = e_tot - last_hf_e
+
+        logger.info(mf, 'cycle= %d E= %.15g  delta_E= %4.3g  %d FC (%d tot)',
+                    cycle+1, e_tot, de, fc_this, fc_tot)
+        mf.dump_moe(moe_ks)
+
+        if callable(mf.check_convergence):
+            scf_conv = mf.check_convergence(locals())
+        elif abs(de) < conv_tol:
+            scf_conv = True
+
+        if dump_chk:
+            mf.dump_chk(locals())
+
+        if callable(callback):
+            callback(locals())
+
+        cput1 = logger.timer(mf, 'cycle= %d'%(cycle+1), *cput1)
+
+        if scf_conv:
+            break
+
+    if scf_conv and conv_check:
+        # An extra diagonalization, to remove level shift
+        chg_conv_tol = min(chg_conv_tol, max(conv_tol, 0.1*abs(de)))
+        conv_tol_davidson = max(conv_tol*0.1, chg_conv_tol*0.01)
+        logger.debug(mf, "  Performing charge SCF with conv_tol= %.3g conv_tol_davidson= %.3g", chg_conv_tol, conv_tol_davidson)
+
+        chg_scf_conv, fc_this, C_ks, moe_ks, e_tot = mf.kernel_charge(
+                                C_ks, kpts,
+                                max_cycle=max_cycle, conv_tol=chg_conv_tol,
+                                max_cycle_davidson=max_cycle_davidson,
+                                conv_tol_davidson=conv_tol_davidson,
+                                verbose_davidson=verbose_davidson,
+                                damp_type=damp_type, damp_factor=damp_factor,
+                                moe_ks=moe_ks,
+                                C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
+                                vpplocR=vpplocR, vj_R=vj_R,
+                                last_hf_e=e_tot)
+        fc_tot += fc_this
+        vj_R = mf.get_vj_R(C_ks)
+        ace_xi_ks = pw_helper.initialize_ACE(mf, C_ks, ace_exx)
+        C_ks_exx = list(C_ks) if ace_xi_ks is None else None
+        moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
+                                  vpplocR=vpplocR, vj_R=vj_R)
+        last_hf_e = e_tot
+        e_tot = mf.energy_tot(C_ks, C_ks_exx=C_ks_exx, moe_ks=moe_ks,
+                              vpplocR=vpplocR, vj_R=vj_R)
+        de = e_tot - last_hf_e
+
+        logger.info(mf, 'Extra cycle  E= %.15g  delta_E= %4.3g  %d FC (%d tot)',
+                    e_tot, de, fc_this, fc_tot)
+        mf.dump_moe(moe_ks)
+
+        if callable(mf.check_convergence):
+            scf_conv = mf.check_convergence(locals())
+        elif abs(de) < conv_tol:
+            scf_conv = True
+
+        if dump_chk:
+            mf.dump_chk(locals())
+
+        if callable(callback):
+            callback(locals())
+
+    logger.timer(mf, 'scf_cycle', *cput0)
+    # A post-processing hook before return
+    mf.post_kernel(locals())
+    return scf_conv, e_tot, moe_ks, C_ks
+
+
+def kernel_charge(mf, C_ks, kpts, max_cycle=50, conv_tol=1e-6,
+                  max_cycle_davidson=10, conv_tol_davidson=1e-8,
+                  verbose_davidson=0,
+                  damp_type="anderson", damp_factor=0.3,
+                  moe_ks=None,
+                  C_ks_exx=None, ace_xi_ks=None,
+                  vpplocR=None, vj_R=None,
+                  last_hf_e=None):
+
+    if vpplocR is None: vpplocR = mf.get_vpplocR()
+    if vj_R is None: vj_R = mf.get_vj_R(C_ks)
+
+    scf_conv = False
+
+    fc_tot = 0
+
+    if damp_type.lower() == "simple":
+        chgmixer = pw_helper.SimpleMixing(mf, damp_factor)
+    elif damp_type.lower() == "anderson":
+        chgmixer = pw_helper.AndersonMixing(mf)
+
+    cput1 = (time.clock(), time.time())
+    for cycle in range(max_cycle):
+
+        if cycle > 0:   # charge mixing
+            vj_R = chgmixer.next_step(mf, vj_R, vj_R-last_vj_R)
+
+        conv_ks, moe_ks, C_ks, fc_ks = mf.converge_band(
+                            C_ks, kpts, moe_ks=moe_ks,
+                            C_ks_exx=C_ks_exx,
+                            ace_xi_ks=ace_xi_ks,
+                            vpplocR=vpplocR, vj_R=vj_R,
+                            conv_tol_davidson=conv_tol_davidson,
+                            max_cycle_davidson=max_cycle_davidson,
+                            verbose_davidson=verbose_davidson)
+        fc_this = sum(fc_ks)
+        fc_tot += fc_this
+
+        # update coulomb potential and energy
+        last_vj_R = vj_R
+        vj_R = mf.get_vj_R(C_ks)
+
+        if cycle > 0: last_hf_e = e_tot
+        e_tot = mf.energy_tot(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
+                              vpplocR=vpplocR, vj_R=vj_R)
+        if not last_hf_e is None:
+            de = e_tot-last_hf_e
+        else:
+            de = float("inf")
+        logger.debug(mf, '  chg cyc= %d E= %.15g  delta_E= %4.3g  %d FC (%d tot)',
+                    cycle+1, e_tot, de, fc_this, fc_tot)
+        mf.dump_moe(moe_ks, trigger_level=logger.DEBUG3)
+
+        if abs(de) < conv_tol:
+            scf_conv = True
+
+        cput1 = logger.timer_debug1(mf, 'chg cyc= %d'%(cycle+1),
+                                    *cput1)
+
+        if scf_conv:
+            break
+
+    return scf_conv, fc_tot, C_ks, moe_ks, e_tot
+
+
+def dump_moe(mf, moe_ks, trigger_level=logger.DEBUG):
+    if mf.verbose >= trigger_level:
         np.set_printoptions(threshold=len(moe_ks))
         logger.debug(mf, '     k-point                  mo_energy')
         for k,kpt in enumerate(mf.cell.get_scaled_kpts(mf.kpts)):
@@ -194,12 +409,14 @@ def apply_h1e_kpt(mf, C_k, kpt, cell=None, vpplocR=None, ret_E=False):
 
 
 def apply_Fock_kpt(mf, C_k, kpt, C_ks, cell=None, kpts=None,
+                   C_ks_exx=None, ace_xi_k=None,
                    vpplocR=None, vj_R=None, exxdiv=None, ret_E=False):
     r''' Apply Fock operator to orbitals at given k-point
         Math:
             |psibar_ik> = hat{F} |psi_ik>, for all i and k = kpt
         Note:
-            The Fock operator is computed using C_ks and applied to C_k, which does NOT have to be the same as C_ks[k].
+            1. The Fock operator is computed using C_ks and applied to C_k, which does NOT have to be the same as C_ks[k].
+            2. If C_ks_exx is given, the EXX potential will be evaluated using C_ks_exx. This is useful in the double-loop formulation of SCF.
     '''
     if cell is None: cell = mf.cell
     if kpts is None: kpts = mf.kpts
@@ -228,7 +445,12 @@ def apply_Fock_kpt(mf, C_k, kpt, C_ks, cell=None, kpts=None,
     Cbar_k += tmp * 2
     es[3] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2.
 
-    tmp = mf.apply_vk_kpt(C_k, kpt, C_ks, kpts, mesh=mesh, Gv=Gv, exxdiv=exxdiv)
+    if not ace_xi_k is None:
+        tmp = (C_k @ ace_xi_k.conj().T) @ ace_xi_k
+    else:
+        if C_ks_exx is None: C_ks_exx = C_ks
+        tmp = mf.apply_vk_kpt(C_k, kpt, C_ks_exx, kpts, mesh=mesh, Gv=Gv,
+                              exxdiv=exxdiv)
     if exxdiv == "ewald":
         tmp += mf.madelung * C_k
     Cbar_k -= tmp
@@ -240,7 +462,8 @@ def apply_Fock_kpt(mf, C_k, kpt, C_ks, cell=None, kpts=None,
         return Cbar_k
 
 
-def get_mo_energy(mf, C_ks, vpplocR=None, vj_R=None):
+def get_mo_energy(mf, C_ks, C_ks_exx=None, ace_xi_ks=None,
+                  vpplocR=None, vj_R=None):
     if vpplocR is None: vpplocR = mf.get_vpplocR()
     if vj_R is None: vj_R = mf.get_vj_R(C_ks)
 
@@ -249,14 +472,17 @@ def get_mo_energy(mf, C_ks, vpplocR=None, vj_R=None):
     moe_ks = [None] * nkpts
     for k in range(nkpts):
         C_k = C_ks[k]
+        ace_xi_k = None if ace_xi_ks is None else ace_xi_ks[k]
         Cbar_k = mf.apply_Fock_kpt(C_k, kpts[k], C_ks,
+                                   C_ks_exx=C_ks_exx, ace_xi_k=ace_xi_k,
                                    vpplocR=vpplocR, vj_R=vj_R)
         moe_ks[k] = np.einsum("ig,ig->i", C_k.conj(), Cbar_k)
 
     return moe_ks
 
 
-def energy_elec(mf, C_ks, moe_ks=None, vpplocR=None, vj_R=None):
+def energy_elec(mf, C_ks, moe_ks=None, C_ks_exx=None, ace_xi_ks=None,
+                vpplocR=None, vj_R=None):
     ''' Compute the electronic energy
     Pass `moe_ks` to avoid the cost of applying the expensive vj and vk.
     '''
@@ -268,8 +494,12 @@ def energy_elec(mf, C_ks, moe_ks=None, vpplocR=None, vj_R=None):
     if moe_ks is None:
         if vj_R is None: vj_R = mf.get_vj_R(C_ks)
         for k in range(nkpts):
+            ace_xi_k = None if ace_xi_ks is None else ace_xi_ks[k]
             e_comp = mf.apply_Fock_kpt(C_ks[k], kpts[k], C_ks,
-                                      vpplocR=vpplocR, vj_R=vj_R, ret_E=True)[1]
+                                       C_ks_exx=C_ks_exx,
+                                       ace_xi_k=ace_xi_k,
+                                       vpplocR=vpplocR, vj_R=vj_R,
+                                       ret_E=True)[1]
             e_ks[k] = np.sum(e_comp)
     else:
         for k in range(nkpts):
@@ -282,15 +512,20 @@ def energy_elec(mf, C_ks, moe_ks=None, vpplocR=None, vj_R=None):
     return e_scf
 
 
-def energy_tot(mf, C_ks, moe_ks=None, vpplocR=None, vj_R=None):
-    e_nuc = mf.cell.energy_nuc()
-    e_scf = mf.energy_elec(C_ks, moe_ks=moe_ks, vpplocR=vpplocR, vj_R=vj_R)
+def energy_tot(mf, C_ks, moe_ks=None, C_ks_exx=None, ace_xi_ks=None,
+               vpplocR=None, vj_R=None):
+    e_nuc = mf.e_nuc
+    e_scf = mf.energy_elec(C_ks, moe_ks=moe_ks,
+                           C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
+                           vpplocR=vpplocR, vj_R=vj_R)
     e_tot = e_scf + e_nuc
     return e_tot
 
 
 def converge_band_kpt(mf, C_k, kpt, C_ks, kpts,
-                      moe_k=None, vpplocR=None, vj_R=None,
+                      moe_k=None, C_ks_exx=None,
+                      ace_xi_k=None,
+                      vpplocR=None, vj_R=None,
                       conv_tol_davidson=1e-6,
                       max_cycle_davidson=100,
                       verbose_davidson=0):
@@ -301,7 +536,9 @@ def converge_band_kpt(mf, C_k, kpt, C_ks, kpts,
     def FC(C_k_, ret_E=False):
         fc[0] += 1
         C_k_ = np.asarray(C_k_)
-        Cbar_k_ = mf.apply_Fock_kpt(C_k_, kpt, C_ks, vpplocR=vpplocR, vj_R=vj_R)
+        Cbar_k_ = mf.apply_Fock_kpt(C_k_, kpt, C_ks,
+                                    C_ks_exx=C_ks_exx, ace_xi_k=ace_xi_k,
+                                    vpplocR=vpplocR, vj_R=vj_R)
         return Cbar_k_
 
     if moe_k is None:
@@ -323,6 +560,7 @@ def converge_band_kpt(mf, C_k, kpt, C_ks, kpts,
 
 
 def converge_band(mf, C_ks, kpts, Cout_ks=None,
+                  C_ks_exx=None, ace_xi_ks=None,
                   moe_ks=None, vpplocR=None, vj_R=None,
                   conv_tol_davidson=1e-6,
                   max_cycle_davidson=100,
@@ -337,9 +575,12 @@ def converge_band(mf, C_ks, kpts, Cout_ks=None,
     fc_ks = [None] * nkpts
 
     for k in range(nkpts):
+        ace_xi_k = None if ace_xi_ks is None else ace_xi_ks[k]
         conv_, moeout_ks[k], Cout_ks[k], fc_ks[k] = \
                     mf.converge_band_kpt(C_ks[k], kpts[k], C_ks, kpts,
                                          moe_k=moe_ks[k],
+                                         C_ks_exx=C_ks_exx,
+                                         ace_xi_k=ace_xi_k,
                                          vpplocR=vpplocR, vj_R=vj_R,
                                          conv_tol_davidson=conv_tol_davidson,
                                          max_cycle_davidson=max_cycle_davidson,
@@ -349,7 +590,8 @@ def converge_band(mf, C_ks, kpts, Cout_ks=None,
     return conv_ks, moeout_ks, Cout_ks, fc_ks
 
 
-class PWKRHF(lib.StreamObject):
+# class PWKRHF(lib.StreamObject):
+class PWKRHF(mol_hf.SCF):
     '''PWKRHF base class. non-relativistic RHF using PW basis.
     '''
 
@@ -358,9 +600,15 @@ class PWKRHF(lib.StreamObject):
                                 'pbc_pwscf_krhf_PWKRHF_conv_tol_davidson', 1e-7)
     max_cycle = getattr(__config__, 'pbc_pwscf_krhf_PWKRHF_max_cycle', 100)
     max_cycle_davidson = getattr(__config__,
-                                 'pbc_pwscf_krhf_PWKRHF_max_cycle_davidson', 30)
+                                 'pbc_pwscf_krhf_PWKRHF_max_cycle_davidson', 10)
     verbose_davidson = getattr(__config__,
                                'pbc_pwscf_krhf_PWKRHF_verbose_davidson', 0)
+    double_loop_scf = getattr(__config__,
+                              'pbc_pwscf_krhf_PWKRHF_double_loop_scf', True)
+    ace_exx = getattr(__config__, 'pbc_pwscf_krhf_PWKRHF_ace_exx', True)
+    damp_type = getattr(__config__, 'pbc_pwscf_krhf_PWKRHF_damp_type',
+                        "anderson")
+    damp_factor = getattr(__config__, 'pbc_pwscf_krhf_PWKRHF_damp_factor', 0.3)
     conv_check = getattr(__config__, 'scf_hf_SCF_conv_check', True)
     check_convergence = None
     callback = None
@@ -379,6 +627,7 @@ class PWKRHF(lib.StreamObject):
         self.exxdiv = exxdiv
         if self.exxdiv == "ewald":
             self.madelung = tools.pbc.madelung(self.cell, self.kpts)
+        self.e_nuc = self.cell.energy_nuc()
 
         self.exx_built = False
         self._keys = self._keys.union(['cell', 'exx_built', 'exxdiv'])
@@ -393,6 +642,12 @@ class PWKRHF(lib.StreamObject):
         logger.info(self, "SCF max_cycle = %d", self.max_cycle)
         logger.info(self, "Davidson conv_tol = %s", self.conv_tol_davidson)
         logger.info(self, "Davidson max_cycle = %d", self.max_cycle_davidson)
+        logger.info(self, "Use double-loop scf = %s", self.double_loop_scf)
+        if self.double_loop_scf:
+            logger.info(self, "Use ACE = %s", self.ace_exx)
+            logger.info(self, "Damping method = %s", self.damp_type)
+            if self.damp_type.lower() == "simple":
+                logger.info(self, "Damping factor = %s", self.damp_factor)
         if self.chkfile:
             logger.info(self, 'chkfile to save SCF result = %s', self.chkfile)
         logger.info(self, 'max_memory %d MB (current use %d MB)',
@@ -413,25 +668,45 @@ class PWKRHF(lib.StreamObject):
 
     def dump_chk(self, envs):
         if self.chkfile:
-            no_ks = np.asarray([C0.shape[0] for C0 in envs['C0_ks']])
+            no_ks = np.asarray([C.shape[0] for C in envs['C_ks']])
             mo_occ = [np.asarray([1]*no) for no in no_ks]
             chkfile.dump_scf(self.mol, self.chkfile,
                              envs['e_tot'], envs['moe_ks'],
-                             envs['C0_ks'], mo_occ,
+                             envs['C_ks'], mo_occ,
                              overwrite_mol=False)
         return self
 
-    def kernel(self, **kwargs):
+    def scf(self, **kwargs):
         self.dump_flags()
-        kernel(self, self.kpts, C0_ks=None,
-               conv_tol=self.conv_tol, max_cycle=self.max_cycle,
-               conv_tol_davidson=self.conv_tol_davidson,
-               max_cycle_davidson=self.max_cycle_davidson,
-               verbose_davidson=self.verbose_davidson,
-               conv_check=self.conv_check,
-               callback=self.callback,
-               **kwargs)
 
+        if self.double_loop_scf:
+            self.converged, self.e_tot, self.mo_energy, self.mo_coeff = \
+                        kernel_doubleloop(self, self.kpts, C0_ks=None,
+                               conv_tol=self.conv_tol, max_cycle=self.max_cycle,
+                               conv_tol_davidson=self.conv_tol_davidson,
+                               max_cycle_davidson=self.max_cycle_davidson,
+                               verbose_davidson=self.verbose_davidson,
+                               ace_exx=self.ace_exx,
+                               damp_type=self.damp_type,
+                               damp_factor=self.damp_factor,
+                               conv_check=self.conv_check,
+                               callback=self.callback,
+                               **kwargs)
+        else:
+            self.converged, self.e_tot, self.mo_energy, self.mo_coeff = \
+                        kernel(self, self.kpts, C0_ks=None,
+                               conv_tol=self.conv_tol, max_cycle=self.max_cycle,
+                               conv_tol_davidson=self.conv_tol_davidson,
+                               max_cycle_davidson=self.max_cycle_davidson,
+                               verbose_davidson=self.verbose_davidson,
+                               conv_check=self.conv_check,
+                               callback=self.callback,
+                               **kwargs)
+        self._finalize()
+        return self.e_tot
+    kernel = lib.alias(scf, alias_name='kernel')
+
+    kernel_charge = kernel_charge
     dump_moe = dump_moe
     get_init_guess = get_init_guess
     get_mo_energy = get_mo_energy
