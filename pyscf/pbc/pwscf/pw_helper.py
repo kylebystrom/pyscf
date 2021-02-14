@@ -4,6 +4,7 @@
 
 import time
 import copy
+import tempfile
 import numpy as np
 import scipy.linalg
 
@@ -266,8 +267,143 @@ def apply_vk_kpt(mf, C_k, kpt, C_ks, kpts, ace_xi_k=None, mesh=None, Gv=None,
     return Cbar_k
 
 
-def initialize_ACE(mf, C_ks, ace_exx=True, kpts=None, mesh=None, Gv=None,
-                   exxdiv=None):
+def initialize_ACE_incore(mf, facexi, C_ks, ace_exx=True, kpts=None,
+                          mesh=None, Gv=None, exxdiv=None):
+
+    cell = mf.cell
+    if mesh is None: mesh = cell.mesh
+    if Gv is None: Gv = cell.get_Gv(mesh)
+    if exxdiv is None: exxdiv = mf.exxdiv
+    if kpts is None: kpts = mf.kpts
+    nkpts = len(kpts)
+
+    for k in range(nkpts):
+        C_k = C_ks[k]
+        W_k = mf.apply_vk_kpt(C_k, kpts[k], C_ks, kpts,
+                              mesh=mesh, Gv=Gv, exxdiv=exxdiv)
+        L_k = scipy.linalg.cholesky(C_k.conj()@W_k.T, lower=True)
+        xi_k = scipy.linalg.solve_triangular(L_k.conj(), W_k, lower=True)
+
+        key = 'ace_xi/%d'%k
+        if key in facexi: del facexi[key]
+        facexi[key] = xi_k
+
+        # debug
+        # W_k_prime = (C_k @ xi_k.conj().T) @ xi_k
+        # assert(np.linalg.norm(W_k - W_k_prime) < 1e-8)
+
+    return facexi
+
+
+def initialize_ACE_outcore(mf, facexi, C_ks, ace_exx=True, kpts=None,
+                           mesh=None, Gv=None, exxdiv=None):
+
+    cell = mf.cell
+    if mesh is None: mesh = cell.mesh
+    if Gv is None: Gv = cell.get_Gv(mesh)
+    if exxdiv is None: exxdiv = mf.exxdiv
+    if kpts is None: kpts = mf.kpts
+    nkpts = len(kpts)
+
+    mydf = df.FFTDF(cell)
+    mydf.exxdiv = exxdiv
+    no_ks = [C_ks[k].shape[0] for k in range(nkpts)]
+    no_max = np.max(no_ks)
+    ngrids = Gv.shape[0]
+    dtype = np.complex128
+    dsize = 16
+
+    max_memory = (mydf.max_memory - lib.current_memory()[0]) * 0.4
+    est_memory = np.sum(no_ks)*ngrids*dsize/1024**2.
+    outcore = est_memory > max_memory
+
+    swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+    fswap = lib.H5TmpFile(swapfile.name)
+    swapfile = None
+
+    for k in range(nkpts):
+        fswap["C_ks_R/%d"%k] = tools.ifft(C_ks[k], mesh)
+
+    if outcore:
+        for k in range(nkpts):
+            fswap["Cbar_ks/%d"%k] = np.zeros((no_max,ngrids), dtype=dtype)
+
+        buf1 = np.empty(no_max*ngrids, dtype=dtype)
+        buf2 = np.empty(no_max*ngrids, dtype=dtype)
+        for k12 in range(nkpts*nkpts):
+            k1 = k12 // nkpts
+            k2 = k12 % nkpts
+            if k2 > k1: continue
+            kpt1 = kpts[k1]
+            no_k1 = no_ks[k1]
+            C_k1_R = fswap["C_ks_R/%d"%k1][()]
+            kpt2 = kpts[k2]
+            no_k2 = no_ks[k2]
+            C_k2_R = fswap["C_ks_R/%d"%k2][()]
+            if exxdiv == 'ewald' or exxdiv is None:
+                coulG = tools.get_coulG(cell, kpt1-kpt2, False, mydf, mesh)
+            else:
+                coulG = tools.get_coulG(cell, kpt1-kpt2, True, mydf, mesh)
+
+            Cbar_k1 = np.ndarray((no_k1,ngrids), dtype=dtype, buffer=buf1)
+            Cbar_k2 = np.ndarray((no_k2,ngrids), dtype=dtype, buffer=buf2)
+            Cbar_k1.fill(0)
+            Cbar_k2.fill(0)
+            for i in range(no_k1):
+                jmax = i+1 if k2 == k1 else no_k2
+                jmax2 = jmax-1 if k2 == k1 else jmax
+                vji_R = tools.ifft(tools.fft(C_k2_R[:jmax].conj() * C_k1_R[i],
+                                   mesh) * coulG, mesh)
+                Cbar_k1[i] += np.sum(vji_R * C_k2_R[:jmax], axis=0)
+                Cbar_k2[:jmax2] += vji_R[:jmax2].conj() * C_k1_R[i]
+
+            fswap["Cbar_ks/%d"%k1][()] += Cbar_k1
+            fswap["Cbar_ks/%d"%k2][()] += Cbar_k2
+        buf1 = buf2 = None
+    else:
+        Cbar_ks = [np.zeros((no_ks[k],ngrids), dtype=dtype)
+                   for k in range(nkpts)]
+        for k12 in range(nkpts*nkpts):
+            k1 = k12 // nkpts
+            k2 = k12 % nkpts
+            if k2 > k1: continue
+            kpt1 = kpts[k1]
+            no_k1 = no_ks[k1]
+            C_k1_R = fswap["C_ks_R/%d"%k1][()]
+            kpt2 = kpts[k2]
+            no_k2 = no_ks[k2]
+            C_k2_R = fswap["C_ks_R/%d"%k2][()]
+            if exxdiv == 'ewald' or exxdiv is None:
+                coulG = tools.get_coulG(cell, kpt1-kpt2, False, mydf, mesh)
+            else:
+                coulG = tools.get_coulG(cell, kpt1-kpt2, True, mydf, mesh)
+
+            for i in range(no_k1):
+                jmax = i+1 if k2 == k1 else no_k2
+                jmax2 = jmax-1 if k2 == k1 else jmax
+                vji_R = tools.ifft(tools.fft(C_k2_R[:jmax].conj() * C_k1_R[i],
+                                   mesh) * coulG, mesh)
+                Cbar_ks[k1][i] += np.sum(vji_R * C_k2_R[:jmax], axis=0)
+                Cbar_ks[k2][:jmax2] += vji_R[:jmax2].conj() * C_k1_R[i]
+
+    fac = ngrids**2./(cell.vol*nkpts)
+    for k in range(nkpts):
+        C_k = C_ks[k]
+        Cbar_k = fswap["Cbar_ks/%d"%k][()] if outcore else Cbar_ks[k]
+        W_k = tools.fft(Cbar_k, mesh) * fac
+        L_k = scipy.linalg.cholesky(C_k.conj()@W_k.T, lower=True)
+        xi_k = scipy.linalg.solve_triangular(L_k.conj(), W_k, lower=True)
+
+        key = 'ace_xi/%d'%k
+        if key in facexi: del facexi[key]
+        facexi[key] = xi_k
+
+    return facexi
+
+
+def initialize_ACE(mf, facexi, C_ks, ace_exx=True, kpts=None,
+                   mesh=None, Gv=None, exxdiv=None):
+
     tick = np.asarray([time.clock(), time.time()])
     if not "t-ace" in mf.scf_summary:
         mf.scf_summary["t-ace"] = np.zeros(2)
@@ -277,29 +413,14 @@ def initialize_ACE(mf, C_ks, ace_exx=True, kpts=None, mesh=None, Gv=None,
         mf.scf_summary["t-ace"] += tock - tick
         return None
 
-    cell = mf.cell
-    if mesh is None: mesh = cell.mesh
-    if Gv is None: Gv = cell.get_Gv(mesh)
-    if exxdiv is None: exxdiv = mf.exxdiv
-    if kpts is None: kpts = mf.kpts
-    nkpts = len(kpts)
-
-    xi_ks = [None] * nkpts
-    for k in range(nkpts):
-        C_k = C_ks[k]
-        W_k = mf.apply_vk_kpt(C_k, kpts[k], C_ks, kpts,
-                              mesh=mesh, Gv=Gv, exxdiv=exxdiv)
-        L_k = scipy.linalg.cholesky(C_k.conj()@W_k.T, lower=True)
-        xi_ks[k] = scipy.linalg.solve_triangular(L_k.conj(), W_k, lower=True)
-
-        # debug
-        # W_k_prime = (C_k @ xi_ks[k].conj().T) @ xi_ks[k]
-        # assert(np.linalg.norm(W_k - W_k_prime) < 1e-8)
+    facexi = initialize_ACE_outcore(mf, facexi, C_ks,
+                                    ace_exx=ace_exx, kpts=kpts,
+                                    mesh=mesh, Gv=Gv, exxdiv=exxdiv)
 
     tock = np.asarray([time.clock(), time.time()])
     mf.scf_summary["t-ace"] += tock - tick
 
-    return xi_ks
+    return facexi
 
 
 """ Charge mixing methods

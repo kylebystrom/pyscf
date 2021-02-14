@@ -4,6 +4,8 @@
 
 import time
 import copy
+import h5py
+import tempfile
 import numpy as np
 import scipy.linalg
 
@@ -122,14 +124,21 @@ def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
     return scf_conv, e_tot, moe_ks, C_ks
 
 
-def kernel_doubleloop(
-            mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
+def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
+            conv_tol=1.E-6, conv_tol_davidson=1.E-6,
             max_cycle=100, max_cycle_davidson=10, verbose_davidson=0,
             ace_exx=True, damp_type="anderson", damp_factor=0.3,
             dump_chk=True, conv_check=True, callback=None, **kwargs):
     ''' Kernel function for SCF in a PW basis
         Note:
             This double-loop implementation follows closely the implementation in Quantum ESPRESSO.
+
+        Args:
+            C0_ks (list of numpy arrays):
+                A list of nkpts numpy arrays, each of size nocc(k) * Npw.
+            facexi (None, str or h5py file):
+                Specify where to store the ACE xi vectors.
+                If None, a tempfile is created and discarded at the end of the calculation. If str, a h5py file will be created and saved (for later use).
     '''
 
     cput0 = (time.clock(), time.time())
@@ -142,14 +151,26 @@ def kernel_doubleloop(
     else:
         C_ks = C0_ks
 
+    # file for store acexi
+    if ace_exx:
+        if facexi is None:
+            swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+            logger.info(mf, "ACE xi vectors will be written to %s", swapfile.name)
+            facexi = lib.H5TmpFile(swapfile.name)
+            swapfile = None
+        elif isinstance(facexi, str):
+            facexi = h5py.File(facexi, "w")
+    else:
+        facexi = None
+
     # init E
     mesh = cell.mesh
     Gv = cell.get_Gv(mesh)
     vpplocR = mf.get_vpplocR(mesh=mesh, Gv=Gv)
     vj_R = mf.get_vj_R(C_ks, mesh=mesh, Gv=Gv)
-    ace_xi_ks = pw_helper.initialize_ACE(mf, C_ks, ace_exx, mesh=mesh, Gv=Gv)
-    C_ks_exx = list(C_ks) if ace_xi_ks is None else None
-    moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
+    pw_helper.initialize_ACE(mf, facexi, C_ks, ace_exx, mesh=mesh, Gv=Gv)
+    C_ks_exx = list(C_ks) if facexi is None else None
+    moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, facexi=facexi,
                               vpplocR=vpplocR, vj_R=vj_R)
     e_tot = mf.energy_tot(C_ks, moe_ks=moe_ks, vpplocR=vpplocR)
     logger.info(mf, 'init E= %.15g', e_tot)
@@ -187,22 +208,21 @@ def kernel_doubleloop(
                                 verbose_davidson=verbose_davidson,
                                 damp_type=damp_type, damp_factor=damp_factor,
                                 moe_ks=moe_ks,
-                                C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
+                                C_ks_exx=C_ks_exx, facexi=facexi,
                                 vpplocR=vpplocR, vj_R=vj_R,
                                 last_hf_e=e_tot)
         fc_tot += fc_this
         if not chg_scf_conv:
             logger.warn(mf, "  Charge SCF not converged.")
 
-        # update coulomb potential, ace_xi_ks, and energies
+        # update coulomb potential, facexi, and energies
         vj_R = mf.get_vj_R(C_ks)
-        ace_xi_ks = pw_helper.initialize_ACE(mf, C_ks, ace_exx,
-                                             mesh=mesh, Gv=Gv)
-        C_ks_exx = list(C_ks) if ace_xi_ks is None else None
-        moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
+        pw_helper.initialize_ACE(mf, facexi, C_ks, ace_exx, mesh=mesh, Gv=Gv)
+        C_ks_exx = list(C_ks) if facexi is None else None
+        moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, facexi=facexi,
                                   vpplocR=vpplocR, vj_R=vj_R)
         last_hf_e = e_tot
-        e_tot = mf.energy_tot(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
+        e_tot = mf.energy_tot(C_ks, C_ks_exx=C_ks_exx, facexi=facexi,
                               vpplocR=vpplocR, vj_R=vj_R)
         de = e_tot - last_hf_e
 
@@ -240,18 +260,17 @@ def kernel_doubleloop(
                                 verbose_davidson=verbose_davidson,
                                 damp_type=damp_type, damp_factor=damp_factor,
                                 moe_ks=moe_ks,
-                                C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
+                                C_ks_exx=C_ks_exx, facexi=facexi,
                                 vpplocR=vpplocR, vj_R=vj_R,
                                 last_hf_e=e_tot)
         fc_tot += fc_this
         vj_R = mf.get_vj_R(C_ks)
-        ace_xi_ks = pw_helper.initialize_ACE(mf, C_ks, ace_exx,
-                                             mesh=mesh, Gv=Gv)
-        C_ks_exx = list(C_ks) if ace_xi_ks is None else None
-        moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
+        pw_helper.initialize_ACE(mf, facexi, C_ks, ace_exx, mesh=mesh, Gv=Gv)
+        C_ks_exx = list(C_ks) if facexi is None else None
+        moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, facexi=facexi,
                                   vpplocR=vpplocR, vj_R=vj_R)
         last_hf_e = e_tot
-        e_tot = mf.energy_tot(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
+        e_tot = mf.energy_tot(C_ks, C_ks_exx=C_ks_exx, facexi=facexi,
                               vpplocR=vpplocR, vj_R=vj_R)
         de = e_tot - last_hf_e
 
@@ -270,6 +289,8 @@ def kernel_doubleloop(
         if callable(callback):
             callback(locals())
 
+    facexi.close()
+
     logger.timer(mf, 'scf_cycle', *cput0)
     # A post-processing hook before return
     mf.post_kernel(locals())
@@ -282,7 +303,7 @@ def kernel_charge(mf, C_ks, kpts, mesh=None, Gv=None,
                   verbose_davidson=0,
                   damp_type="anderson", damp_factor=0.3,
                   moe_ks=None,
-                  C_ks_exx=None, ace_xi_ks=None,
+                  C_ks_exx=None, facexi=None,
                   vpplocR=None, vj_R=None,
                   last_hf_e=None):
 
@@ -308,10 +329,8 @@ def kernel_charge(mf, C_ks, kpts, mesh=None, Gv=None,
             vj_R = chgmixer.next_step(mf, vj_R, vj_R-last_vj_R)
 
         conv_ks, moe_ks, C_ks, fc_ks = mf.converge_band(
-                            C_ks, kpts, mesh=mesh, Gv=Gv,
-                            moe_ks=moe_ks,
-                            C_ks_exx=C_ks_exx,
-                            ace_xi_ks=ace_xi_ks,
+                            C_ks, kpts, mesh=mesh, Gv=Gv, moe_ks=moe_ks,
+                            C_ks_exx=C_ks_exx, facexi=facexi,
                             vpplocR=vpplocR, vj_R=vj_R,
                             conv_tol_davidson=conv_tol_davidson,
                             max_cycle_davidson=max_cycle_davidson,
@@ -324,7 +343,7 @@ def kernel_charge(mf, C_ks, kpts, mesh=None, Gv=None,
         vj_R = mf.get_vj_R(C_ks)
 
         if cycle > 0: last_hf_e = e_tot
-        e_tot = mf.energy_tot(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
+        e_tot = mf.energy_tot(C_ks, C_ks_exx=C_ks_exx, facexi=facexi,
                               vpplocR=vpplocR, vj_R=vj_R)
         if not last_hf_e is None:
             de = e_tot-last_hf_e
@@ -520,7 +539,7 @@ def apply_Fock_kpt(mf, C_k, kpt, C_ks, cell=None, kpts=None, mesh=None, Gv=None,
         return Cbar_k
 
 
-def get_mo_energy(mf, C_ks, mesh=None, Gv=None, C_ks_exx=None, ace_xi_ks=None,
+def get_mo_energy(mf, C_ks, mesh=None, Gv=None, C_ks_exx=None, facexi=None,
                   vpplocR=None, vj_R=None):
     cell = mf.cell
     if vpplocR is None: vpplocR = mf.get_vpplocR()
@@ -533,7 +552,7 @@ def get_mo_energy(mf, C_ks, mesh=None, Gv=None, C_ks_exx=None, ace_xi_ks=None,
     moe_ks = [None] * nkpts
     for k in range(nkpts):
         C_k = C_ks[k]
-        ace_xi_k = None if ace_xi_ks is None else ace_xi_ks[k]
+        ace_xi_k = None if facexi is None else facexi["ace_xi/%d"%k][()]
         Cbar_k = mf.apply_Fock_kpt(C_k, kpts[k], C_ks, mesh=mesh, Gv=Gv,
                                    C_ks_exx=C_ks_exx, ace_xi_k=ace_xi_k,
                                    vpplocR=vpplocR, vj_R=vj_R)
@@ -547,7 +566,7 @@ def get_mo_energy(mf, C_ks, mesh=None, Gv=None, C_ks_exx=None, ace_xi_ks=None,
 
 
 def energy_elec(mf, C_ks, mesh=None, Gv=None, moe_ks=None,
-                C_ks_exx=None, ace_xi_ks=None,
+                C_ks_exx=None, facexi=None,
                 vpplocR=None, vj_R=None):
     ''' Compute the electronic energy
     Pass `moe_ks` to avoid the cost of applying the expensive vj and vk.
@@ -564,7 +583,7 @@ def energy_elec(mf, C_ks, mesh=None, Gv=None, moe_ks=None,
         if vj_R is None: vj_R = mf.get_vj_R(C_ks)
         e_comp = np.zeros(5)
         for k in range(nkpts):
-            ace_xi_k = None if ace_xi_ks is None else ace_xi_ks[k]
+            ace_xi_k = None if facexi is None else facexi["ace_xi/%d"%k][()]
             e_comp_k = mf.apply_Fock_kpt(C_ks[k], kpts[k], C_ks,
                                          mesh=mesh, Gv=Gv,
                                          C_ks_exx=C_ks_exx,
@@ -586,11 +605,11 @@ def energy_elec(mf, C_ks, mesh=None, Gv=None, moe_ks=None,
     return e_scf
 
 
-def energy_tot(mf, C_ks, moe_ks=None, C_ks_exx=None, ace_xi_ks=None,
+def energy_tot(mf, C_ks, moe_ks=None, C_ks_exx=None, facexi=None,
                vpplocR=None, vj_R=None):
     e_nuc = mf.scf_summary["nuc"]
     e_scf = mf.energy_elec(C_ks, moe_ks=moe_ks,
-                           C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
+                           C_ks_exx=C_ks_exx, facexi=facexi,
                            vpplocR=vpplocR, vj_R=vj_R)
     e_tot = e_scf + e_nuc
     return e_tot
@@ -634,7 +653,7 @@ def converge_band_kpt(mf, C_k, kpt, C_ks, kpts, mesh=None, Gv=None,
 
 
 def converge_band(mf, C_ks, kpts, Cout_ks=None, mesh=None, Gv=None,
-                  C_ks_exx=None, ace_xi_ks=None,
+                  C_ks_exx=None, facexi=None,
                   moe_ks=None, vpplocR=None, vj_R=None,
                   conv_tol_davidson=1e-6,
                   max_cycle_davidson=100,
@@ -649,7 +668,7 @@ def converge_band(mf, C_ks, kpts, Cout_ks=None, mesh=None, Gv=None,
     fc_ks = [None] * nkpts
 
     for k in range(nkpts):
-        ace_xi_k = None if ace_xi_ks is None else ace_xi_ks[k]
+        ace_xi_k = None if facexi is None else facexi["ace_xi/%d"%k][()]
         conv_, moeout_ks[k], Cout_ks[k], fc_ks[k] = \
                     mf.converge_band_kpt(C_ks[k], kpts[k], C_ks, kpts,
                                          mesh=mesh, Gv=Gv,
@@ -708,6 +727,9 @@ class PWKRHF(mol_hf.SCF):
 
         self.init_guess = "hcore"
 
+# If _acexi_to_save is specified (as a str), the ACE xi vectors will be saved in this file. Otherwise, a tempfile is used and discarded after the calculation.
+        self._acexi_to_save = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+
         self.exx_built = False
         self._keys = self._keys.union(['cell', 'exx_built', 'exxdiv'])
 
@@ -730,6 +752,10 @@ class PWKRHF(mol_hf.SCF):
                 logger.info(self, "Damping factor = %s", self.damp_factor)
         if self.chkfile:
             logger.info(self, 'chkfile to save SCF result = %s', self.chkfile)
+        if isinstance(self._acexi_to_save, str):
+            logger.info(self, '_acexi_to_save = %s', self._acexi_to_save)
+        else:
+            logger.info(self, '_acexi_to_save = %s', self._acexi_to_save.name)
         logger.info(self, 'max_memory %d MB (current use %d MB)',
                     self.max_memory, lib.current_memory()[0])
 
@@ -798,8 +824,13 @@ class PWKRHF(mol_hf.SCF):
         self.dump_flags()
 
         if self.double_loop_scf:
+            if isinstance(self._acexi_to_save, tempfile._TemporaryFileWrapper):
+                facexi = lib.H5TmpFile(self._acexi_to_save.name)
+            else:
+                facexi = self._acexi_to_save
             self.converged, self.e_tot, self.mo_energy, self.mo_coeff = \
-                        kernel_doubleloop(self, self.kpts, C0_ks=None,
+                        kernel_doubleloop(self, self.kpts,
+                               C0_ks=None, facexi=facexi,
                                conv_tol=self.conv_tol, max_cycle=self.max_cycle,
                                conv_tol_davidson=self.conv_tol_davidson,
                                max_cycle_davidson=self.max_cycle_davidson,
