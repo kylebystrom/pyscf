@@ -29,7 +29,7 @@ def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
     nkpts = len(kpts)
 
     if C0_ks is None:
-        C_ks = mf.get_init_guess()
+        C_ks = mf.get_init_guess(key=mf.init_guess)
     else:
         C_ks = C0_ks
 
@@ -138,7 +138,7 @@ def kernel_doubleloop(
     nkpts = len(kpts)
 
     if C0_ks is None:
-        C_ks = mf.get_init_guess()
+        C_ks = mf.get_init_guess(key=mf.init_guess)
     else:
         C_ks = C0_ks
 
@@ -169,7 +169,8 @@ def kernel_doubleloop(
     fc_this = 0
     cput1 = logger.timer(mf, 'initialize pwscf', *cput0)
 
-    chg_conv_tol = 1e-2
+    # chg_conv_tol = 1e-2
+    chg_conv_tol = 0.1
     for cycle in range(max_cycle):
 
         if cycle > 0:
@@ -355,9 +356,10 @@ def dump_moe(mf, moe_ks, trigger_level=logger.DEBUG):
         np.set_printoptions(threshold=1000)
 
 
-def get_init_guess(mf):
+def get_init_guess(mf, key="hcore"):
     cell = mf.cell
     kpts = mf.kpts
+    nkpts = len(kpts)
 
     logger.info(mf, "generating init guess using %s basis", cell.basis)
 
@@ -369,12 +371,26 @@ def get_init_guess(mf):
         pmf = scf.KRHF(cell, kpts).density_fit()
     cell.verbose = verbose
     pmf.exxdiv = mf.exxdiv
-    pmf.max_cycle = 0
-    pmf.kernel()
 
-    cell.ke_cutoff = cell.ke_cutoff
-    cell.build()
-    Co_ks = pw_helper.get_Co_ks_G(cell, kpts, pmf.mo_coeff, pmf.mo_occ)
+    if key.lower() == "cycle1":
+        pmf.max_cycle = 0
+        pmf.kernel()
+        mo_coeff = pmf.mo_coeff
+        mo_occ = pmf.mo_occ
+    elif key.lower() in ["hcore", "h1e"]:
+        dm_ks = pmf.get_init_guess(key="hcore")
+        mo_coeff = [None] * nkpts
+        mo_occ = [None] * nkpts
+        for k in range(nkpts):
+            e, u = scipy.linalg.eigh(dm_ks[k])
+            mo_coeff[k] = np.ascontiguousarray(u[:,::-1].T).T   # force f-contiguous
+            no = cell.nelectron//2
+            mo_occ[k] = np.asarray([2 if i < no else 0
+                                   for i in range(cell.nao_nr())])
+    else:
+        raise NotImplementedError("Init guess %s not implemented" % key)
+
+    Co_ks = pw_helper.get_Co_ks_G(cell, kpts, mo_coeff, mo_occ)
     for i,kpt in enumerate(kpts):
         Sk = Co_ks[i].conj() @ Co_ks[i].T
         nonorth_err = np.max(np.abs(Sk - np.eye(Sk.shape[0])))
@@ -686,6 +702,8 @@ class PWKRHF(mol_hf.SCF):
         self.scf_summary["nuc"] = self.cell.energy_nuc()
         self.scf_summary["e_comp_name_lst"] = ["kin", "ppl", "ppnl", "coul", "ex"]
 
+        self.init_guess = "hcore"
+
         self.exx_built = False
         self._keys = self._keys.union(['cell', 'exx_built', 'exxdiv'])
 
@@ -695,6 +713,7 @@ class PWKRHF(mol_hf.SCF):
         logger.info(self, "ke_cutoff = %s", self.cell.ke_cutoff)
         logger.info(self, "mesh = %s (%d PWs)", self.cell.mesh,
                     np.prod(self.cell.mesh))
+        logger.info(self, "SCF init guess = %s", self.init_guess)
         logger.info(self, "SCF conv_tol = %s", self.conv_tol)
         logger.info(self, "SCF max_cycle = %d", self.max_cycle)
         logger.info(self, "Davidson conv_tol = %s", self.conv_tol_davidson)
