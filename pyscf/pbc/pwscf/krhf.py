@@ -357,6 +357,8 @@ def dump_moe(mf, moe_ks, trigger_level=logger.DEBUG):
 
 
 def get_init_guess(mf, key="hcore"):
+    tick = np.asarray([time.clock(), time.time()])
+
     cell = mf.cell
     kpts = mf.kpts
     nkpts = len(kpts)
@@ -378,15 +380,10 @@ def get_init_guess(mf, key="hcore"):
         mo_coeff = pmf.mo_coeff
         mo_occ = pmf.mo_occ
     elif key.lower() in ["hcore", "h1e"]:
-        dm_ks = pmf.get_init_guess(key="hcore")
-        mo_coeff = [None] * nkpts
-        mo_occ = [None] * nkpts
-        for k in range(nkpts):
-            e, u = scipy.linalg.eigh(dm_ks[k])
-            mo_coeff[k] = np.ascontiguousarray(u[:,::-1].T).T   # force f-contiguous
-            no = cell.nelectron//2
-            mo_occ[k] = np.asarray([2 if i < no else 0
-                                   for i in range(cell.nao_nr())])
+        h1e = pmf.get_hcore()
+        s1e = pmf.get_ovlp()
+        mo_energy, mo_coeff = pmf.eig(h1e, s1e)
+        mo_occ = pmf.get_occ(mo_energy, mo_coeff)
     else:
         raise NotImplementedError("Init guess %s not implemented" % key)
 
@@ -398,6 +395,12 @@ def get_init_guess(mf, key="hcore"):
             logger.warn(mf, "non-orthogonality detected in the initial MOs (max |off-diag ovlp|= %s) for kpt %d. Symm-orth them now.", nonorth_err, i)
         e, u = scipy.linalg.eigh(Sk)
         Co_ks[i] = (u*e**-0.5).T @ Co_ks[i]
+
+    tock = np.asarray([time.clock(), time.time()])
+    key = "t-init"
+    if not key in mf.scf_summary:
+        mf.scf_summary[key] = np.zeros(2)
+    mf.scf_summary[key] += tock - tick
 
     return Co_ks
 
@@ -775,6 +778,10 @@ class PWKRHF(mol_hf.SCF):
             log.info('Free Energy =                     %24.15f', self.e_free)
 
         t_tot = np.zeros(2)
+        if 't-init' in summary:
+            log.info('CPU time for %10s %9.2f, wall time %9.2f',
+                     "init guess".ljust(10), *summary['t-init'])
+            t_tot += summary['t-init']
         if 't-ace' in summary:
             log.info('CPU time for %10s %9.2f, wall time %9.2f',
                      "init ACE".ljust(10), *summary['t-ace'])
