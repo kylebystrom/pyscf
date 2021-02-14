@@ -266,7 +266,8 @@ def apply_vk_kpt(mf, C_k, kpt, C_ks, kpts, ace_xi_k=None, mesh=None, Gv=None,
     return Cbar_k
 
 
-def initialize_ACE(mf, C_ks, ace_exx=True, kpts=None, exxdiv=None):
+def initialize_ACE(mf, C_ks, ace_exx=True, kpts=None, mesh=None, Gv=None,
+                   exxdiv=None):
     tick = np.asarray([time.clock(), time.time()])
     if not "t-ace" in mf.scf_summary:
         mf.scf_summary["t-ace"] = np.zeros(2)
@@ -277,8 +278,8 @@ def initialize_ACE(mf, C_ks, ace_exx=True, kpts=None, exxdiv=None):
         return None
 
     cell = mf.cell
-    mesh = cell.mesh
-    Gv = cell.get_Gv(mesh)
+    if mesh is None: mesh = cell.mesh
+    if Gv is None: Gv = cell.get_Gv(mesh)
     if exxdiv is None: exxdiv = mf.exxdiv
     if kpts is None: kpts = mf.kpts
     nkpts = len(kpts)

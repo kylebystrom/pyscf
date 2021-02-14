@@ -143,9 +143,11 @@ def kernel_doubleloop(
         C_ks = C0_ks
 
     # init E
-    vpplocR = mf.get_vpplocR()
-    vj_R = mf.get_vj_R(C_ks)
-    ace_xi_ks = pw_helper.initialize_ACE(mf, C_ks, ace_exx)
+    mesh = cell.mesh
+    Gv = cell.get_Gv(mesh)
+    vpplocR = mf.get_vpplocR(mesh=mesh, Gv=Gv)
+    vj_R = mf.get_vj_R(C_ks, mesh=mesh, Gv=Gv)
+    ace_xi_ks = pw_helper.initialize_ACE(mf, C_ks, ace_exx, mesh=mesh, Gv=Gv)
     C_ks_exx = list(C_ks) if ace_xi_ks is None else None
     moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
                               vpplocR=vpplocR, vj_R=vj_R)
@@ -177,7 +179,7 @@ def kernel_doubleloop(
 
         # charge SCF
         chg_scf_conv, fc_this, C_ks, moe_ks, e_tot = mf.kernel_charge(
-                                C_ks, kpts,
+                                C_ks, kpts, mesh=mesh, Gv=Gv,
                                 max_cycle=max_cycle, conv_tol=chg_conv_tol,
                                 max_cycle_davidson=max_cycle_davidson,
                                 conv_tol_davidson=conv_tol_davidson,
@@ -193,7 +195,8 @@ def kernel_doubleloop(
 
         # update coulomb potential, ace_xi_ks, and energies
         vj_R = mf.get_vj_R(C_ks)
-        ace_xi_ks = pw_helper.initialize_ACE(mf, C_ks, ace_exx)
+        ace_xi_ks = pw_helper.initialize_ACE(mf, C_ks, ace_exx,
+                                             mesh=mesh, Gv=Gv)
         C_ks_exx = list(C_ks) if ace_xi_ks is None else None
         moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
                                   vpplocR=vpplocR, vj_R=vj_R)
@@ -229,7 +232,7 @@ def kernel_doubleloop(
         logger.debug(mf, "  Performing charge SCF with conv_tol= %.3g conv_tol_davidson= %.3g", chg_conv_tol, conv_tol_davidson)
 
         chg_scf_conv, fc_this, C_ks, moe_ks, e_tot = mf.kernel_charge(
-                                C_ks, kpts,
+                                C_ks, kpts, mesh=mesh, Gv=Gv,
                                 max_cycle=max_cycle, conv_tol=chg_conv_tol,
                                 max_cycle_davidson=max_cycle_davidson,
                                 conv_tol_davidson=conv_tol_davidson,
@@ -241,7 +244,8 @@ def kernel_doubleloop(
                                 last_hf_e=e_tot)
         fc_tot += fc_this
         vj_R = mf.get_vj_R(C_ks)
-        ace_xi_ks = pw_helper.initialize_ACE(mf, C_ks, ace_exx)
+        ace_xi_ks = pw_helper.initialize_ACE(mf, C_ks, ace_exx,
+                                             mesh=mesh, Gv=Gv)
         C_ks_exx = list(C_ks) if ace_xi_ks is None else None
         moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
                                   vpplocR=vpplocR, vj_R=vj_R)
@@ -271,7 +275,8 @@ def kernel_doubleloop(
     return scf_conv, e_tot, moe_ks, C_ks
 
 
-def kernel_charge(mf, C_ks, kpts, max_cycle=50, conv_tol=1e-6,
+def kernel_charge(mf, C_ks, kpts, mesh=None, Gv=None,
+                  max_cycle=50, conv_tol=1e-6,
                   max_cycle_davidson=10, conv_tol_davidson=1e-8,
                   verbose_davidson=0,
                   damp_type="anderson", damp_factor=0.3,
@@ -280,8 +285,11 @@ def kernel_charge(mf, C_ks, kpts, max_cycle=50, conv_tol=1e-6,
                   vpplocR=None, vj_R=None,
                   last_hf_e=None):
 
+    cell = mf.cell
     if vpplocR is None: vpplocR = mf.get_vpplocR()
     if vj_R is None: vj_R = mf.get_vj_R(C_ks)
+    if mesh is None: mesh = cell.mesh
+    if Gv is None: Gv = cell.get_Gv(mesh)
 
     scf_conv = False
 
@@ -299,7 +307,8 @@ def kernel_charge(mf, C_ks, kpts, max_cycle=50, conv_tol=1e-6,
             vj_R = chgmixer.next_step(mf, vj_R, vj_R-last_vj_R)
 
         conv_ks, moe_ks, C_ks, fc_ks = mf.converge_band(
-                            C_ks, kpts, moe_ks=moe_ks,
+                            C_ks, kpts, mesh=mesh, Gv=Gv,
+                            moe_ks=moe_ks,
                             C_ks_exx=C_ks_exx,
                             ace_xi_ks=ace_xi_ks,
                             vpplocR=vpplocR, vj_R=vj_R,
@@ -377,16 +386,15 @@ def get_init_guess(mf):
     return Co_ks
 
 
-def apply_h1e_kpt(mf, C_k, kpt, cell=None, vpplocR=None, ret_E=False):
+def apply_h1e_kpt(mf, C_k, kpt, mesh=None, Gv=None, vpplocR=None, ret_E=False):
     r''' Apply 1e part of the Fock operator to orbitals at given k-points.
         Math:
             |psibar_ik> = (hat{T} + hat{vpp}) |psi_ik>, for all i and k = kpt
     '''
-    if cell is None: cell = mf.cell
+    cell = mf.cell
     if vpplocR is None: vpplocR = mf.get_vpplocR()
-
-    mesh = cell.mesh
-    Gv = cell.get_Gv(mesh)
+    if mesh is None: mesh = cell.mesh
+    if Gv is None: Gv = cell.get_Gv(mesh)
 
     es = np.zeros([3], dtype=np.complex128)
 
@@ -416,7 +424,7 @@ def apply_h1e_kpt(mf, C_k, kpt, cell=None, vpplocR=None, ret_E=False):
         return Cbar_k
 
 
-def apply_Fock_kpt(mf, C_k, kpt, C_ks, cell=None, kpts=None,
+def apply_Fock_kpt(mf, C_k, kpt, C_ks, cell=None, kpts=None, mesh=None, Gv=None,
                    C_ks_exx=None, ace_xi_k=None,
                    vpplocR=None, vj_R=None, exxdiv=None, ret_E=False):
     r''' Apply Fock operator to orbitals at given k-point
@@ -428,12 +436,11 @@ def apply_Fock_kpt(mf, C_k, kpt, C_ks, cell=None, kpts=None,
     '''
     if cell is None: cell = mf.cell
     if kpts is None: kpts = mf.kpts
+    if mesh is None: mesh = cell.mesh
+    if Gv is None: Gv = cell.get_Gv(mesh)
     if vpplocR is None: vpplocR = mf.get_vpplocR()
     if vj_R is None: vj_R = mf.get_vj_R(C_ks)
     if exxdiv is None: exxdiv = mf.exxdiv
-
-    mesh = cell.mesh
-    Gv = cell.get_Gv(mesh)
 
     es = np.zeros([5], dtype=np.complex128)
 
@@ -494,10 +501,13 @@ def apply_Fock_kpt(mf, C_k, kpt, C_ks, cell=None, kpts=None,
         return Cbar_k
 
 
-def get_mo_energy(mf, C_ks, C_ks_exx=None, ace_xi_ks=None,
+def get_mo_energy(mf, C_ks, mesh=None, Gv=None, C_ks_exx=None, ace_xi_ks=None,
                   vpplocR=None, vj_R=None):
+    cell = mf.cell
     if vpplocR is None: vpplocR = mf.get_vpplocR()
     if vj_R is None: vj_R = mf.get_vj_R(C_ks)
+    if mesh is None: mesh = cell.mesh
+    if Gv is None: Gv = cell.get_Gv(mesh)
 
     kpts = mf.kpts
     nkpts = len(kpts)
@@ -505,7 +515,7 @@ def get_mo_energy(mf, C_ks, C_ks_exx=None, ace_xi_ks=None,
     for k in range(nkpts):
         C_k = C_ks[k]
         ace_xi_k = None if ace_xi_ks is None else ace_xi_ks[k]
-        Cbar_k = mf.apply_Fock_kpt(C_k, kpts[k], C_ks,
+        Cbar_k = mf.apply_Fock_kpt(C_k, kpts[k], C_ks, mesh=mesh, Gv=Gv,
                                    C_ks_exx=C_ks_exx, ace_xi_k=ace_xi_k,
                                    vpplocR=vpplocR, vj_R=vj_R)
         moe_k = np.einsum("ig,ig->i", C_k.conj(), Cbar_k)
@@ -517,12 +527,16 @@ def get_mo_energy(mf, C_ks, C_ks_exx=None, ace_xi_ks=None,
     return moe_ks
 
 
-def energy_elec(mf, C_ks, moe_ks=None, C_ks_exx=None, ace_xi_ks=None,
+def energy_elec(mf, C_ks, mesh=None, Gv=None, moe_ks=None,
+                C_ks_exx=None, ace_xi_ks=None,
                 vpplocR=None, vj_R=None):
     ''' Compute the electronic energy
     Pass `moe_ks` to avoid the cost of applying the expensive vj and vk.
     '''
+    cell = mf.cell
     if vpplocR is None: vpplocR = mf.get_vpplocR()
+    if mesh is None: mesh = cell.mesh
+    if Gv is None: Gv = cell.get_Gv(mesh)
 
     kpts = mf.kpts
     nkpts = len(kpts)
@@ -533,6 +547,7 @@ def energy_elec(mf, C_ks, moe_ks=None, C_ks_exx=None, ace_xi_ks=None,
         for k in range(nkpts):
             ace_xi_k = None if ace_xi_ks is None else ace_xi_ks[k]
             e_comp_k = mf.apply_Fock_kpt(C_ks[k], kpts[k], C_ks,
+                                         mesh=mesh, Gv=Gv,
                                          C_ks_exx=C_ks_exx,
                                          ace_xi_k=ace_xi_k,
                                          vpplocR=vpplocR, vj_R=vj_R,
@@ -544,8 +559,8 @@ def energy_elec(mf, C_ks, moe_ks=None, C_ks_exx=None, ace_xi_ks=None,
             mf.scf_summary[comp] = e
     else:
         for k in range(nkpts):
-            e1_comp = mf.apply_h1e_kpt(C_ks[k], kpts[k], vpplocR=vpplocR,
-                                       ret_E=True)[1]
+            e1_comp = mf.apply_h1e_kpt(C_ks[k], kpts[k], mesh=mesh, Gv=Gv,
+                                       vpplocR=vpplocR, ret_E=True)[1]
             e_ks[k] = np.sum(e1_comp) * 0.5 + np.sum(moe_ks[k])
     e_scf = np.sum(e_ks) / nkpts
 
@@ -562,7 +577,7 @@ def energy_tot(mf, C_ks, moe_ks=None, C_ks_exx=None, ace_xi_ks=None,
     return e_tot
 
 
-def converge_band_kpt(mf, C_k, kpt, C_ks, kpts,
+def converge_band_kpt(mf, C_k, kpt, C_ks, kpts, mesh=None, Gv=None,
                       moe_k=None, C_ks_exx=None,
                       ace_xi_k=None,
                       vpplocR=None, vj_R=None,
@@ -576,7 +591,7 @@ def converge_band_kpt(mf, C_k, kpt, C_ks, kpts,
     def FC(C_k_, ret_E=False):
         fc[0] += 1
         C_k_ = np.asarray(C_k_)
-        Cbar_k_ = mf.apply_Fock_kpt(C_k_, kpt, C_ks,
+        Cbar_k_ = mf.apply_Fock_kpt(C_k_, kpt, C_ks, mesh=mesh, Gv=Gv,
                                     C_ks_exx=C_ks_exx, ace_xi_k=ace_xi_k,
                                     vpplocR=vpplocR, vj_R=vj_R)
         return Cbar_k_
@@ -599,7 +614,7 @@ def converge_band_kpt(mf, C_k, kpt, C_ks, kpts,
     return conv, e, c, fc[0]
 
 
-def converge_band(mf, C_ks, kpts, Cout_ks=None,
+def converge_band(mf, C_ks, kpts, Cout_ks=None, mesh=None, Gv=None,
                   C_ks_exx=None, ace_xi_ks=None,
                   moe_ks=None, vpplocR=None, vj_R=None,
                   conv_tol_davidson=1e-6,
@@ -618,6 +633,7 @@ def converge_band(mf, C_ks, kpts, Cout_ks=None,
         ace_xi_k = None if ace_xi_ks is None else ace_xi_ks[k]
         conv_, moeout_ks[k], Cout_ks[k], fc_ks[k] = \
                     mf.converge_band_kpt(C_ks[k], kpts[k], C_ks, kpts,
+                                         mesh=mesh, Gv=Gv,
                                          moe_k=moe_ks[k],
                                          C_ks_exx=C_ks_exx,
                                          ace_xi_k=ace_xi_k,
