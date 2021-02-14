@@ -2,6 +2,7 @@
 """
 
 
+import time
 import copy
 import numpy as np
 import scipy.linalg
@@ -164,8 +165,7 @@ def apply_ppnl_kpt(mf, C_k, kpt, mesh=None, Gv=None):
                         hl = np.asarray(hl)
                         SPG_lmi_ = SPG_lmi[p0:p1].reshape(nl,l*2+1,-1)
                         tmp = hl @ np.einsum("imG,IG->Iim", SPG_lmi_, C_k_)
-                        Cbar_k += np.einsum("Iim,imG->IG", tmp,
-                            SPG_lmi_.conj())
+                        Cbar_k += np.einsum("Iim,imG->IG", tmp, SPG_lmi_.conj())
         return Cbar_k / cell.vol
 
     Cbar_k = get_Cbar_k_nl(kpt, C_k)
@@ -205,7 +205,7 @@ def apply_vj_kpt(mf, C_k, kpt, mesh=None, Gv=None, vj_R=None):
 
 """ Exchange energy
 """
-def apply_vk_kpt(mf, C_k, kpt1, C_ks, kpts, mesh=None, Gv=None, exxdiv=None):
+def apply_vk_kpt_(mf, C_k, kpt1, C_ks, kpts, mesh=None, Gv=None, exxdiv=None):
     r""" Apply the EXX operator to given MOs
 
     Math:
@@ -250,8 +250,30 @@ def apply_vk_kpt(mf, C_k, kpt1, C_ks, kpts, mesh=None, Gv=None, exxdiv=None):
     return Cbar_k
 
 
+def apply_vk_kpt_ace(mf, C_k, ace_xi_k):
+    Cbar_k = (C_k @ ace_xi_k.conj().T) @ ace_xi_k
+    return Cbar_k
+
+
+def apply_vk_kpt(mf, C_k, kpt, C_ks, kpts, ace_xi_k=None, mesh=None, Gv=None,
+                 exxdiv=None):
+    if ace_xi_k is None:
+        Cbar_k = apply_vk_kpt_(mf, C_k, kpt, C_ks, kpts,
+                               mesh=mesh, Gv=Gv, exxdiv=exxdiv)
+    else:
+        Cbar_k = apply_vk_kpt_ace(mf, C_k, ace_xi_k)
+
+    return Cbar_k
+
+
 def initialize_ACE(mf, C_ks, ace_exx=True, kpts=None, exxdiv=None):
+    tick = np.asarray([time.clock(), time.time()])
+    if not "t-ace" in mf.scf_summary:
+        mf.scf_summary["t-ace"] = np.zeros(2)
+
     if not ace_exx:
+        tock = np.asarray([time.clock(), time.time()])
+        mf.scf_summary["t-ace"] += tock - tick
         return None
 
     cell = mf.cell
@@ -273,6 +295,9 @@ def initialize_ACE(mf, C_ks, ace_exx=True, kpts=None, exxdiv=None):
         # W_k_prime = (C_k @ xi_ks[k].conj().T) @ xi_ks[k]
         # assert(np.linalg.norm(W_k - W_k_prime) < 1e-8)
 
+    tock = np.asarray([time.clock(), time.time()])
+    mf.scf_summary["t-ace"] += tock - tick
+
     return xi_ks
 
 
@@ -290,7 +315,7 @@ class SimpleMixing:
 
 from pyscf.lib.diis import DIIS
 class AndersonMixing:
-    def __init__(self, mf, ndiis=5, diis_start=1):
+    def __init__(self, mf, ndiis=10, diis_start=1):
         self.diis = DIIS()
         self.diis.space = ndiis
         self.diis.min_space = diis_start

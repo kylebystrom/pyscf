@@ -147,7 +147,7 @@ def kernel_doubleloop(
     vj_R = mf.get_vj_R(C_ks)
     ace_xi_ks = pw_helper.initialize_ACE(mf, C_ks, ace_exx)
     C_ks_exx = list(C_ks) if ace_xi_ks is None else None
-    moe_ks = mf.get_mo_energy(C_ks, ace_xi_ks=ace_xi_ks,
+    moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
                               vpplocR=vpplocR, vj_R=vj_R)
     e_tot = mf.energy_tot(C_ks, moe_ks=moe_ks, vpplocR=vpplocR)
     logger.info(mf, 'init E= %.15g', e_tot)
@@ -198,7 +198,7 @@ def kernel_doubleloop(
         moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
                                   vpplocR=vpplocR, vj_R=vj_R)
         last_hf_e = e_tot
-        e_tot = mf.energy_tot(C_ks, C_ks_exx=C_ks_exx, moe_ks=moe_ks,
+        e_tot = mf.energy_tot(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
                               vpplocR=vpplocR, vj_R=vj_R)
         de = e_tot - last_hf_e
 
@@ -246,7 +246,7 @@ def kernel_doubleloop(
         moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
                                   vpplocR=vpplocR, vj_R=vj_R)
         last_hf_e = e_tot
-        e_tot = mf.energy_tot(C_ks, C_ks_exx=C_ks_exx, moe_ks=moe_ks,
+        e_tot = mf.energy_tot(C_ks, C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
                               vpplocR=vpplocR, vj_R=vj_R)
         de = e_tot - last_hf_e
 
@@ -403,6 +403,14 @@ def apply_h1e_kpt(mf, C_k, kpt, cell=None, vpplocR=None, ret_E=False):
     es[2] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2
 
     if ret_E:
+        if (np.abs(es.imag) > 1e-6).any():
+            e_comp = mf.scf_summary["e_comp_name_lst"][:3]
+            icomps = np.where(np.abs(es.imag) > 1e-6)[0]
+            logger.warn(mf, "Energy has large imaginary part:" +
+                     "%s : %s\n" * len(icomps),
+                     *[s for i in icomps for s in [e_comp[i],es[i]]])
+        es = es.real
+
         return Cbar_k, es
     else:
         return Cbar_k
@@ -429,34 +437,58 @@ def apply_Fock_kpt(mf, C_k, kpt, C_ks, cell=None, kpts=None,
 
     es = np.zeros([5], dtype=np.complex128)
 
+    tspans = np.zeros((5,2))
+    tick = np.asarray([time.clock(), time.time()])
+
     tmp = mf.apply_kin_kpt(C_k, kpt, mesh=mesh, Gv=Gv)
     Cbar_k = tmp
     es[0] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2
+    tock = np.asarray([time.clock(), time.time()])
+    tspans[0] = tock - tick
 
     tmp = mf.apply_ppl_kpt(C_k, kpt, mesh=mesh, Gv=Gv, vpplocR=vpplocR)
     Cbar_k += tmp
     es[1] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2
+    tick = np.asarray([time.clock(), time.time()])
+    tspans[1] = tick - tock
 
     tmp = mf.apply_ppnl_kpt(C_k, kpt, mesh=mesh, Gv=Gv)
     Cbar_k += tmp
     es[2] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2
+    tock = np.asarray([time.clock(), time.time()])
+    tspans[2] = tock - tick
 
     tmp = mf.apply_vj_kpt(C_k, kpt, mesh=mesh, Gv=Gv, vj_R=vj_R)
     Cbar_k += tmp * 2
     es[3] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2.
+    tick = np.asarray([time.clock(), time.time()])
+    tspans[3] = tick - tock
 
-    if not ace_xi_k is None:
-        tmp = (C_k @ ace_xi_k.conj().T) @ ace_xi_k
-    else:
-        if C_ks_exx is None: C_ks_exx = C_ks
-        tmp = mf.apply_vk_kpt(C_k, kpt, C_ks_exx, kpts, mesh=mesh, Gv=Gv,
-                              exxdiv=exxdiv)
+    if C_ks_exx is None: C_ks_exx = C_ks
+    tmp = mf.apply_vk_kpt(C_k, kpt, C_ks_exx, kpts, ace_xi_k=ace_xi_k,
+                          mesh=mesh, Gv=Gv, exxdiv=exxdiv)
     if exxdiv == "ewald":
         tmp += mf.madelung * C_k
     Cbar_k -= tmp
     es[4] = -np.einsum("ig,ig->", C_k.conj(), tmp)
+    tock = np.asarray([time.clock(), time.time()])
+    tspans[4] = tock - tick
+
+    for icomp,comp in enumerate(mf.scf_summary["e_comp_name_lst"]):
+        key = "t-%s" % comp
+        if not key in mf.scf_summary:
+            mf.scf_summary[key] = np.zeros(2)
+        mf.scf_summary[key] += tspans[icomp]
 
     if ret_E:
+        if (np.abs(es.imag) > 1e-6).any():
+            e_comp = mf.scf_summary["e_comp_name_lst"]
+            icomps = np.where(np.abs(es.imag) > 1e-6)[0]
+            logger.warn(mf, "Energy has large imaginary part:" +
+                     "%s : %s\n" * len(icomps),
+                     *[s for i in icomps for s in [e_comp[i],es[i]]])
+        es = es.real
+
         return Cbar_k, es
     else:
         return Cbar_k
@@ -476,7 +508,11 @@ def get_mo_energy(mf, C_ks, C_ks_exx=None, ace_xi_ks=None,
         Cbar_k = mf.apply_Fock_kpt(C_k, kpts[k], C_ks,
                                    C_ks_exx=C_ks_exx, ace_xi_k=ace_xi_k,
                                    vpplocR=vpplocR, vj_R=vj_R)
-        moe_ks[k] = np.einsum("ig,ig->i", C_k.conj(), Cbar_k)
+        moe_k = np.einsum("ig,ig->i", C_k.conj(), Cbar_k)
+        if (moe_k.imag > 1e-6).any():
+            logger.warn(mf, "MO energies have imaginary part %s for kpt %d",
+                        moe_k, k)
+        moe_ks[k] = moe_k.real
 
     return moe_ks
 
@@ -490,23 +526,27 @@ def energy_elec(mf, C_ks, moe_ks=None, C_ks_exx=None, ace_xi_ks=None,
 
     kpts = mf.kpts
     nkpts = len(kpts)
-    e_ks = np.zeros(nkpts, dtype=np.complex128)
+    e_ks = np.zeros(nkpts)
     if moe_ks is None:
         if vj_R is None: vj_R = mf.get_vj_R(C_ks)
+        e_comp = np.zeros(5)
         for k in range(nkpts):
             ace_xi_k = None if ace_xi_ks is None else ace_xi_ks[k]
-            e_comp = mf.apply_Fock_kpt(C_ks[k], kpts[k], C_ks,
-                                       C_ks_exx=C_ks_exx,
-                                       ace_xi_k=ace_xi_k,
-                                       vpplocR=vpplocR, vj_R=vj_R,
-                                       ret_E=True)[1]
-            e_ks[k] = np.sum(e_comp)
+            e_comp_k = mf.apply_Fock_kpt(C_ks[k], kpts[k], C_ks,
+                                         C_ks_exx=C_ks_exx,
+                                         ace_xi_k=ace_xi_k,
+                                         vpplocR=vpplocR, vj_R=vj_R,
+                                         ret_E=True)[1]
+            e_ks[k] = np.sum(e_comp_k)
+            e_comp += e_comp_k
+        e_comp /= nkpts
+        for comp,e in zip(mf.scf_summary["e_comp_name_lst"],e_comp):
+            mf.scf_summary[comp] = e
     else:
         for k in range(nkpts):
             e1_comp = mf.apply_h1e_kpt(C_ks[k], kpts[k], vpplocR=vpplocR,
                                        ret_E=True)[1]
             e_ks[k] = np.sum(e1_comp) * 0.5 + np.sum(moe_ks[k])
-
     e_scf = np.sum(e_ks) / nkpts
 
     return e_scf
@@ -514,7 +554,7 @@ def energy_elec(mf, C_ks, moe_ks=None, C_ks_exx=None, ace_xi_ks=None,
 
 def energy_tot(mf, C_ks, moe_ks=None, C_ks_exx=None, ace_xi_ks=None,
                vpplocR=None, vj_R=None):
-    e_nuc = mf.e_nuc
+    e_nuc = mf.scf_summary["nuc"]
     e_scf = mf.energy_elec(C_ks, moe_ks=moe_ks,
                            C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
                            vpplocR=vpplocR, vj_R=vj_R)
@@ -627,7 +667,8 @@ class PWKRHF(mol_hf.SCF):
         self.exxdiv = exxdiv
         if self.exxdiv == "ewald":
             self.madelung = tools.pbc.madelung(self.cell, self.kpts)
-        self.e_nuc = self.cell.energy_nuc()
+        self.scf_summary["nuc"] = self.cell.energy_nuc()
+        self.scf_summary["e_comp_name_lst"] = ["kin", "ppl", "ppnl", "coul", "ex"]
 
         self.exx_built = False
         self._keys = self._keys.union(['cell', 'exx_built', 'exxdiv'])
@@ -675,6 +716,40 @@ class PWKRHF(mol_hf.SCF):
                              envs['C_ks'], mo_occ,
                              overwrite_mol=False)
         return self
+
+    def dump_scf_summary(self, verbose=logger.DEBUG):
+        log = logger.new_logger(self, verbose)
+        summary = self.scf_summary
+        def write(fmt, key):
+            if key in summary:
+                log.info(fmt, summary[key])
+        log.info('**** SCF Summaries ****')
+        log.info('Total Energy =                    %24.15f', self.e_tot)
+        write('Nuclear Repulsion Energy =        %24.15f', 'nuc')
+        write('Kinetic Energy =                  %24.15f', 'kin')
+        write('Local PP Energy =                 %24.15f', 'ppl')
+        write('Non-local PP Energy =             %24.15f', 'ppnl')
+        write('Two-electron Coulomb Energy =     %24.15f', 'coul')
+        write('Two-electron Exchjange Energy =   %24.15f', 'ex')
+        write('Empirical Dispersion Energy =     %24.15f', 'dispersion')
+        write('PCM Polarization Energy =         %24.15f', 'epcm')
+        write('EFP Energy =                      %24.15f', 'efp')
+        if getattr(self, 'entropy', None):
+            log.info('(Electronic) Entropy              %24.15f', self.entropy)
+            log.info('(Electronic) Zero Point Energy    %24.15f', self.e_zero)
+            log.info('Free Energy =                     %24.15f', self.e_free)
+
+        t_tot = np.zeros(2)
+        if 't-ace' in summary:
+            log.info('CPU time for %10s %9.2f, wall time %9.2f',
+                     "init ACE".ljust(10), *summary['t-ace'])
+            t_tot += summary['t-ace']
+        for op in summary["e_comp_name_lst"]:
+            log.info('CPU time for %10s %9.2f, wall time %9.2f',
+                     ("op %s"%op).ljust(10), *summary['t-%s'%op])
+            t_tot += summary['t-%s'%op]
+        log.info('CPU time for %10s %9.2f, wall time %9.2f',
+                 "full SCF".ljust(10), *t_tot)
 
     def scf(self, **kwargs):
         self.dump_flags()
@@ -737,7 +812,7 @@ if __name__ == "__main__":
         pseudo="gth-pade",
     )
     cell.build()
-    cell.verbose = 6
+    cell.verbose = 5
 
     nk = 2
     kmesh = (nk,)*3
@@ -745,3 +820,5 @@ if __name__ == "__main__":
 
     mf = PWKRHF(cell, kpts)
     mf.kernel()
+
+    mf.dump_scf_summary()
