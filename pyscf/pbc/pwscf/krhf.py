@@ -18,7 +18,7 @@ import pyscf.lib.parameters as param
 
 
 def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
-           max_cycle=100, max_cycle_davidson=10, verbose_davidson=0,
+           max_cycle=100, max_cycle_davidson=100, verbose_davidson=0,
            dump_chk=True, conv_check=True, callback=None, **kwargs):
     ''' Kernel function for SCF in a PW basis
     '''
@@ -675,7 +675,8 @@ class PWKRHF(mol_hf.SCF):
                                 'pbc_pwscf_krhf_PWKRHF_conv_tol_davidson', 1e-7)
     max_cycle = getattr(__config__, 'pbc_pwscf_krhf_PWKRHF_max_cycle', 100)
     max_cycle_davidson = getattr(__config__,
-                                 'pbc_pwscf_krhf_PWKRHF_max_cycle_davidson', 10)
+                                 'pbc_pwscf_krhf_PWKRHF_max_cycle_davidson',
+                                 100)
     verbose_davidson = getattr(__config__,
                                'pbc_pwscf_krhf_PWKRHF_verbose_davidson', 0)
     double_loop_scf = getattr(__config__,
