@@ -200,7 +200,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         logger.debug(mf, "  Performing charge SCF with conv_tol= %.3g conv_tol_davidson= %.3g", chg_conv_tol, conv_tol_davidson)
 
         # charge SCF
-        chg_scf_conv, fc_this, C_ks, moe_ks, e_tot = mf.kernel_charge(
+        chg_scf_conv, fc_this, C_ks, moe_ks, chg_e_tot = mf.kernel_charge(
                                 C_ks, kpts, mesh=mesh, Gv=Gv,
                                 max_cycle=max_cycle, conv_tol=chg_conv_tol,
                                 max_cycle_davidson=max_cycle_davidson,
@@ -252,7 +252,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         conv_tol_davidson = max(conv_tol*0.1, chg_conv_tol*0.01)
         logger.debug(mf, "  Performing charge SCF with conv_tol= %.3g conv_tol_davidson= %.3g", chg_conv_tol, conv_tol_davidson)
 
-        chg_scf_conv, fc_this, C_ks, moe_ks, e_tot = mf.kernel_charge(
+        chg_scf_conv, fc_this, C_ks, moe_ks, chg_e_tot = mf.kernel_charge(
                                 C_ks, kpts, mesh=mesh, Gv=Gv,
                                 max_cycle=max_cycle, conv_tol=chg_conv_tol,
                                 max_cycle_davidson=max_cycle_davidson,
