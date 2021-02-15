@@ -375,6 +375,19 @@ def dump_moe(mf, moe_ks, trigger_level=logger.DEBUG):
         np.set_printoptions(threshold=1000)
 
 
+def orth_mo(mf, C_ks, thr=1e-6):
+    nkpts = len(C_ks)
+    for k in range(nkpts):
+        Sk = C_ks[k].conj() @ C_ks[k].T
+        nonorth_err = np.max(np.abs(Sk - np.eye(Sk.shape[0])))
+        if nonorth_err > thr:
+            logger.warn(mf, "non-orthogonality detected in the initial MOs (max |off-diag ovlp|= %s) for kpt %d. Symm-orth them now.", nonorth_err, k)
+        e, u = scipy.linalg.eigh(Sk)
+        C_ks[k] = (u*e**-0.5).T @ C_ks[k]
+
+    return C_ks
+
+
 def get_init_guess(mf, basis=None, pseudo=None, no_ks=None, key="hcore"):
     """
         Args:
@@ -418,15 +431,26 @@ def get_init_guess(mf, basis=None, pseudo=None, no_ks=None, key="hcore"):
         raise NotImplementedError("Init guess %s not implemented" % key)
 
     Co_ks = pw_helper.get_Co_ks_G(cell, kpts, mo_coeff, mo_occ, no_ks=no_ks)
-    for i,kpt in enumerate(kpts):
-        Sk = Co_ks[i].conj() @ Co_ks[i].T
-        nonorth_err = np.max(np.abs(Sk - np.eye(Sk.shape[0])))
-        if nonorth_err > mf.conv_tol * 1e-3:
-            logger.warn(mf, "non-orthogonality detected in the initial MOs (max |off-diag ovlp|= %s) for kpt %d. Symm-orth them now.", nonorth_err, i)
-        e, u = scipy.linalg.eigh(Sk)
-        Co_ks[i] = (u*e**-0.5).T @ Co_ks[i]
+
+    Co_ks = orth_mo(mf, Co_ks)
 
     return Co_ks
+
+
+def init_guess_by_chkfile(cell, chkfile_name, project=None, kpts=None):
+    from pyscf.pbc.scf.chkfile import load_scf
+    chk_cell, scf_rec = load_scf(chkfile_name)
+    if project is None:
+        project = abs(cell.ke_cutoff - chk_cell.ke_cutoff) > 1e-2
+
+    C_ks = scf_rec['mo_coeff']
+
+    if project:
+        raise NotImplementedError
+
+    C_ks = orth_mo(cell, C_ks)
+
+    return C_ks
 
 
 def apply_h1e_kpt(mf, C_k, kpt, mesh=None, Gv=None, vpplocR=None, ret_E=False):
@@ -777,6 +801,13 @@ class PWKRHF(mol_hf.SCF):
                         ' = -1/2 * Nelec*madelung = %.12g',
                         madelung*cell.nelectron * -.5)
 
+    def init_guess_by_chkfile(self, chk=None, project=None, kpts=None):
+        if chk is None: chk = self.chkfile
+        if kpts is None: kpts = self.kpts
+        return init_guess_by_chkfile(self.cell, chk, project, kpts)
+    def from_chk(self, chk=None, project=None, kpts=None):
+        return self.init_guess_by_chkfile(chk, project, kpts)
+
     def dump_chk(self, envs):
         if self.chkfile:
             no_ks = np.asarray([C.shape[0] for C in envs['C_ks']])
@@ -828,7 +859,19 @@ class PWKRHF(mol_hf.SCF):
     def get_init_guess(self, key="hcore"):
         tick = np.asarray([time.clock(), time.time()])
 
-        Co_ks = get_init_guess(self)
+        if key[:3] == "chk":
+            try:
+                Co_ks = self.from_chk()
+            except (IOError, KeyError):
+                logger.warn(self, 'Fail to read %s. Use hcore initial guess',
+                            self.chkfile)
+                Co_ks = get_init_guess(self, key="hcore")
+        elif key in ["h1e","hcore","cycle1"]:
+            Co_ks = get_init_guess(self, key=key)
+        else:
+            logger.warn(self, "Unknown init guess %s. Use hcore initial guess",
+                        key)
+            Co_ks = get_init_guess(self, key="hcore")
 
         tock = np.asarray([time.clock(), time.time()])
         self.scf_summary["t-init"] = tock - tick
