@@ -17,16 +17,12 @@ def get_no_ks(mo_occ_ks):
     return np.sum(np.asarray(mo_occ_ks),axis=1).astype(int)//2
 
 
-def get_Co_ks_G(cell, kpts, mo_coeff_ks, mo_occ_ks, mesh=None):
+def get_Co_ks_G(cell, kpts, mo_coeff_ks, mo_occ_ks, no_ks=None):
     """ Return Cik(G) for input MO coeff. The normalization convention is such that Cik(G).conj()@Cjk(G) = delta_ij.
     """
     nkpts = len(kpts)
 
-    pcell = copy.copy(cell)
-    if not mesh is None:
-        pcell.mesh = mesh
-        pcell.build()
-    mydf = df.FFTDF(pcell)
+    mydf = df.FFTDF(cell)
 
     mesh = mydf.mesh
     ni = mydf._numint
@@ -35,9 +31,12 @@ def get_Co_ks_G(cell, kpts, mo_coeff_ks, mo_occ_ks, mesh=None):
     ngrids = coords.shape[0]
     weight = mydf.grids.weights[0]
 
-    no_ks = get_no_ks(mo_occ_ks)
-    Co_ks_R = [np.zeros([ngrids,no_ks[ik]], dtype=mo_coeff_ks[0].dtype)
-        for ik in range(nkpts)]
+    if no_ks is None:
+        no_ks = get_no_ks(mo_occ_ks)
+    elif no_ks.upper() == "ALL":
+        no_ks = [mo_occ_ks[k].size for k in range(nkpts)]
+    Co_ks_R = [np.zeros([ngrids,no_ks[k]], dtype=mo_coeff_ks[0].dtype)
+               for k in range(nkpts)]
     for ao_ks_etc, p0, p1 in mydf.aoR_loop(mydf.grids, kpts):
         ao_ks, mask = ao_ks_etc[0], ao_ks_etc[2]
         for k, ao in enumerate(ao_ks):
@@ -48,13 +47,13 @@ def get_Co_ks_G(cell, kpts, mo_coeff_ks, mo_occ_ks, mesh=None):
                     kpts[k].T)).reshape(-1,1) * lib.dot(ao, Co_k)
         ao = ao_ks = None
 
-    for ik in range(nkpts):
-        Co_ks_R[ik] *= weight**0.5
+    for k in range(nkpts):
+        Co_ks_R[k] *= weight**0.5
 
-    Co_ks_G = [np.empty([no_ks[ik],ngrids], dtype=np.complex128)
-        for ik in range(nkpts)]
-    for ik in range(nkpts):
-        Co_ks_G[ik] = tools.fft(Co_ks_R[ik].T, mesh) / ngrids**0.5
+    Co_ks_G = [np.empty([no_ks[k],ngrids], dtype=np.complex128)
+               for k in range(nkpts)]
+    for k in range(nkpts):
+        Co_ks_G[k] = tools.fft(Co_ks_R[k].T, mesh) / ngrids**0.5
 
     return Co_ks_G
 

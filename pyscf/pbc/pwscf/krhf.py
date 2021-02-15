@@ -375,22 +375,33 @@ def dump_moe(mf, moe_ks, trigger_level=logger.DEBUG):
         np.set_printoptions(threshold=1000)
 
 
-def get_init_guess(mf, key="hcore"):
-    tick = np.asarray([time.clock(), time.time()])
+def get_init_guess(mf, basis=None, pseudo=None, no_ks=None, key="hcore"):
+    """
+        Args:
+            no_ks:
+                Case None --> only occupied orbitals are returned.
+                Case list of int --> specifying number of orbitals for each kpt
+                Case "ALL" --> all orbitals in the given AO basis are returned.
+    """
 
-    cell = mf.cell
+    if basis is None: basis = mf.cell.basis
+    if pseudo is None: pseudo = mf.cell.pseudo
+    cell = copy.copy(mf.cell)
+    cell.basis = basis
+    cell.pseudo = pseudo
+    cell.ke_cutoff = mf.cell.ke_cutoff
+    cell.verbose = 0
+    cell.build()
+
     kpts = mf.kpts
     nkpts = len(kpts)
 
     logger.info(mf, "generating init guess using %s basis", cell.basis)
 
-    verbose = cell.verbose
-    cell.verbose = 0
     if len(kpts) < 30:
         pmf = scf.KRHF(cell, kpts)
     else:
         pmf = scf.KRHF(cell, kpts).density_fit()
-    cell.verbose = verbose
     pmf.exxdiv = mf.exxdiv
 
     if key.lower() == "cycle1":
@@ -406,7 +417,7 @@ def get_init_guess(mf, key="hcore"):
     else:
         raise NotImplementedError("Init guess %s not implemented" % key)
 
-    Co_ks = pw_helper.get_Co_ks_G(cell, kpts, mo_coeff, mo_occ)
+    Co_ks = pw_helper.get_Co_ks_G(cell, kpts, mo_coeff, mo_occ, no_ks=no_ks)
     for i,kpt in enumerate(kpts):
         Sk = Co_ks[i].conj() @ Co_ks[i].T
         nonorth_err = np.max(np.abs(Sk - np.eye(Sk.shape[0])))
@@ -414,12 +425,6 @@ def get_init_guess(mf, key="hcore"):
             logger.warn(mf, "non-orthogonality detected in the initial MOs (max |off-diag ovlp|= %s) for kpt %d. Symm-orth them now.", nonorth_err, i)
         e, u = scipy.linalg.eigh(Sk)
         Co_ks[i] = (u*e**-0.5).T @ Co_ks[i]
-
-    tock = np.asarray([time.clock(), time.time()])
-    key = "t-init"
-    if not key in mf.scf_summary:
-        mf.scf_summary[key] = np.zeros(2)
-    mf.scf_summary[key] += tock - tick
 
     return Co_ks
 
@@ -819,6 +824,16 @@ class PWKRHF(mol_hf.SCF):
             t_tot += summary['t-%s'%op]
         log.info('CPU time for %10s %9.2f, wall time %9.2f',
                  "full SCF".ljust(10), *t_tot)
+
+    def get_init_guess(self, key="hcore"):
+        tick = np.asarray([time.clock(), time.time()])
+
+        Co_ks = get_init_guess(self)
+
+        tock = np.asarray([time.clock(), time.time()])
+        self.scf_summary["t-init"] = tock - tick
+
+        return Co_ks
 
     def scf(self, **kwargs):
         self.dump_flags()
