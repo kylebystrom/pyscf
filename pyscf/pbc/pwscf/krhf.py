@@ -168,7 +168,8 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     Gv = cell.get_Gv(mesh)
     vpplocR = mf.get_vpplocR(mesh=mesh, Gv=Gv)
     vj_R = mf.get_vj_R(C_ks, mesh=mesh, Gv=Gv)
-    pw_helper.initialize_ACE(mf, facexi, C_ks, ace_exx, mesh=mesh, Gv=Gv)
+    pw_helper.initialize_ACE(mf, facexi, C_ks, ace_exx=ace_exx,
+                             mesh=mesh, Gv=Gv)
     C_ks_exx = list(C_ks) if facexi is None else None
     moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, facexi=facexi,
                               vpplocR=vpplocR, vj_R=vj_R)
@@ -217,7 +218,8 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
 
         # update coulomb potential, facexi, and energies
         vj_R = mf.get_vj_R(C_ks)
-        pw_helper.initialize_ACE(mf, facexi, C_ks, ace_exx, mesh=mesh, Gv=Gv)
+        pw_helper.initialize_ACE(mf, facexi, C_ks, ace_exx=ace_exx,
+                                 mesh=mesh, Gv=Gv)
         C_ks_exx = list(C_ks) if facexi is None else None
         moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, facexi=facexi,
                                   vpplocR=vpplocR, vj_R=vj_R)
@@ -265,7 +267,8 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
                                 last_hf_e=e_tot)
         fc_tot += fc_this
         vj_R = mf.get_vj_R(C_ks)
-        pw_helper.initialize_ACE(mf, facexi, C_ks, ace_exx, mesh=mesh, Gv=Gv)
+        pw_helper.initialize_ACE(mf, facexi, C_ks, ace_exx=ace_exx,
+                                 mesh=mesh, Gv=Gv)
         C_ks_exx = list(C_ks) if facexi is None else None
         moe_ks = mf.get_mo_energy(C_ks, C_ks_exx=C_ks_exx, facexi=facexi,
                                   vpplocR=vpplocR, vj_R=vj_R)

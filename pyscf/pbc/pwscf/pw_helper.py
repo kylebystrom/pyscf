@@ -266,8 +266,8 @@ def apply_vk_kpt(mf, C_k, kpt, C_ks, kpts, ace_xi_k=None, mesh=None, Gv=None,
     return Cbar_k
 
 
-def initialize_ACE_incore(mf, facexi, C_ks, kpts=None, mesh=None, Gv=None,
-                          exxdiv=None):
+def initialize_ACE_s1(mf, facexi, C_ks, Ct_ks, kpts=None, mesh=None, Gv=None,
+                      exxdiv=None):
 
     cell = mf.cell
     if mesh is None: mesh = cell.mesh
@@ -277,11 +277,11 @@ def initialize_ACE_incore(mf, facexi, C_ks, kpts=None, mesh=None, Gv=None,
     nkpts = len(kpts)
 
     for k in range(nkpts):
-        C_k = C_ks[k]
-        W_k = mf.apply_vk_kpt(C_k, kpts[k], C_ks, kpts,
-                              mesh=mesh, Gv=Gv, exxdiv=exxdiv)
-        L_k = scipy.linalg.cholesky(C_k.conj()@W_k.T, lower=True)
-        xi_k = scipy.linalg.solve_triangular(L_k.conj(), W_k, lower=True)
+        Ct_k = Ct_ks[k]
+        Wt_k = mf.apply_vk_kpt(Ct_k, kpts[k], C_ks, kpts,
+                               mesh=mesh, Gv=Gv, exxdiv=exxdiv)
+        L_k = scipy.linalg.cholesky(Ct_k.conj()@Wt_k.T, lower=True)
+        xi_k = scipy.linalg.solve_triangular(L_k.conj(), Wt_k, lower=True)
 
         key = 'ace_xi/%d'%k
         if key in facexi: del facexi[key]
@@ -294,9 +294,10 @@ def initialize_ACE_incore(mf, facexi, C_ks, kpts=None, mesh=None, Gv=None,
     return facexi
 
 
-def initialize_ACE_outcore(mf, facexi, C_ks, kpts=None, mesh=None, Gv=None,
-                           exxdiv=None):
-
+def initialize_ACE_s2(mf, facexi, C_ks, kpts=None, mesh=None, Gv=None,
+                      exxdiv=None):
+    """ Generate the ACE operator for the case where the source and target orbitals are the SAME (hence s2 symmetry reducing the cost by half).
+    """
     cell = mf.cell
     if mesh is None: mesh = cell.mesh
     if Gv is None: Gv = cell.get_Gv(mesh)
@@ -325,7 +326,7 @@ def initialize_ACE_outcore(mf, facexi, C_ks, kpts=None, mesh=None, Gv=None,
 
     if outcore:
         for k in range(nkpts):
-            fswap["Cbar_ks/%d"%k] = np.zeros((no_max,ngrids), dtype=dtype)
+            fswap["Cbar_ks/%d"%k] = np.zeros((no_ks[k],ngrids), dtype=dtype)
 
         buf1 = np.empty(no_max*ngrids, dtype=dtype)
         buf2 = np.empty(no_max*ngrids, dtype=dtype)
@@ -400,7 +401,7 @@ def initialize_ACE_outcore(mf, facexi, C_ks, kpts=None, mesh=None, Gv=None,
     return facexi
 
 
-def initialize_ACE(mf, facexi, C_ks, ace_exx=True, kpts=None,
+def initialize_ACE(mf, facexi, C_ks, Ct_ks=None, ace_exx=True, kpts=None,
                    mesh=None, Gv=None, exxdiv=None):
 
     tick = np.asarray([time.clock(), time.time()])
@@ -408,8 +409,12 @@ def initialize_ACE(mf, facexi, C_ks, ace_exx=True, kpts=None,
         mf.scf_summary["t-ace"] = np.zeros(2)
 
     if ace_exx:
-        facexi = initialize_ACE_outcore(mf, facexi, C_ks, kpts=kpts,
-                                        mesh=mesh, Gv=Gv, exxdiv=exxdiv)
+        if Ct_ks is None:
+            facexi = initialize_ACE_s2(mf, facexi, C_ks, kpts=kpts,
+                                       mesh=mesh, Gv=Gv, exxdiv=exxdiv)
+        else:
+            facexi = initialize_ACE_s1(mf, facexi, C_ks, Ct_ks, kpts=kpts,
+                                       mesh=mesh, Gv=Gv, exxdiv=exxdiv)
     else:
         facexi = None
 
