@@ -266,8 +266,8 @@ def apply_vk_kpt(mf, C_k, kpt, C_ks, kpts, ace_xi_k=None, mesh=None, Gv=None,
     return Cbar_k
 
 
-def initialize_ACE_incore(mf, facexi, C_ks, ace_exx=True, kpts=None,
-                          mesh=None, Gv=None, exxdiv=None):
+def initialize_ACE_incore(mf, facexi, C_ks, kpts=None, mesh=None, Gv=None,
+                          exxdiv=None):
 
     cell = mf.cell
     if mesh is None: mesh = cell.mesh
@@ -294,8 +294,8 @@ def initialize_ACE_incore(mf, facexi, C_ks, ace_exx=True, kpts=None,
     return facexi
 
 
-def initialize_ACE_outcore(mf, facexi, C_ks, ace_exx=True, kpts=None,
-                           mesh=None, Gv=None, exxdiv=None):
+def initialize_ACE_outcore(mf, facexi, C_ks, kpts=None, mesh=None, Gv=None,
+                           exxdiv=None):
 
     cell = mf.cell
     if mesh is None: mesh = cell.mesh
@@ -407,14 +407,11 @@ def initialize_ACE(mf, facexi, C_ks, ace_exx=True, kpts=None,
     if not "t-ace" in mf.scf_summary:
         mf.scf_summary["t-ace"] = np.zeros(2)
 
-    if not ace_exx:
-        tock = np.asarray([time.clock(), time.time()])
-        mf.scf_summary["t-ace"] += tock - tick
-        return None
-
-    facexi = initialize_ACE_outcore(mf, facexi, C_ks,
-                                    ace_exx=ace_exx, kpts=kpts,
-                                    mesh=mesh, Gv=Gv, exxdiv=exxdiv)
+    if ace_exx:
+        facexi = initialize_ACE_outcore(mf, facexi, C_ks, kpts=kpts,
+                                        mesh=mesh, Gv=Gv, exxdiv=exxdiv)
+    else:
+        facexi = None
 
     tock = np.asarray([time.clock(), time.time()])
     mf.scf_summary["t-ace"] += tock - tick
