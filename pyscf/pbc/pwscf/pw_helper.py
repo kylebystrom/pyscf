@@ -13,11 +13,11 @@ from pyscf.pbc.gto import pseudo
 from pyscf import lib
 
 
-def get_no_ks(mo_occ_ks):
-    return np.sum(np.asarray(mo_occ_ks),axis=1).astype(int)//2
+def get_no_ks_from_mocc(mocc_ks):
+    return np.asarray([np.sum(np.asarray(mocc) > 0) for mocc in mocc_ks])
 
 
-def get_Co_ks_G(cell, kpts, mo_coeff_ks, mo_occ_ks, no_ks=None):
+def get_Co_ks_G(cell, kpts, mo_coeff_ks, no_ks):
     """ Return Cik(G) for input MO coeff. The normalization convention is such that Cik(G).conj()@Cjk(G) = delta_ij.
     """
     nkpts = len(kpts)
@@ -31,10 +31,6 @@ def get_Co_ks_G(cell, kpts, mo_coeff_ks, mo_occ_ks, no_ks=None):
     ngrids = coords.shape[0]
     weight = mydf.grids.weights[0]
 
-    if no_ks is None:
-        no_ks = get_no_ks(mo_occ_ks)
-    elif no_ks.upper() == "ALL":
-        no_ks = [mo_occ_ks[k].size for k in range(nkpts)]
     Co_ks_R = [np.zeros([ngrids,no_ks[k]], dtype=mo_coeff_ks[0].dtype)
                for k in range(nkpts)]
     for ao_ks_etc, p0, p1 in mydf.aoR_loop(mydf.grids, kpts):
@@ -175,16 +171,17 @@ def apply_ppnl_kpt(mf, C_k, kpt, mesh=None, Gv=None):
 
 """ Columb energy
 """
-def get_vj_R(mf, C_ks, mesh=None, Gv=None):
+def get_vj_R(mf, C_ks, mocc_ks, mesh=None, Gv=None):
     cell = mf.cell
     if mesh is None: mesh = cell.mesh
     if Gv is None: Gv = cell.get_Gv(mesh)
     nkpts = len(C_ks)
     ngrids = np.prod(mesh)
+    no_ks = get_no_ks_from_mocc(mocc_ks)
 
     vj_G = np.zeros(ngrids, dtype=C_ks[0].dtype)
     for k in range(nkpts):
-        C_k_R = tools.ifft(C_ks[k], mesh)
+        C_k_R = tools.ifft(C_ks[k][:no_ks[k]], mesh)
         vj_G += np.einsum("ig,ig->g", C_k_R.conj(), C_k_R)
     vj_G = tools.fft(vj_G, mesh)
     vj_G *= ngrids**2 / (cell.vol*nkpts)
@@ -205,7 +202,8 @@ def apply_vj_kpt(mf, C_k, kpt, mesh=None, Gv=None, vj_R=None):
 
 """ Exchange energy
 """
-def apply_vk_kpt_(mf, C_k, kpt1, C_ks, kpts, mesh=None, Gv=None, exxdiv=None):
+def apply_vk_kpt(mf, C_k, kpt1, C_ks, mocc_ks, kpts,
+                  mesh=None, Gv=None, exxdiv=None):
     r""" Apply the EXX operator to given MOs
 
     Math:
@@ -222,23 +220,17 @@ def apply_vk_kpt_(mf, C_k, kpt1, C_ks, kpts, mesh=None, Gv=None, exxdiv=None):
     if Gv is None: Gv = cell.get_Gv(mesh)
     ngrids = Gv.shape[0]
     nkpts = len(kpts)
-    no_ks = [C_ks[jk].shape[0] for jk in range(nkpts)]
+    no_ks = get_no_ks_from_mocc(mocc_ks)
     fac = ngrids**2./(cell.vol*nkpts)
-
-    mydf = df.FFTDF(cell)
-    mydf.exxdiv = exxdiv
 
     Cbar_k = np.zeros_like(C_k)
     C_k_R = tools.ifft(C_k, mesh)
 
     for k2 in range(nkpts):
         kpt2 = kpts[k2]
-        if exxdiv == 'ewald' or exxdiv is None:
-            coulG = tools.get_coulG(cell, kpt1-kpt2, False, mydf, mesh)
-        else:
-            coulG = tools.get_coulG(cell, kpt1-kpt2, True, mydf, mesh)
+        coulG = tools.get_coulG(cell, kpt1-kpt2, exx=False, mesh=mesh)
 
-        C_k2_R = tools.ifft(C_ks[k2], mesh)
+        C_k2_R = tools.ifft(C_ks[k2][:no_ks[k2]], mesh)
         for j in range(no_ks[k2]):
             Cj_k2_R = C_k2_R[j]
             vij_R = tools.ifft(
@@ -255,67 +247,94 @@ def apply_vk_kpt_ace(mf, C_k, ace_xi_k):
     return Cbar_k
 
 
-def apply_vk_kpt(mf, C_k, kpt, C_ks, kpts, ace_xi_k=None, mesh=None, Gv=None,
-                 exxdiv=None):
-    if ace_xi_k is None:
-        Cbar_k = apply_vk_kpt_(mf, C_k, kpt, C_ks, kpts,
-                               mesh=mesh, Gv=Gv, exxdiv=exxdiv)
-    else:
-        Cbar_k = apply_vk_kpt_ace(mf, C_k, ace_xi_k)
-
-    return Cbar_k
-
-
-def initialize_ACE_s1(mf, facexi, C_ks, Ct_ks, kpts=None, mesh=None, Gv=None,
-                      exxdiv=None):
-
-    cell = mf.cell
-    if mesh is None: mesh = cell.mesh
-    if Gv is None: Gv = cell.get_Gv(mesh)
-    if exxdiv is None: exxdiv = mf.exxdiv
-    if kpts is None: kpts = mf.kpts
-    nkpts = len(kpts)
-
-    for k in range(nkpts):
-        Ct_k = Ct_ks[k]
-        Wt_k = mf.apply_vk_kpt(Ct_k, kpts[k], C_ks, kpts,
-                               mesh=mesh, Gv=Gv, exxdiv=exxdiv)
-        L_k = scipy.linalg.cholesky(Ct_k.conj()@Wt_k.T, lower=True)
-        xi_k = scipy.linalg.solve_triangular(L_k.conj(), Wt_k, lower=True)
-
-        key = 'ace_xi/%d'%k
-        if key in facexi: del facexi[key]
-        facexi[key] = xi_k
-
-        # debug
-        # W_k_prime = (C_k @ xi_k.conj().T) @ xi_k
-        # assert(np.linalg.norm(W_k - W_k_prime) < 1e-8)
-
-    return facexi
-
-
-def initialize_ACE_s2(mf, facexi, C_ks, kpts=None, mesh=None, Gv=None,
-                      exxdiv=None):
-    """ Generate the ACE operator for the case where the source and target orbitals are the SAME (hence s2 symmetry reducing the cost by half).
+def apply_vk_s1(cell, C_ks, Ct_ks, mocc_ks, kpts, mesh, Gv, exxdiv,
+                fout=None, dataname="Cbar_ks"):
     """
-    cell = mf.cell
-    if mesh is None: mesh = cell.mesh
-    if Gv is None: Gv = cell.get_Gv(mesh)
-    if exxdiv is None: exxdiv = mf.exxdiv
-    if kpts is None: kpts = mf.kpts
+        Args:
+            fout (None or h5py.File object):
+                Where to store the result vectors. If h5py.File object, results are written to it (overwritten dataname if exists). If None, incore mode is used and a list of Nk numpy arrays is returned.
+    """
     nkpts = len(kpts)
+    ngrids = np.prod(mesh)
+    fac = ngrids**2./(cell.vol*nkpts)
 
-    mydf = df.FFTDF(cell)
-    mydf.exxdiv = exxdiv
-    no_ks = [C_ks[k].shape[0] for k in range(nkpts)]
-    no_max = np.max(no_ks)
-    ngrids = Gv.shape[0]
+    no_ks = [np.sum(mocc_ks[k]>0) for k in range(nkpts)]
+    nt_ks = [Ct_ks[k].shape[0] for k in range(nkpts)]
+
     dtype = np.complex128
     dsize = 16
 
-    max_memory = (mydf.max_memory - lib.current_memory()[0]) * 0.4
-    est_memory = np.sum(no_ks)*ngrids*dsize/1024**2.
-    outcore = est_memory > max_memory
+    if fout is None:
+        # check if the output Ctbar_ks fits memory
+        max_memory = (cell.max_memory - lib.current_memory()[0]) * 0.4
+        est_memory = np.sum(nt_ks)*ngrids*dsize/1024**2.
+        outcore = est_memory > max_memory
+        if outcore:
+            logger.warn(cell, "Result vectors cannot fit memory. Try outcore mode by specifying fout.")
+            raise RuntimeError
+        Cbar_ks = [None] * nkpts
+    else:
+        outcore = True
+        if dataname in fout: del fout[dataname]
+        Cbar_ks = fout.create_group(dataname)
+
+    swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+    fswap = lib.H5TmpFile(swapfile.name)
+    swapfile = None
+
+    for k in range(nkpts):
+        fswap["Co_ks_R/%s"%k] = tools.ifft(C_ks[k][:no_ks[k]], mesh)
+    for k in range(nkpts):
+        fswap["Ct_ks_R/%s"%k] = tools.ifft(Ct_ks[k], mesh)
+
+    for k1,kpt1 in enumerate(kpts):
+        Ct_k1_R = fswap["Ct_ks_R/%d"%k1][()]
+        Ctbar_k1 = np.zeros_like(Ct_k1_R)
+        for k2,kpt2 in enumerate(kpts):
+            coulG = tools.get_coulG(cell, kpt1-kpt2, exx=False, mesh=mesh)
+            Co_k2_R = fswap["Co_ks_R/%d"%k2][()]
+            for j in range(no_ks[k2]):
+                Cj_k2_R = Co_k2_R[j]
+                vij_R = tools.ifft(tools.fft(Ct_k1_R * Cj_k2_R.conj(), mesh) *
+                                   coulG, mesh)
+                Ctbar_k1 += vij_R * Cj_k2_R
+
+        if outcore:
+            Cbar_ks["%d"%k1] = tools.fft(Ctbar_k1, mesh) * fac
+        else:
+            Cbar_ks[k1] = tools.fft(Ctbar_k1, mesh) * fac
+        Ctbar_k1 = None
+
+    return Cbar_ks
+
+
+def apply_vk_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv, exxdiv,
+                fout=None, dataname="Cbar_ks"):
+    nkpts = len(kpts)
+    ngrids = np.prod(mesh)
+    fac = ngrids**2./(cell.vol*nkpts)
+
+    n_ks = [C_ks[k].shape[0] for k in range(nkpts)]
+    no_ks = [np.sum(mocc_ks[k]>0) for k in range(nkpts)]
+
+    n_max = np.max(n_ks)
+    no_max = np.max(no_ks)
+    dtype = np.complex128
+    dsize = 16
+
+    if fout is None:
+        # check if the output Cbar_ks fits memory
+        max_memory = (cell.max_memory - lib.current_memory()[0]) * 0.4
+        est_memory = np.sum(n_ks)*ngrids*dsize/1024**2.
+        outcore = est_memory > max_memory
+        if outcore:
+            logger.warn(cell, "Result vectors cannot fit into memory. Try outcore mode by specifying fout.")
+            raise RuntimeError
+        Cbar_ks = [None] * nkpts
+    else:
+        outcore = True
+        if dataname in fout: del fout[dataname]
+        Cbar_ks = fout.create_group(dataname)
 
     swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
     fswap = lib.H5TmpFile(swapfile.name)
@@ -324,104 +343,133 @@ def initialize_ACE_s2(mf, facexi, C_ks, kpts=None, mesh=None, Gv=None,
     for k in range(nkpts):
         fswap["C_ks_R/%d"%k] = tools.ifft(C_ks[k], mesh)
 
+    for k in range(nkpts):
+        key = "%d"%k if outcore else k
+        Cbar_ks[key] = np.zeros((n_ks[k],ngrids), dtype=dtype)
+
+    buf1 = np.empty(n_max*ngrids, dtype=dtype)
+    buf2 = np.empty(no_max*ngrids, dtype=dtype)
+    for k1,kpt1 in enumerate(kpts):
+        C_k1_R = fswap["C_ks_R/%d"%k1][()]
+        no_k1 = no_ks[k1]
+        n_k1 = n_ks[k1]
+        Cbar_k1 = np.ndarray((n_k1,ngrids), dtype=dtype, buffer=buf1)
+        Cbar_k1.fill(0)
+        for k2,kpt2 in enumerate(kpts):
+            if n_k1 == no_k1 and k2 > k1: continue
+
+            C_k2_R = fswap["C_ks_R/%d"%k2][()]
+            no_k2 = no_ks[k2]
+
+            coulG = tools.get_coulG(cell, kpt1-kpt2, exx=False, mesh=mesh)
+
+            # o --> o
+            if k2 <= k1:
+                Cbar_k2 = np.ndarray((no_k2,ngrids), dtype=dtype, buffer=buf2)
+                Cbar_k2.fill(0)
+
+                for i in range(no_k1):
+                    jmax = i+1 if k2 == k1 else no_k2
+                    jmax2 = jmax-1 if k2 == k1 else jmax
+                    vji_R = tools.ifft(tools.fft(C_k2_R[:jmax].conj() *
+                                       C_k1_R[i], mesh) * coulG, mesh)
+                    Cbar_k1[i] += np.sum(vji_R * C_k2_R[:jmax], axis=0)
+                    Cbar_k2[:jmax2] += vji_R[:jmax2].conj() * C_k1_R[i]
+
+                if outcore:
+                    Cbar_ks["%d"%k2][:no_k2] += Cbar_k2
+                else:
+                    Cbar_ks[k2][:no_k2] += Cbar_k2
+
+            # o --> v
+            if n_k1 > no_k1:
+                for j in range(no_ks[k2]):
+                    vij_R = tools.ifft(tools.fft(C_k1_R[no_k1:] *
+                                                 C_k2_R[j].conj(), mesh) *
+                                       coulG, mesh)
+                    Cbar_k1[no_k1:] += vij_R  * C_k2_R[j]
+
+        if outcore:
+            Cbar_ks["%d"%k1][()] += Cbar_k1
+        else:
+            Cbar_ks[k1] += Cbar_k1
+
     if outcore:
         for k in range(nkpts):
-            fswap["Cbar_ks/%d"%k] = np.zeros((no_ks[k],ngrids), dtype=dtype)
-
-        buf1 = np.empty(no_max*ngrids, dtype=dtype)
-        buf2 = np.empty(no_max*ngrids, dtype=dtype)
-        for k12 in range(nkpts*nkpts):
-            k1 = k12 // nkpts
-            k2 = k12 % nkpts
-            if k2 > k1: continue
-            kpt1 = kpts[k1]
-            no_k1 = no_ks[k1]
-            C_k1_R = fswap["C_ks_R/%d"%k1][()]
-            kpt2 = kpts[k2]
-            no_k2 = no_ks[k2]
-            C_k2_R = fswap["C_ks_R/%d"%k2][()]
-            if exxdiv == 'ewald' or exxdiv is None:
-                coulG = tools.get_coulG(cell, kpt1-kpt2, False, mydf, mesh)
-            else:
-                coulG = tools.get_coulG(cell, kpt1-kpt2, True, mydf, mesh)
-
-            Cbar_k1 = np.ndarray((no_k1,ngrids), dtype=dtype, buffer=buf1)
-            Cbar_k2 = np.ndarray((no_k2,ngrids), dtype=dtype, buffer=buf2)
-            Cbar_k1.fill(0)
-            Cbar_k2.fill(0)
-            for i in range(no_k1):
-                jmax = i+1 if k2 == k1 else no_k2
-                jmax2 = jmax-1 if k2 == k1 else jmax
-                vji_R = tools.ifft(tools.fft(C_k2_R[:jmax].conj() * C_k1_R[i],
-                                   mesh) * coulG, mesh)
-                Cbar_k1[i] += np.sum(vji_R * C_k2_R[:jmax], axis=0)
-                Cbar_k2[:jmax2] += vji_R[:jmax2].conj() * C_k1_R[i]
-
-            fswap["Cbar_ks/%d"%k1][()] += Cbar_k1
-            fswap["Cbar_ks/%d"%k2][()] += Cbar_k2
-        buf1 = buf2 = None
+            Cbar_ks["%d"%k][()] = tools.fft(Cbar_ks["%d"%k][()], mesh) * fac
     else:
-        Cbar_ks = [np.zeros((no_ks[k],ngrids), dtype=dtype)
-                   for k in range(nkpts)]
-        for k12 in range(nkpts*nkpts):
-            k1 = k12 // nkpts
-            k2 = k12 % nkpts
-            if k2 > k1: continue
-            kpt1 = kpts[k1]
-            no_k1 = no_ks[k1]
-            C_k1_R = fswap["C_ks_R/%d"%k1][()]
-            kpt2 = kpts[k2]
-            no_k2 = no_ks[k2]
-            C_k2_R = fswap["C_ks_R/%d"%k2][()]
-            if exxdiv == 'ewald' or exxdiv is None:
-                coulG = tools.get_coulG(cell, kpt1-kpt2, False, mydf, mesh)
-            else:
-                coulG = tools.get_coulG(cell, kpt1-kpt2, True, mydf, mesh)
+        for k in range(nkpts):
+            Cbar_ks[k] = tools.fft(Cbar_ks[k], mesh) * fac
 
-            for i in range(no_k1):
-                jmax = i+1 if k2 == k1 else no_k2
-                jmax2 = jmax-1 if k2 == k1 else jmax
-                vji_R = tools.ifft(tools.fft(C_k2_R[:jmax].conj() * C_k1_R[i],
-                                   mesh) * coulG, mesh)
-                Cbar_ks[k1][i] += np.sum(vji_R * C_k2_R[:jmax], axis=0)
-                Cbar_ks[k2][:jmax2] += vji_R[:jmax2].conj() * C_k1_R[i]
+    return Cbar_ks
 
-    fac = ngrids**2./(cell.vol*nkpts)
+
+def initialize_ACE_from_W(C_ks, W_ks, facexi, dataname):
+    if dataname in facexi: del facexi[dataname]
+    xi_ks = facexi.create_group(dataname)
+
+    incore = isinstance(W_ks, list)
+
+    nkpts = len(C_ks)
     for k in range(nkpts):
         C_k = C_ks[k]
-        Cbar_k = fswap["Cbar_ks/%d"%k][()] if outcore else Cbar_ks[k]
-        W_k = tools.fft(Cbar_k, mesh) * fac
+        W_k = W_ks[k] if incore else W_ks["%d"%k][()]
         L_k = scipy.linalg.cholesky(C_k.conj()@W_k.T, lower=True)
-        xi_k = scipy.linalg.solve_triangular(L_k.conj(), W_k, lower=True)
+        xi_ks["%d"%k] = scipy.linalg.solve_triangular(L_k.conj(), W_k,
+                                                      lower=True)
 
-        key = 'ace_xi/%d'%k
-        if key in facexi: del facexi[key]
-        facexi[key] = xi_k
+        # debug
+        # xi_k = xi_ks["%d"%k][()]
+        # W_k_prime = (C_k @ xi_k.conj().T) @ xi_k
+        # assert(np.linalg.norm(W_k - W_k_prime) < 1e-8)
 
     return facexi
 
 
-def initialize_ACE(mf, facexi, C_ks, Ct_ks=None, ace_exx=True, kpts=None,
-                   mesh=None, Gv=None, exxdiv=None):
-
+def initialize_ACE(mf, C_ks, mocc_ks, facexi, dataname="ace_xi",
+                   Ct_ks=None, kpts=None, mesh=None, Gv=None, exxdiv=None):
     tick = np.asarray([time.clock(), time.time()])
     if not "t-ace" in mf.scf_summary:
         mf.scf_summary["t-ace"] = np.zeros(2)
 
-    if ace_exx:
+    if not facexi is None:
+        cell = mf.cell
+        kpts = mf.kpts
+        if mesh is None: mesh = cell.mesh
+        if Gv is None: Gv = cell.get_Gv(mesh)
+        if exxdiv is None: exxdiv = mf.exxdiv
+
+        swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+        fout = lib.H5TmpFile(swapfile.name)
+        swapfile = None
+
         if Ct_ks is None:
-            facexi = initialize_ACE_s2(mf, facexi, C_ks, kpts=kpts,
-                                       mesh=mesh, Gv=Gv, exxdiv=exxdiv)
+            W_ks = apply_vk_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv, exxdiv,
+                               fout=fout)
+            # debug
+            # nkpts = len(kpts)
+            # W_ks_ = [apply_vk_kpt(mf, C_ks[k], kpts[k], C_ks, mocc_ks, kpts,
+            #                        mesh=mesh, Gv=Gv, exxdiv=exxdiv)
+            #                        for k in range(nkpts)]
+            # for k in range(nkpts):
+            #     print(np.linalg.norm(W_ks[k] - W_ks_[k]))
+            # sys.exit(1)
+            initialize_ACE_from_W(C_ks, W_ks, facexi, dataname)
         else:
-            facexi = initialize_ACE_s1(mf, facexi, C_ks, Ct_ks, kpts=kpts,
-                                       mesh=mesh, Gv=Gv, exxdiv=exxdiv)
-    else:
-        facexi = None
+            W_ks = apply_vk_s1(cell, C_ks, Ct_ks, mocc_ks, kpts, mesh, Gv,
+                               exxdiv, fout=fout)
+            # debug
+            # nkpts = len(kpts)
+            # W_ks_ = [apply_vk_kpt(mf, C_ks[k], kpts[k], C_ks, mocc_ks, kpts,
+            #                        mesh=mesh, Gv=Gv, exxdiv=exxdiv)
+            #                        for k in range(nkpts)]
+            # for k in range(nkpts):
+            #     print(np.linalg.norm(W_ks[k] - W_ks_[k]))
+            # sys.exit(1)
+            initialize_ACE_from_W(Ct_ks, W_ks, facexi, dataname)
 
     tock = np.asarray([time.clock(), time.time()])
     mf.scf_summary["t-ace"] += tock - tick
-
-    return facexi
 
 
 """ Charge mixing methods
