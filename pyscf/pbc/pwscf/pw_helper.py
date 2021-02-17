@@ -74,27 +74,20 @@ def get_vpplocR(mf, Gv=None, mesh=None):
     cell = mf.cell
     if mesh is None: mesh = cell.mesh
     if Gv is None: Gv = cell.get_Gv(mesh)
+    ngrids = Gv.shape[0]
+    fac = ngrids / cell.vol
     SI = cell.get_SI()
     vpplocG = pseudo.get_vlocG(cell, Gv)
     vpplocG = -np.einsum('ij,ij->j', SI, vpplocG)
 
-    return tools.ifft(vpplocG, mesh).real
+    return tools.ifft(vpplocG, mesh).real * fac
 
 
 def apply_ppl_kpt(mf, C_k, kpt, mesh=None, Gv=None, vpplocR=None):
 
-    cell = mf.cell
-    if mesh is None: mesh = cell.mesh
-    if Gv is None: Gv = cell.get_Gv(mesh)
-
-    ngrids = Gv.shape[0]
-    no = C_k.shape[0]
-    fac = ngrids / cell.vol
-
     if vpplocR is None: vpplocR = mf.get_vpplocR(Gv=Gv, mesh=mesh)
 
-    # local pp
-    Cbar_k = tools.fft(tools.ifft(C_k, mesh) * vpplocR, mesh) * fac
+    Cbar_k = tools.fft(tools.ifft(C_k, mesh) * vpplocR, mesh)
 
     return Cbar_k
 
