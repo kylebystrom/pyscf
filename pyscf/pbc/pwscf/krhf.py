@@ -501,8 +501,10 @@ def get_init_guess(mf, basis=None, pseudo=None, nv=0, key="hcore"):
     no = cell.nelectron // 2
     nao = cell.nao_nr()
     nkeep = no + nv
-    assert(nkeep <= nao)
-    nkeep_ks = [nkeep] * nkpts
+    # assert(nkeep <= nao)
+    if nkeep > nao:
+        logger.warn(mf, "Requesting more init orbitals than in the AO basis (%d > %d). %d random orbitals will be added. This may slow down the SCF process.", nkeep, nao, nkeep-nao)
+    nkeep_ks = [min(nkeep,nao)] * nkpts
 
     logger.info(mf, "generating init guess using %s basis", cell.basis)
 
@@ -530,7 +532,42 @@ def get_init_guess(mf, basis=None, pseudo=None, nv=0, key="hcore"):
 
     C_ks = orth_mo(mf, C_ks, mocc_ks)
 
+    if nkeep > nkeep_ks[0]:
+        C_ks = init_guess_random([nkeep]*nkpts, C_ks=C_ks)
+        mocc_ks = get_mo_occ(cell, C_ks=C_ks)
+
     return C_ks, mocc_ks
+
+
+def init_guess_random(n_ks, ngrids=None, C_ks=None):
+    nkpts = len(n_ks)
+    assert(not (ngrids is None and C_ks is None))
+    if ngrids is None: ngrids = C_ks[0].shape[1]
+
+    def orthnormal(C0, C1):
+        if not C0 is None:
+            C1 -= (C1 @ C0.conj().T) @ C0
+        S = C1.conj() @ C1.T
+        e, u = scipy.linalg.eigh(S)
+        U = u * e**-0.5
+        return U.T @ C1
+
+    for k in range(nkpts):
+        if C_ks is None:
+            C0 = None
+            n0 = 0
+        else:
+            C0 = C_ks[k]
+            n0 = C0.shape[0]
+        n1 = n_ks[k] - n0
+        C1 = np.random.rand(n1, ngrids) + 0j
+        C1 = orthnormal(C0, C1)
+        if C_ks is None:
+            C_ks[k] = C1
+        else:
+            C_ks[k] = np.vstack([C0, C1])
+
+    return C_ks
 
 
 def init_guess_by_chkfile(cell, chkfile_name, project=None, kpts=None):
