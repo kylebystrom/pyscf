@@ -20,7 +20,6 @@ from pyscf.lib import logger
 import pyscf.lib.parameters as param
 
 
-# TODO: calculate C_k_R once for all local operations
 # TODO: make it completely outcore!!!
 
 
@@ -666,7 +665,8 @@ def apply_Fock_local_kpt(cell, C_k, kpt, mesh, Gv, vpplocR, vj_R, ret_E=False):
     tock = np.asarray([time.clock(), time.time()])
     tspans[0] = tock - tick
 
-    tmp = pw_helper.apply_ppl_kpt(C_k, mesh, vpplocR)
+    C_k_R = tools.ifft(C_k, mesh)
+    tmp = tools.fft(C_k_R * vpplocR, mesh)
     Cbar_k += tmp
     es[1] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2
     tick = np.asarray([time.clock(), time.time()])
@@ -679,7 +679,7 @@ def apply_Fock_local_kpt(cell, C_k, kpt, mesh, Gv, vpplocR, vj_R, ret_E=False):
     tspans[2] = tock - tick
 
     if not vj_R is None:
-        tmp = pw_helper.apply_vj_kpt(C_k, mesh, vj_R)
+        tmp = tools.fft(C_k_R * vj_R, mesh)
         Cbar_k += tmp * 2
         es[3] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2.
         tick = np.asarray([time.clock(), time.time()])
