@@ -13,6 +13,21 @@ from pyscf.pbc.gto import pseudo
 from pyscf import lib
 
 
+""" Helper functions
+"""
+def timing_call(func, args, tdict, tname):
+    tick = np.asarray([time.clock(), time.time()])
+
+    res = func(*args)
+
+    tock = np.asarray([time.clock(), time.time()])
+    if not tname in tdict:
+        tdict[tname] = np.zeros(2)
+    tdict[tname] += tock - tick
+
+    return res
+
+
 def get_no_ks_from_mocc(mocc_ks):
     return np.asarray([np.sum(np.asarray(mocc) > 0) for mocc in mocc_ks])
 
@@ -56,10 +71,7 @@ def get_Co_ks_G(cell, kpts, mo_coeff_ks, no_ks):
 
 """ kinetic energy
 """
-def apply_kin_kpt(mf, C_k, kpt, mesh=None, Gv=None):
-    cell = mf.cell
-    if mesh is None: mesh = cell.mesh
-    if Gv is None: Gv = cell.get_Gv(mesh)
+def apply_kin_kpt(C_k, kpt, mesh, Gv):
     no = C_k.shape[0]
     kG = kpt + Gv if np.sum(np.abs(kpt)) > 1.E-9 else Gv
     kG2 = np.einsum("gj,gj->g", kG, kG) * 0.5
@@ -70,8 +82,7 @@ def apply_kin_kpt(mf, C_k, kpt, mesh=None, Gv=None):
 
 """ Pseudopotential
 """
-def get_vpplocR(mf, Gv=None, mesh=None):
-    cell = mf.cell
+def get_vpplocR(cell, mesh=None, Gv=None):
     if mesh is None: mesh = cell.mesh
     if Gv is None: Gv = cell.get_Gv(mesh)
     ngrids = Gv.shape[0]
@@ -83,19 +94,14 @@ def get_vpplocR(mf, Gv=None, mesh=None):
     return tools.ifft(vpplocG, mesh).real * fac
 
 
-def apply_ppl_kpt(mf, C_k, kpt, mesh=None, Gv=None, vpplocR=None):
-
-    if vpplocR is None: vpplocR = mf.get_vpplocR(Gv=Gv, mesh=mesh)
+def apply_ppl_kpt(C_k, mesh, vpplocR):
 
     Cbar_k = tools.fft(tools.ifft(C_k, mesh) * vpplocR, mesh)
 
     return Cbar_k
 
 
-def apply_ppnl_kpt(mf, C_k, kpt, mesh=None, Gv=None):
-    cell = mf.cell
-    if mesh is None: mesh = cell.mesh
-    if Gv is None: Gv = cell.get_Gv(mesh)
+def apply_ppnl_kpt(cell, C_k, kpt, mesh, Gv):
     SI = cell.get_SI()
     no = C_k.shape[0]
     ngrids = Gv.shape[0]
@@ -164,8 +170,7 @@ def apply_ppnl_kpt(mf, C_k, kpt, mesh=None, Gv=None):
 
 """ Columb energy
 """
-def get_vj_R(mf, C_ks, mocc_ks, mesh=None, Gv=None):
-    cell = mf.cell
+def get_vj_R(cell, C_ks, mocc_ks, mesh=None, Gv=None):
     if mesh is None: mesh = cell.mesh
     if Gv is None: Gv = cell.get_Gv(mesh)
     nkpts = len(C_ks)
@@ -184,10 +189,7 @@ def get_vj_R(mf, C_ks, mocc_ks, mesh=None, Gv=None):
     return vj_R
 
 
-def apply_vj_kpt(mf, C_k, kpt, mesh=None, Gv=None, vj_R=None):
-
-    if vj_R is None: vj_R = mf.get_vj_R(C_ks, mesh=mesh, Gv=Gv)
-
+def apply_vj_kpt(C_k, mesh, vj_R):
     Cbar_k = tools.fft(tools.ifft(C_k, mesh) * vj_R, mesh)
 
     return Cbar_k
@@ -195,7 +197,7 @@ def apply_vj_kpt(mf, C_k, kpt, mesh=None, Gv=None, vj_R=None):
 
 """ Exchange energy
 """
-def apply_vk_kpt(mf, C_k, kpt1, C_ks, mocc_ks, kpts,
+def apply_vk_kpt(cell, C_k, kpt1, C_ks, mocc_ks, kpts,
                   mesh=None, Gv=None, exxdiv=None):
     r""" Apply the EXX operator to given MOs
 
@@ -208,7 +210,6 @@ def apply_vk_kpt(mf, C_k, kpt1, C_ks, mocc_ks, kpts,
         v_r = iFFT(rho_G * coulG)
         Cbar_ik_G = FFT(v_r * C_jk'_r)
     """
-    cell = mf.cell
     if mesh is None: mesh = cell.mesh
     if Gv is None: Gv = cell.get_Gv(mesh)
     ngrids = Gv.shape[0]
@@ -235,12 +236,12 @@ def apply_vk_kpt(mf, C_k, kpt1, C_ks, mocc_ks, kpts,
     return Cbar_k
 
 
-def apply_vk_kpt_ace(mf, C_k, ace_xi_k):
+def apply_vk_kpt_ace(C_k, ace_xi_k):
     Cbar_k = (C_k @ ace_xi_k.conj().T) @ ace_xi_k
     return Cbar_k
 
 
-def apply_vk_s1(cell, C_ks, Ct_ks, mocc_ks, kpts, mesh, Gv, exxdiv,
+def apply_vk_s1(cell, C_ks, Ct_ks, mocc_ks, kpts, mesh, Gv,
                 fout=None, dataname="Cbar_ks"):
     """
         Args:
@@ -301,7 +302,7 @@ def apply_vk_s1(cell, C_ks, Ct_ks, mocc_ks, kpts, mesh, Gv, exxdiv,
     return Cbar_ks
 
 
-def apply_vk_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv, exxdiv,
+def apply_vk_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv,
                 fout=None, dataname="Cbar_ks"):
     nkpts = len(kpts)
     ngrids = np.prod(mesh)
@@ -419,29 +420,19 @@ def initialize_ACE_from_W(C_ks, W_ks, facexi, dataname):
     return facexi
 
 
-def initialize_ACE(mf, C_ks, mocc_ks, facexi, dataname="ace_xi",
-                   Ct_ks=None, kpts=None, mesh=None, Gv=None, exxdiv=None):
-    tick = np.asarray([time.clock(), time.time()])
-    if not "t-ace" in mf.scf_summary:
-        mf.scf_summary["t-ace"] = np.zeros(2)
+def initialize_ACE(cell, C_ks, mocc_ks, kpts, mesh, Gv, facexi, dataname,
+                   Ct_ks=None):
 
     if not facexi is None:
-        cell = mf.cell
-        kpts = mf.kpts
-        if mesh is None: mesh = cell.mesh
-        if Gv is None: Gv = cell.get_Gv(mesh)
-        if exxdiv is None: exxdiv = mf.exxdiv
-
         swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
         fout = lib.H5TmpFile(swapfile.name)
         swapfile = None
 
         if Ct_ks is None:
-            W_ks = apply_vk_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv, exxdiv,
-                               fout=fout)
+            W_ks = apply_vk_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv, fout=fout)
             # debug
             # nkpts = len(kpts)
-            # W_ks_ = [apply_vk_kpt(mf, C_ks[k], kpts[k], C_ks, mocc_ks, kpts,
+            # W_ks_ = [apply_vk_kpt(cell, C_ks[k], kpts[k], C_ks, mocc_ks, kpts,
             #                        mesh=mesh, Gv=Gv, exxdiv=exxdiv)
             #                        for k in range(nkpts)]
             # for k in range(nkpts):
@@ -450,19 +441,16 @@ def initialize_ACE(mf, C_ks, mocc_ks, facexi, dataname="ace_xi",
             initialize_ACE_from_W(C_ks, W_ks, facexi, dataname)
         else:
             W_ks = apply_vk_s1(cell, C_ks, Ct_ks, mocc_ks, kpts, mesh, Gv,
-                               exxdiv, fout=fout)
+                               fout=fout)
             # debug
             # nkpts = len(kpts)
-            # W_ks_ = [apply_vk_kpt(mf, C_ks[k], kpts[k], C_ks, mocc_ks, kpts,
+            # W_ks_ = [apply_vk_kpt(cell, C_ks[k], kpts[k], C_ks, mocc_ks, kpts,
             #                        mesh=mesh, Gv=Gv, exxdiv=exxdiv)
             #                        for k in range(nkpts)]
             # for k in range(nkpts):
             #     print(np.linalg.norm(W_ks[k] - W_ks_[k]))
             # sys.exit(1)
             initialize_ACE_from_W(Ct_ks, W_ks, facexi, dataname)
-
-    tock = np.asarray([time.clock(), time.time()])
-    mf.scf_summary["t-ace"] += tock - tick
 
 
 """ Charge mixing methods
