@@ -40,11 +40,15 @@ def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
         mocc_ks = get_mo_occ(cell, C_ks=C_ks)
 
     # init E
-    vpplocR = mf.get_vpplocR()
-    vj_R = mf.get_vj_R(C_ks, mocc_ks)
-    moe_ks = mf.get_mo_energy(C_ks, mocc_ks, vpplocR=vpplocR, vj_R=vj_R)
+    mesh = cell.mesh
+    Gv = cell.get_Gv(mesh)
+    vpplocR = mf.get_vpplocR(mesh=mesh, Gv=Gv)
+    vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
+    moe_ks = mf.get_mo_energy(C_ks, mocc_ks, mesh=mesh, Gv=Gv,
+                              vpplocR=vpplocR, vj_R=vj_R)
     mocc_ks = get_mo_occ(cell, moe_ks)
-    e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks, vpplocR=vpplocR)
+    e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks, mesh=mesh, Gv=Gv,
+                          vpplocR=vpplocR)
     logger.info(mf, 'init E= %.15g', e_tot)
     mf.dump_moe(moe_ks, mocc_ks)
 
@@ -64,7 +68,9 @@ def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
     for cycle in range(max_cycle):
 
         conv_ks, moe_ks, C_ks, fc_ks = mf.converge_band(
-                            C_ks, mocc_ks, kpts, moe_ks=moe_ks,
+                            C_ks, mocc_ks, kpts,
+                            mesh=mesh, Gv=Gv,
+                            C_ks_exx=list(C_ks),
                             vpplocR=vpplocR, vj_R=vj_R,
                             conv_tol_davidson=conv_tol_davidson,
                             max_cycle_davidson=max_cycle_davidson,
@@ -72,11 +78,13 @@ def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
         fc_this = sum(fc_ks)
         fc_tot += fc_this
 
-        vj_R = mf.get_vj_R(C_ks, mocc_ks)
-        moe_ks = mf.get_mo_energy(C_ks, mocc_ks, vpplocR=vpplocR, vj_R=vj_R)
+        vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
+        moe_ks = mf.get_mo_energy(C_ks, mocc_ks, mesh=mesh, Gv=Gv,
+                                  vpplocR=vpplocR, vj_R=vj_R)
         mocc_ks = get_mo_occ(cell, moe_ks)
         last_hf_e = e_tot
-        e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks, vpplocR=vpplocR)
+        e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks, mesh=mesh, Gv=Gv,
+                              vpplocR=vpplocR)
         de = e_tot-last_hf_e if cycle > 0 else 10
         logger.info(mf, 'cycle= %d E= %.15g  delta_E= %4.3g  %d FC (%d tot)',
                     cycle+1, e_tot, de, fc_this, fc_tot)
@@ -102,18 +110,21 @@ def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
         # An extra diagonalization, to remove level shift
         #fock = mf.get_fock(h1e, s1e, vhf, dm)  # = h1e + vhf
         conv_ks, moe_ks, C_ks, fc_ks = mf.converge_band(
-                            C_ks, mocc_ks, kpts, moe_ks=moe_ks,
+                            C_ks, mocc_ks, kpts,
+                            mesh=mesh, Gv=Gv,
                             vpplocR=vpplocR, vj_R=vj_R,
                             conv_tol_davidson=conv_tol_davidson,
                             max_cycle_davidson=max_cycle_davidson,
                             verbose_davidson=verbose_davidson)
         fc_this = sum(fc_ks)
         fc_tot += fc_this
-        vj_R = mf.get_vj_R(C_ks, mocc_ks)
-        moe_ks = mf.get_mo_energy(C_ks, mocc_ks, vpplocR=vpplocR, vj_R=vj_R)
+        vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
+        moe_ks = mf.get_mo_energy(C_ks, mocc_ks, mesh=mesh, Gv=Gv,
+                                  vpplocR=vpplocR, vj_R=vj_R)
         mocc_ks = get_mo_occ(cell, moe_ks)
         last_hf_e = e_tot
-        e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks, vpplocR=vpplocR)
+        e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks, mesh=mesh, Gv=Gv,
+                              vpplocR=vpplocR)
         de = e_tot-last_hf_e if cycle > 0 else 10
         if callable(mf.check_convergence):
             scf_conv = mf.check_convergence(locals())
@@ -343,7 +354,7 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, mesh=None, Gv=None,
 
         conv_ks, moe_ks, C_ks, fc_ks = mf.converge_band(
                             C_ks, mocc_ks, kpts,
-                            mesh=mesh, Gv=Gv, moe_ks=moe_ks,
+                            mesh=mesh, Gv=Gv,
                             C_ks_exx=C_ks_exx, facexi=facexi,
                             vpplocR=vpplocR, vj_R=vj_R,
                             conv_tol_davidson=conv_tol_davidson,
@@ -782,10 +793,11 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
     return e_scf
 
 
-def energy_tot(mf, C_ks, mocc_ks, moe_ks=None, C_ks_exx=None, facexi=None,
+def energy_tot(mf, C_ks, mocc_ks, moe_ks=None, mesh=None, Gv=None,
+               C_ks_exx=None, facexi=None,
                vpplocR=None, vj_R=None, exxdiv=None):
     e_nuc = mf.scf_summary["nuc"]
-    e_scf = mf.energy_elec(C_ks, mocc_ks, moe_ks=moe_ks,
+    e_scf = mf.energy_elec(C_ks, mocc_ks, moe_ks=moe_ks, mesh=mesh, Gv=Gv,
                            C_ks_exx=C_ks_exx, facexi=facexi,
                            vpplocR=vpplocR, vj_R=vj_R, exxdiv=exxdiv)
     e_tot = e_scf + e_nuc
@@ -793,7 +805,7 @@ def energy_tot(mf, C_ks, mocc_ks, moe_ks=None, C_ks_exx=None, facexi=None,
 
 
 def converge_band_kpt(mf, C_k, kpt, C_ks, mocc_ks, mesh=None, Gv=None,
-                      moe_k=None, C_ks_exx=None, ace_xi_k=None,
+                      C_ks_exx=None, ace_xi_k=None,
                       vpplocR=None, vj_R=None,
                       conv_tol_davidson=1e-6,
                       max_cycle_davidson=100,
@@ -828,7 +840,7 @@ def converge_band_kpt(mf, C_k, kpt, C_ks, mocc_ks, mesh=None, Gv=None,
 
 def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None, mesh=None, Gv=None,
                   C_ks_exx=None, facexi=None,
-                  moe_ks=None, vpplocR=None, vj_R=None,
+                  vpplocR=None, vj_R=None,
                   conv_tol_davidson=1e-6,
                   max_cycle_davidson=100,
                   verbose_davidson=0):
@@ -846,7 +858,6 @@ def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None, mesh=None, Gv=None,
         conv_, moeout_ks[k], Cout_ks[k], fc_ks[k] = \
                     mf.converge_band_kpt(C_ks[k], kpts[k], C_ks, mocc_ks,
                                          mesh=mesh, Gv=Gv,
-                                         # moe_k=moe_ks[k],
                                          C_ks_exx=C_ks_exx,
                                          ace_xi_k=ace_xi_k,
                                          vpplocR=vpplocR, vj_R=vj_R,

@@ -206,7 +206,7 @@ def apply_vk_kpt(mf, C_k, kpt1, C_ks, mocc_ks, kpts,
         rho_G = FFT(rho_r)
         coulG = get_coulG(k-k')
         v_r = iFFT(rho_G * coulG)
-        Cbar_ik_G = FFT(v_r * C_ik_r)
+        Cbar_ik_G = FFT(v_r * C_jk'_r)
     """
     cell = mf.cell
     if mesh is None: mesh = cell.mesh
