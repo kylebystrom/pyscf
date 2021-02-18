@@ -685,6 +685,8 @@ def apply_Fock_local_kpt(cell, C_k, kpt, mesh, Gv, vpplocR, vj_R, ret_E=False):
         tick = np.asarray([time.clock(), time.time()])
         tspans[3] = tick - tock
 
+    C_k_R = None
+
     if ret_E:
         return Cbar_k, es, tspans
     else:
