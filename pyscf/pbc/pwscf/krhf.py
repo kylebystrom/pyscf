@@ -539,18 +539,19 @@ def get_init_guess(mf, basis=None, pseudo=None, nv=0, key="hcore"):
     return C_ks, mocc_ks
 
 
+def orthonormal_against(C1, C0=None):
+    if not C0 is None:
+        C1 -= (C1 @ C0.conj().T) @ C0
+    S = C1.conj() @ C1.T
+    e, u = scipy.linalg.eigh(S)
+    U = u * e**-0.5
+    return U.T @ C1
+
+
 def init_guess_random(n_ks, ngrids=None, C_ks=None):
     nkpts = len(n_ks)
     assert(not (ngrids is None and C_ks is None))
     if ngrids is None: ngrids = C_ks[0].shape[1]
-
-    def orthnormal(C0, C1):
-        if not C0 is None:
-            C1 -= (C1 @ C0.conj().T) @ C0
-        S = C1.conj() @ C1.T
-        e, u = scipy.linalg.eigh(S)
-        U = u * e**-0.5
-        return U.T @ C1
 
     for k in range(nkpts):
         if C_ks is None:
@@ -561,7 +562,7 @@ def init_guess_random(n_ks, ngrids=None, C_ks=None):
             n0 = C0.shape[0]
         n1 = n_ks[k] - n0
         C1 = np.random.rand(n1, ngrids) + 0j
-        C1 = orthnormal(C0, C1)
+        C1 = orthonormal_against(C1, C0)
         if C_ks is None:
             C_ks[k] = C1
         else:
@@ -809,10 +810,8 @@ def converge_band_kpt(mf, C_k, kpt, C_ks, mocc_ks, mesh=None, Gv=None,
                                     vpplocR=vpplocR, vj_R=vj_R, exxdiv="all")
         return Cbar_k_
 
-    if moe_k is None:
-        dF = np.einsum("ig,ig->g", C_k.conj(), FC(C_k))
-    else:
-        dF = np.einsum("ig,ig->g", C_k.conj(), moe_k.reshape(-1,1)*C_k)
+    kG = kpt + Gv if np.sum(np.abs(kpt)) > 1.E-9 else Gv
+    dF = np.einsum("gj,gj->g", kG, kG) * 0.5
     precond = lambda dx, e, x0: dx/(dF - e)
 
     nroot = C_k.shape[0]
@@ -1026,7 +1025,7 @@ class PWKRHF(mol_hf.SCF):
 
         return C_ks, mocc_ks
 
-    def scf(self, **kwargs):
+    def scf(self, C0_ks=None, **kwargs):
         self.dump_flags()
 
         if self.double_loop_scf:
@@ -1036,7 +1035,7 @@ class PWKRHF(mol_hf.SCF):
                 facexi = self._acexi_to_save
             self.converged, self.e_tot, self.mo_energy, self.mo_coeff, \
                     self.mo_occ = kernel_doubleloop(self, self.kpts,
-                               C0_ks=None, facexi=facexi,
+                               C0_ks=C0_ks, facexi=facexi,
                                conv_tol=self.conv_tol, max_cycle=self.max_cycle,
                                conv_tol_davidson=self.conv_tol_davidson,
                                max_cycle_davidson=self.max_cycle_davidson,
@@ -1049,7 +1048,7 @@ class PWKRHF(mol_hf.SCF):
                                **kwargs)
         else:
             self.converged, self.e_tot, self.mo_energy, self.mo_coeff, \
-                    self.mo_occ = kernel(self, self.kpts, C0_ks=None,
+                    self.mo_occ = kernel(self, self.kpts, C0_ks=C0_ks,
                                conv_tol=self.conv_tol, max_cycle=self.max_cycle,
                                conv_tol_davidson=self.conv_tol_davidson,
                                max_cycle_davidson=self.max_cycle_davidson,
