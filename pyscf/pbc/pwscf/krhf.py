@@ -145,6 +145,7 @@ def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
 
 
 def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
+            nbandv=0, nbandv_extra=None,
             conv_tol=1.E-6, conv_tol_davidson=1.E-6, conv_tol_band=1e-4,
             max_cycle=100, max_cycle_davidson=10, verbose_davidson=0,
             ace_exx=True, damp_type="anderson", damp_factor=0.3,
@@ -159,6 +160,10 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
             facexi (None, str or h5py file):
                 Specify where to store the ACE xi vectors.
                 If None, a tempfile is created and discarded at the end of the calculation. If str, a h5py file will be created and saved (for later use).
+            nbandv (int):
+                How many virtual bands to compute? Default is zero.
+            nbandv_extra (int):
+                How many extra virtual bands to include to facilitate the convergence of the davidson algorithm for the highest few virtual bands? Default is 0 if nbandv = 0, and 2 if nbandv > 0.
     '''
 
     cput0 = (time.clock(), time.time())
@@ -166,10 +171,20 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     cell = mf.cell
     nkpts = len(kpts)
 
+    nbando = cell.nelectron // 2
+    if nbandv_extra is None: nbandv_extra = 0 if nbandv == 0 else 1
+    nbandv_tot = nbandv + nbandv_extra
+    nband = nbando + nbandv
+    nband_tot = nbando + nbandv_tot
+    logger.info(mf, "Num of occ bands= %d", nbando)
+    logger.info(mf, "Num of vir bands= %d", nbandv)
+    logger.info(mf, "Num of all bands= %d", nband)
+    logger.info(mf, "Num of extra vir bands= %d", nbandv_extra)
+
     # init guess and SCF chkfile
     tick = np.asarray([time.clock(), time.time()])
     if mf.init_guess[:3] == "chk":
-        fchk, C_ks, mocc_ks = mf.init_guess_by_chkfile()
+        fchk, C_ks, mocc_ks = mf.init_guess_by_chkfile(nv=nbandv_tot)
         dump_chk = True
     else:
         if isinstance(mf.chkfile, str):
@@ -184,10 +199,13 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         C_ks = fchk.create_group("mo_coeff")
 
         if C0_ks is None:
-            C_ks, mocc_ks = mf.get_init_guess(key=mf.init_guess, fC_ks=C_ks)
+            C_ks, mocc_ks = mf.get_init_guess(nv=nbandv_tot, key=mf.init_guess,
+                                              fC_ks=C_ks)
         else:
             C_ks = C0_ks
             mocc_ks = get_mo_occ(cell, C_ks=C_ks)
+            C_ks, mocc_ks = add_random_mo(mf.cell, [nband_tot]*nkpts, C_ks,
+                                          mocc_ks)
     tock = np.asarray([time.clock(), time.time()])
     mf.scf_summary["t-init"] = tock - tick
 
@@ -215,7 +233,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     mocc_ks = get_mo_occ(cell, moe_ks)
     e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks, vpplocR=vpplocR)
     logger.info(mf, 'init E= %.15g', e_tot)
-    mf.dump_moe(moe_ks, mocc_ks)
+    mf.dump_moe(moe_ks, mocc_ks, nband=nband)
 
     scf_conv = False
 
@@ -241,7 +259,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
 
         # charge SCF
         chg_scf_conv, fc_this, C_ks, chg_moe_ks, chg_e_tot = mf.kernel_charge(
-                                C_ks, mocc_ks, kpts, mesh=mesh, Gv=Gv,
+                                C_ks, mocc_ks, kpts, nband, mesh=mesh, Gv=Gv,
                                 max_cycle=max_cycle, conv_tol=chg_conv_tol,
                                 max_cycle_davidson=max_cycle_davidson,
                                 conv_tol_davidson=conv_tol_davidson,
@@ -262,7 +280,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         moe_ks = mf.get_mo_energy(C_ks, mocc_ks,
                                   C_ks_exx=C_ks_exx, facexi=facexi,
                                   vpplocR=vpplocR, vj_R=vj_R)
-        de_band = np.max([np.max(abs(moe_ks[k] - last_hf_moe[k]))
+        de_band = np.max([np.max(abs(moe_ks[k] - last_hf_moe[k])[:nband])
                          for k in range(nkpts)])
         mocc_ks = get_mo_occ(cell, moe_ks)
         last_hf_e = e_tot
@@ -272,7 +290,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
 
         logger.info(mf, 'cycle= %d E= %.15g  delta_E= %4.3g  max|dEband|= %4.3g  %d FC (%d tot)',
                     cycle+1, e_tot, de, de_band, fc_this, fc_tot)
-        mf.dump_moe(moe_ks, mocc_ks)
+        mf.dump_moe(moe_ks, mocc_ks, nband=nband)
 
         if callable(mf.check_convergence):
             scf_conv = mf.check_convergence(locals())
@@ -297,7 +315,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         logger.debug(mf, "  Performing charge SCF with conv_tol= %.3g conv_tol_davidson= %.3g", chg_conv_tol, conv_tol_davidson)
 
         chg_scf_conv, fc_this, C_ks, chg_moe_ks, chg_e_tot = mf.kernel_charge(
-                                C_ks, mocc_ks, kpts, mesh=mesh, Gv=Gv,
+                                C_ks, mocc_ks, kpts, nband, mesh=mesh, Gv=Gv,
                                 max_cycle=max_cycle, conv_tol=chg_conv_tol,
                                 max_cycle_davidson=max_cycle_davidson,
                                 conv_tol_davidson=conv_tol_davidson,
@@ -314,7 +332,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         moe_ks = mf.get_mo_energy(C_ks, mocc_ks,
                                   C_ks_exx=C_ks_exx, facexi=facexi,
                                   vpplocR=vpplocR, vj_R=vj_R)
-        de_band = np.max([np.max(abs(moe_ks[k] - last_hf_moe[k]))
+        de_band = np.max([np.max(abs(moe_ks[k] - last_hf_moe[k])[:nband])
                          for k in range(nkpts)])
         mocc_ks = get_mo_occ(cell, moe_ks)
         last_hf_e = e_tot
@@ -324,7 +342,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
 
         logger.info(mf, 'Extra cycle  E= %.15g  delta_E= %4.3g  max|dEband|= %4.3g  %d FC (%d tot)',
                     e_tot, de, de_band, fc_this, fc_tot)
-        mf.dump_moe(moe_ks, mocc_ks)
+        mf.dump_moe(moe_ks, mocc_ks, nband=nband)
 
         if callable(mf.check_convergence):
             scf_conv = mf.check_convergence(locals())
@@ -349,7 +367,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     return scf_conv, e_tot, moe_ks, C_ks, mocc_ks
 
 
-def kernel_charge(mf, C_ks, mocc_ks, kpts, mesh=None, Gv=None,
+def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
                   max_cycle=50, conv_tol=1e-6,
                   max_cycle_davidson=10, conv_tol_davidson=1e-8,
                   verbose_davidson=0,
@@ -403,7 +421,7 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, mesh=None, Gv=None,
             de = float("inf")
         logger.debug(mf, '  chg cyc= %d E= %.15g  delta_E= %4.3g  %d FC (%d tot)',
                     cycle+1, e_tot, de, fc_this, fc_tot)
-        mf.dump_moe(moe_ks, mocc_ks, trigger_level=logger.DEBUG3)
+        mf.dump_moe(moe_ks, mocc_ks, nband=nband, trigger_level=logger.DEBUG3)
 
         if abs(de) < conv_tol:
             scf_conv = True
@@ -445,10 +463,16 @@ def get_mo_occ(cell, moe_ks=None, C_ks=None):
     return mocc_ks
 
 
-def dump_moe(mf, moe_ks, mocc_ks=None, trigger_level=logger.DEBUG):
+def dump_moe(mf, moe_ks_, mocc_ks_, nband=None, trigger_level=logger.DEBUG):
     if mf.verbose >= trigger_level:
         kpts = mf.cell.get_scaled_kpts(mf.kpts)
-        nkpts = len(moe_ks)
+        nkpts = len(kpts)
+        if not nband is None:
+            moe_ks = [moe_ks_[k][:nband] for k in range(nkpts)]
+            mocc_ks = [mocc_ks_[k][:nband] for k in range(nkpts)]
+        else:
+            moe_ks = moe_ks_
+            mocc_ks = mocc_ks_
         ehomo_ks = [np.max(moe_ks[k][mocc_ks[k]>THR_OCC])
                     for k in range(nkpts)]
         ehomo = np.max(ehomo_ks)
@@ -562,11 +586,8 @@ def get_init_guess(mf, basis=None, pseudo=None, nv=0, key="hcore", fC_ks=None):
     assert(isinstance(nv, int) and nv >= 0)
     no = cell.nelectron // 2
     nao = cell.nao_nr()
-    nkeep = no + nv
-    # assert(nkeep <= nao)
-    if nkeep > nao:
-        logger.warn(mf, "Requesting more init orbitals than in the AO basis (%d > %d). %d random orbitals will be added. This may slow down the SCF process.", nkeep, nao, nkeep-nao)
-    nkeep_ks = [min(nkeep,nao)] * nkpts
+    ntot = no + nv
+    ntot_ks = [min(ntot,nao)] * nkpts
 
     logger.info(mf, "generating init guess using %s basis", cell.basis)
 
@@ -589,19 +610,43 @@ def get_init_guess(mf, basis=None, pseudo=None, nv=0, key="hcore", fC_ks=None):
     else:
         raise NotImplementedError("Init guess %s not implemented" % key)
 
-    C_ks = pw_helper.get_C_ks_G(cell, kpts, mo_coeff, nkeep_ks, fC_ks=fC_ks)
+    C_ks = pw_helper.get_C_ks_G(cell, kpts, mo_coeff, ntot_ks, fC_ks=fC_ks)
     mocc_ks = get_mo_occ(cell, C_ks=C_ks)
 
     C_ks = orth_mo(mf, C_ks, mocc_ks)
 
-    if nkeep > nkeep_ks[0]:
-        C_ks = init_guess_random(cell, [nkeep]*nkpts, C_ks)
-        mocc_ks = get_mo_occ(cell, C_ks=C_ks)
+    C_ks, mocc_ks = add_random_mo(mf.cell, [ntot]*nkpts, C_ks, mocc_ks)
 
     return C_ks, mocc_ks
 
 
-def init_guess_random1(cell, n, C0):
+def add_random_mo(cell, n_ks, C_ks, mocc_ks):
+    """ Add random MOs if C_ks[k].shape[0] < n_ks[k] for any k
+    """
+    nkpts = len(n_ks)
+    incore = isinstance(C_ks, list)
+    for k in range(nkpts):
+        n = n_ks[k]
+        n0 = C_ks[k].shape[0] if incore else C_ks["%d"%k].shape[0]
+        if n0 < n:
+            n1 = n - n0
+            logger.warn(cell, "Requesting more init orbitals than in the chkfile (%d > %d) for kpt %d. Adding %d random orbitals.",
+                        n, n0, k, n1)
+            C0 = C_ks[k] if incore else C_ks["%d"%k][()]
+            C = add_random_mo1(cell, n, C0)
+            if incore:
+                C_ks[k] = C
+            else:
+                del C_ks["%d"%k]
+                C_ks["%d"%k] = C
+
+            mocc = mocc_ks[k]
+            mocc_ks[k] = np.concatenate([mocc, np.zeros(n1,dtype=mocc.dtype)])
+
+    return C_ks, mocc_ks
+
+
+def add_random_mo1(cell, n, C0):
     n0, ngrids = C0.shape
     if n == n0:
         return C0
@@ -611,23 +656,6 @@ def init_guess_random1(cell, n, C0):
     C1 = orth(cell, C1, 1e-3, follow=False)
 
     return np.vstack([C0,C1])
-
-
-def init_guess_random(cell, n_ks, C_ks):
-    nkpts = len(n_ks)
-    if isinstance(C_ks, list):
-        for k in range(nkpts):
-            C_ks[k] = init_guess_random1(cell, n_ks[k], C_ks[k])
-    elif isinstance(C_ks, h5py.Group):
-        for k in range(nkpts):
-            key = "%d"%k
-            C_k = C_ks[key][()]
-            del C_ks[key]
-            C_ks[key] = init_guess_random1(cell, n_ks[k], C_k)
-    else:
-        raise RuntimeError
-
-    return C_ks
 
 
 def init_guess_by_chkfile(cell, chkfile_name, nv, project=None):
@@ -641,12 +669,20 @@ def init_guess_by_chkfile(cell, chkfile_name, nv, project=None):
 
     no = cell.nelectron // 2
     ntot = no + nv
-    n = C_ks["0"].shape[0]
-    if ntot > n:
-        logger.warn(cell, "Requesting more init orbitals than in the chkfile (%d > %d). %d random orbitals will be added. This may slow down the SCF process.", ntot, n, ntot-n)
-        nkpts = len(C_ks)
-        C_ks = init_guess_random(cell, [ntot]*nkpts, C_ks)
-        mocc_ks = get_mo_occ(cell, C_ks=C_ks)
+    nkpts = len(C_ks)
+
+    # discarded high-energy orbitals if chkfile has more than requested
+    for k in range(nkpts):
+        key = "%d"%k
+        if C_ks[key].shape[0] > ntot:
+            C = C_ks[key][:ntot]
+            del C_ks[key]
+            C_ks[key] = C
+    mocc_ks = get_mo_occ(cell, C_ks=C_ks)
+
+    C_ks = orth_mo(cell, C_ks, mocc_ks)
+
+    C_ks, mocc_ks = add_random_mo(cell, [ntot]*nkpts, C_ks, mocc_ks)
 
     return fchk, C_ks, mocc_ks
 
@@ -897,7 +933,7 @@ def energy_tot(mf, C_ks, mocc_ks, moe_ks=None, mesh=None, Gv=None,
     return e_tot
 
 
-def converge_band_kpt(mf, C_k, kpt, mocc_ks, mesh=None, Gv=None,
+def converge_band_kpt(mf, C_k, kpt, mocc_ks, nband=None, mesh=None, Gv=None,
                       C_ks_exx=None, ace_xi_k=None,
                       vpplocR=None, vj_R=None,
                       conv_tol_davidson=1e-6,
@@ -921,10 +957,10 @@ def converge_band_kpt(mf, C_k, kpt, mocc_ks, mesh=None, Gv=None,
     dF = np.einsum("gj,gj->g", kG, kG) * 0.5
     precond = lambda dx, e, x0: dx/(dF - e)
 
-    nroot = C_k.shape[0]
+    nroots = C_k.shape[0] if nband is None else nband
 
     conv, e, c = lib.davidson1(FC, C_k, precond,
-                               nroots=nroot,
+                               nroots=nroots,
                                verbose=verbose_davidson,
                                tol=conv_tol_davidson,
                                max_cycle=max_cycle_davidson)
@@ -939,7 +975,8 @@ def converge_band_kpt(mf, C_k, kpt, mocc_ks, mesh=None, Gv=None,
     return conv, e, c, fc[0]
 
 
-def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None, mesh=None, Gv=None,
+def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None,
+                  mesh=None, Gv=None,
                   C_ks_exx=None, facexi=None,
                   vpplocR=None, vj_R=None,
                   conv_tol_davidson=1e-6,
@@ -1025,6 +1062,7 @@ class PWKRHF(mol_hf.SCF):
         self.scf_summary["e_comp_name_lst"] = ["kin", "ppl", "ppnl", "coul", "ex"]
 
         self.nv = 0 # number of virtual bands to compute
+        self.nv_extra = None    # to facilitate converging the highest virtual
         self.init_guess = "hcore"
 
 # If _acexi_to_save is specified (as a str), the ACE xi vectors will be saved in this file. Otherwise, a tempfile is used and discarded after the calculation.
@@ -1043,6 +1081,8 @@ class PWKRHF(mol_hf.SCF):
         logger.info(self, "SCF conv_tol = %s", self.conv_tol)
         logger.info(self, "SCF max_cycle = %d", self.max_cycle)
         logger.info(self, "Num virtual bands to compute = %d", self.nv)
+        logger.info(self, "Num extra v-bands included to help convergence = %s",
+                    self.nv_extra)
         logger.info(self, "Band energy conv_tol = %s", self.conv_tol_band)
         logger.info(self, "Davidson conv_tol = %s", self.conv_tol_davidson)
         logger.info(self, "Davidson max_cycle = %d", self.max_cycle_davidson)
@@ -1140,15 +1180,6 @@ class PWKRHF(mol_hf.SCF):
             C_ks, mocc_ks = get_init_guess(self, nv=nv, key="hcore",
                                            fC_ks=fC_ks)
 
-        # add extra orbs if necessary
-        cell = self.cell
-        no = cell.nelectron // 2
-        nall = no + nv
-        if nall > len(mocc_ks[0]):
-            nkpts = len(self.kpts)
-            C_ks = init_guess_random(cell, [nall]*nkpts, C_ks)
-            mocc_ks = get_mo_occ(cell, C_ks=C_ks)
-
         return C_ks, mocc_ks
 
     def get_vpplocR(self, mesh=None, Gv=None):
@@ -1168,6 +1199,7 @@ class PWKRHF(mol_hf.SCF):
             self.converged, self.e_tot, self.mo_energy, self.mo_coeff, \
                     self.mo_occ = kernel_doubleloop(self, self.kpts,
                                C0_ks=C0_ks, facexi=facexi,
+                               nbandv=self.nv, nbandv_extra=self.nv_extra,
                                conv_tol=self.conv_tol, max_cycle=self.max_cycle,
                                conv_tol_band=self.conv_tol_band,
                                conv_tol_davidson=self.conv_tol_davidson,
