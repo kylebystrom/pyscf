@@ -238,6 +238,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     scf_conv = False
 
     if mf.max_cycle <= 0:
+        remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra)
         return scf_conv, e_tot, moe_ks, C_ks, mocc_ks
 
     if dump_chk:
@@ -355,6 +356,9 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         if callable(callback):
             callback(locals())
 
+    # remove extra virtual bands before return
+    remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra)
+
     if dump_chk: fchk.close()
     if ace_exx: facexi.close()
 
@@ -365,6 +369,22 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     # A post-processing hook before return
     mf.post_kernel(locals())
     return scf_conv, e_tot, moe_ks, C_ks, mocc_ks
+
+
+def remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra):
+    if nbandv_extra > 0:
+        nkpts = len(moe_ks)
+        moe_ks = [moe_ks[k][:-nbandv_extra] for k in range(nkpts)]
+        mocc_ks = [mocc_ks[k][:-nbandv_extra] for k in range(nkpts)]
+        if isinstance(C_ks, list):
+            for k in range(nkpts):
+                C_ks[k] = C_ks[k][:-nbandv_extra]
+        else:
+            for k in range(nkpts):
+                key = "%d" % k
+                C = C_ks[key][:-nbandv_extra]
+                del C_ks[key]
+                C_ks[key] = C
 
 
 def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
@@ -659,11 +679,6 @@ def add_random_mo1(cell, n, C0):
 
 
 def init_guess_by_chkfile(cell, chkfile_name, nv, project=None):
-    from pyscf.lib.chkfile import load
-    scf_dict = load(chkfile_name, "scf")
-    mocc_ks = scf_dict["mo_occ"]
-    scf_dict = None
-
     fchk = h5py.File(chkfile_name, "a")
     C_ks = fchk["mo_coeff"]
 
