@@ -167,6 +167,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     nkpts = len(kpts)
 
     # init guess and SCF chkfile
+    tick = np.asarray([time.clock(), time.time()])
     if mf.init_guess[:3] == "chk":
         from pyscf.lib.chkfile import load
         scf_dict = load(mf.chkfile, "scf")
@@ -192,6 +193,8 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         else:
             C_ks = C0_ks
             mocc_ks = get_mo_occ(cell, C_ks=C_ks)
+    tock = np.asarray([time.clock(), time.time()])
+    mf.scf_summary["t-init"] = tock - tick
 
     # file for store acexi
     if ace_exx:
@@ -342,7 +345,10 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     if dump_chk: fchk.close()
     if ace_exx: facexi.close()
 
-    logger.timer(mf, 'scf_cycle', *cput0)
+    cput1 = (time.clock(), time.time())
+    mf.scf_summary["t-tot"] = np.asarray(cput1) - np.asarray(cput0)
+    logger.debug(mf, '    CPU time for %s %9.2f sec, wall time %9.2f sec',
+                 "scf_cycle", *mf.scf_summary["t-tot"])
     # A post-processing hook before return
     mf.post_kernel(locals())
     return scf_conv, e_tot, moe_ks, C_ks, mocc_ks
@@ -920,6 +926,8 @@ def converge_band_kpt(mf, C_k, kpt, mocc_ks, mesh=None, Gv=None,
                                     ace_xi_k=ace_xi_k, ret_E=False)
         return Cbar_k_
 
+    tick = np.asarray([time.clock(), time.time()])
+
     kG = kpt + Gv if np.sum(np.abs(kpt)) > 1.E-9 else Gv
     dF = np.einsum("gj,gj->g", kG, kG) * 0.5
     precond = lambda dx, e, x0: dx/(dF - e)
@@ -932,6 +940,12 @@ def converge_band_kpt(mf, C_k, kpt, mocc_ks, mesh=None, Gv=None,
                                tol=conv_tol_davidson,
                                max_cycle=max_cycle_davidson)
     c = np.asarray(c)
+
+    tock = np.asarray([time.clock(), time.time()])
+    key = "t-dvds"
+    if not key in mf.scf_summary:
+        mf.scf_summary[key] = np.zeros(2)
+    mf.scf_summary[key] += tock - tick
 
     return conv, e, c, fc[0]
 
@@ -1107,25 +1121,25 @@ class PWKRHF(mol_hf.SCF):
             log.info('(Electronic) Zero Point Energy    %24.15f', self.e_zero)
             log.info('Free Energy =                     %24.15f', self.e_free)
 
-        t_tot = np.zeros(2)
-        if 't-init' in summary:
-            log.info('CPU time for %10s %9.2f, wall time %9.2f',
-                     "init guess".ljust(10), *summary['t-init'])
-            t_tot += summary['t-init']
-        if 't-ace' in summary:
-            log.info('CPU time for %10s %9.2f, wall time %9.2f',
-                     "init ACE".ljust(10), *summary['t-ace'])
-            t_tot += summary['t-ace']
+        log.info('CPU time for %10s %9.2f, wall time %9.2f',
+                 "init guess".ljust(10), *summary['t-init'])
+        log.info('CPU time for %10s %9.2f, wall time %9.2f',
+                 "init ACE".ljust(10), *summary['t-ace'])
+        t_fock = np.zeros(2)
         for op in summary["e_comp_name_lst"]:
             log.info('CPU time for %10s %9.2f, wall time %9.2f',
                      ("op %s"%op).ljust(10), *summary['t-%s'%op])
-            t_tot += summary['t-%s'%op]
+            t_fock += summary['t-%s'%op]
         log.info('CPU time for %10s %9.2f, wall time %9.2f',
-                 "full SCF".ljust(10), *t_tot)
+                 "dvds other".ljust(10), *(summary['t-dvds']-t_fock))
+        t_other = summary['t-tot'] - summary['t-init'] - summary['t-ace'] - \
+                    summary['t-dvds']
+        log.info('CPU time for %10s %9.2f, wall time %9.2f',
+                 "all other".ljust(10), *t_other)
+        log.info('CPU time for %10s %9.2f, wall time %9.2f',
+                 "full SCF".ljust(10), *summary["t-tot"])
 
     def get_init_guess(self, key="hcore", nv=None, fC_ks=None):
-        tick = np.asarray([time.clock(), time.time()])
-
         if nv is None: nv = self.nv
 
         if key[:3] == "chk":
@@ -1151,9 +1165,6 @@ class PWKRHF(mol_hf.SCF):
             nkpts = len(self.kpts)
             C_ks = init_guess_random(cell, [nall]*nkpts, C_ks)
             mocc_ks = get_mo_occ(cell, C_ks=C_ks)
-
-        tock = np.asarray([time.clock(), time.time()])
-        self.scf_summary["t-init"] = tock - tick
 
         return C_ks, mocc_ks
 
