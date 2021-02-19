@@ -4,6 +4,7 @@
 
 import time
 import copy
+import h5py
 import tempfile
 import numpy as np
 import scipy.linalg
@@ -32,39 +33,59 @@ def get_no_ks_from_mocc(mocc_ks):
     return np.asarray([np.sum(np.asarray(mocc) > 0) for mocc in mocc_ks])
 
 
-def get_Co_ks_G(cell, kpts, mo_coeff_ks, no_ks):
+def get_C_ks_G(cell, kpts, mo_coeff_ks, no_ks, fC_ks=None):
     """ Return Cik(G) for input MO coeff. The normalization convention is such that Cik(G).conj()@Cjk(G) = delta_ij.
     """
     nkpts = len(kpts)
 
-    mydf = df.FFTDF(cell)
+    if not fC_ks is None:
+        assert(isinstance(fC_ks, h5py.Group))
+        Co_ks_G = fC_ks
+        incore = False
+    else:
+        Co_ks_G = [None] * nkpts
+        incore = True
 
+    dtype = np.complex128
+    dsize = 16
+
+    mydf = df.FFTDF(cell)
     mesh = mydf.mesh
     ni = mydf._numint
 
     coords = mydf.grids.coords
     ngrids = coords.shape[0]
     weight = mydf.grids.weights[0]
+    fac = (weight/ngrids)**0.5
 
-    Co_ks_R = [np.zeros([ngrids,no_ks[k]], dtype=mo_coeff_ks[0].dtype)
-               for k in range(nkpts)]
-    for ao_ks_etc, p0, p1 in mydf.aoR_loop(mydf.grids, kpts):
-        ao_ks, mask = ao_ks_etc[0], ao_ks_etc[2]
-        for k, ao in enumerate(ao_ks):
-            Co_k = mo_coeff_ks[k][:,:no_ks[k]]
-            Co_ks_R[k][p0:p1] = lib.dot(ao, Co_k)
-            if k > 0:
-                Co_ks_R[k][p0:p1] = np.exp(-1j * (coords[p0:p1] @
-                    kpts[k].T)).reshape(-1,1) * lib.dot(ao, Co_k)
-        ao = ao_ks = None
+    frac = 0.6
+    max_memory = (cell.max_memory - lib.current_memory()[0]) * frac
+    kblksize = int(np.floor(max_memory*1e6 / (ngrids*np.max(no_ks)*dsize)))
+    if kblksize == 0:
+        logger.warn(cell, "Available memory %s MB cannot hold orbitals of a single k-point. Increase memory to at least %s MB", max_memory, ngrids*np.max(no_ks)*dsize/(frac*1e6))
+        raise RuntimeError
 
-    for k in range(nkpts):
-        Co_ks_R[k] *= weight**0.5
+    for k0,k1 in lib.prange(0, nkpts, kblksize):
+        nk = k1 - k0
+        Co_ks_R = [np.zeros([ngrids,no_ks[k]], dtype=dtype)
+                   for k in range(k0,k1)]
+        for ao_ks_etc, p0, p1 in mydf.aoR_loop(mydf.grids, kpts[k0:k1]):
+            ao_ks, mask = ao_ks_etc[0], ao_ks_etc[2]
+            for krel, ao in enumerate(ao_ks):
+                k = krel + k0
+                Co_k = mo_coeff_ks[k][:,:no_ks[k]]
+                Co_ks_R[krel][p0:p1] = lib.dot(ao, Co_k)
+                if k > 0:
+                    Co_ks_R[krel][p0:p1] = np.exp(-1j * (coords[p0:p1] @
+                        kpts[k].T)).reshape(-1,1) * lib.dot(ao, Co_k)
+            ao = ao_ks = None
 
-    Co_ks_G = [np.empty([no_ks[k],ngrids], dtype=np.complex128)
-               for k in range(nkpts)]
-    for k in range(nkpts):
-        Co_ks_G[k] = tools.fft(Co_ks_R[k].T, mesh) / ngrids**0.5
+        if incore:
+            for krel in range(nk):
+                Co_ks_G[krel+k0] = tools.fft(Co_ks_R[krel].T * fac, mesh)
+        else:
+            for krel in range(nk):
+                Co_ks_G["%d"%(krel+k0)] = tools.fft(Co_ks_R[krel].T * fac, mesh)
 
     return Co_ks_G
 
@@ -177,10 +198,13 @@ def get_vj_R(cell, C_ks, mocc_ks, mesh=None, Gv=None):
     ngrids = np.prod(mesh)
     no_ks = get_no_ks_from_mocc(mocc_ks)
 
-    vj_G = np.zeros(ngrids, dtype=C_ks[0].dtype)
+    incore = isinstance(C_ks, list)
+
+    vj_G = np.zeros(ngrids, dtype=np.complex128)
     for k in range(nkpts):
-        C_k_R = tools.ifft(C_ks[k][:no_ks[k]], mesh)
-        vj_G += np.einsum("ig,ig->g", C_k_R.conj(), C_k_R)
+        Co_k = C_ks[k][:no_ks[k]] if incore else C_ks["%d"%k][:no_ks[k]]
+        Co_k_R = tools.ifft(Co_k, mesh)
+        vj_G += np.einsum("ig,ig->g", Co_k_R.conj(), Co_k_R)
     vj_G = tools.fft(vj_G, mesh)
     vj_G *= ngrids**2 / (cell.vol*nkpts)
     vj_G *= tools.get_coulG(cell, Gv=Gv)
@@ -217,6 +241,8 @@ def apply_vk_kpt(cell, C_k, kpt1, C_ks, mocc_ks, kpts,
     no_ks = get_no_ks_from_mocc(mocc_ks)
     fac = ngrids**2./(cell.vol*nkpts)
 
+    incore = isinstance(C_ks, list)
+
     Cbar_k = np.zeros_like(C_k)
     C_k_R = tools.ifft(C_k, mesh)
 
@@ -224,9 +250,11 @@ def apply_vk_kpt(cell, C_k, kpt1, C_ks, mocc_ks, kpts,
         kpt2 = kpts[k2]
         coulG = tools.get_coulG(cell, kpt1-kpt2, exx=False, mesh=mesh)
 
-        C_k2_R = tools.ifft(C_ks[k2][:no_ks[k2]], mesh)
+        Co_k2 = C_ks[k2][:no_ks[k2]] if incore else C_ks["%d"%k2][:no_ks[k2]]
+        Co_k2_R = tools.ifft(Co_k2, mesh)
+        Co_k2 = None
         for j in range(no_ks[k2]):
-            Cj_k2_R = C_k2_R[j]
+            Cj_k2_R = Co_k2_R[j]
             vij_R = tools.ifft(
                 tools.fft(C_k_R * Cj_k2_R.conj(), mesh) * coulG, mesh)
             Cbar_k += vij_R * Cj_k2_R
@@ -252,8 +280,14 @@ def apply_vk_s1(cell, C_ks, Ct_ks, mocc_ks, kpts, mesh, Gv,
     ngrids = np.prod(mesh)
     fac = ngrids**2./(cell.vol*nkpts)
 
+    C_incore = isinstance(C_ks, list)
+    Ct_incore = isinstance(Ct_ks, list)
+
     no_ks = [np.sum(mocc_ks[k]>0) for k in range(nkpts)]
-    nt_ks = [Ct_ks[k].shape[0] for k in range(nkpts)]
+    if Ct_incore:
+        nt_ks = [Ct_ks[k].shape[0] for k in range(nkpts)]
+    else:
+        nt_ks = [Ct_ks["%d"%k].shape[0] for k in range(nkpts)]
 
     dtype = np.complex128
     dsize = 16
@@ -276,10 +310,18 @@ def apply_vk_s1(cell, C_ks, Ct_ks, mocc_ks, kpts, mesh, Gv,
     fswap = lib.H5TmpFile(swapfile.name)
     swapfile = None
 
-    for k in range(nkpts):
-        fswap["Co_ks_R/%s"%k] = tools.ifft(C_ks[k][:no_ks[k]], mesh)
-    for k in range(nkpts):
-        fswap["Ct_ks_R/%s"%k] = tools.ifft(Ct_ks[k], mesh)
+    if C_incore:
+        for k in range(nkpts):
+            fswap["Co_ks_R/%s"%k] = tools.ifft(C_ks[k][:no_ks[k]], mesh)
+    else:
+        for k in range(nkpts):
+            fswap["Co_ks_R/%s"%k] = tools.ifft(C_ks["%d"%k][:no_ks[k]], mesh)
+    if Ct_incore:
+        for k in range(nkpts):
+            fswap["Ct_ks_R/%s"%k] = tools.ifft(Ct_ks[k], mesh)
+    else:
+        for k in range(nkpts):
+            fswap["Ct_ks_R/%s"%k] = tools.ifft(Ct_ks["%d"%k][()], mesh)
 
     for k1,kpt1 in enumerate(kpts):
         Ct_k1_R = fswap["Ct_ks_R/%d"%k1][()]
@@ -308,7 +350,12 @@ def apply_vk_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv,
     ngrids = np.prod(mesh)
     fac = ngrids**2./(cell.vol*nkpts)
 
-    n_ks = [C_ks[k].shape[0] for k in range(nkpts)]
+    C_incore = isinstance(C_ks, list)
+
+    if C_incore:
+        n_ks = [C_ks[k].shape[0] for k in range(nkpts)]
+    else:
+        n_ks = [C_ks["%d"%k].shape[0] for k in range(nkpts)]
     no_ks = [np.sum(mocc_ks[k]>0) for k in range(nkpts)]
 
     n_max = np.max(n_ks)
@@ -334,8 +381,12 @@ def apply_vk_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv,
     fswap = lib.H5TmpFile(swapfile.name)
     swapfile = None
 
-    for k in range(nkpts):
-        fswap["C_ks_R/%d"%k] = tools.ifft(C_ks[k], mesh)
+    if C_incore:
+        for k in range(nkpts):
+            fswap["C_ks_R/%d"%k] = tools.ifft(C_ks[k], mesh)
+    else:
+        for k in range(nkpts):
+            fswap["C_ks_R/%d"%k] = tools.ifft(C_ks["%d"%k][()], mesh)
 
     for k in range(nkpts):
         key = "%d"%k if outcore else k
@@ -402,11 +453,12 @@ def initialize_ACE_from_W(C_ks, W_ks, facexi, dataname):
     if dataname in facexi: del facexi[dataname]
     xi_ks = facexi.create_group(dataname)
 
+    C_incore = isinstance(C_ks, list)
     incore = isinstance(W_ks, list)
 
     nkpts = len(C_ks)
     for k in range(nkpts):
-        C_k = C_ks[k]
+        C_k = C_ks[k] if C_incore else C_ks["%d"%k][()]
         W_k = W_ks[k] if incore else W_ks["%d"%k][()]
         L_k = scipy.linalg.cholesky(C_k.conj()@W_k.T, lower=True)
         xi_ks["%d"%k] = scipy.linalg.solve_triangular(L_k.conj(), W_k,
