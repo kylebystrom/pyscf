@@ -145,7 +145,7 @@ def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
 
 
 def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
-            conv_tol=1.E-6, conv_tol_davidson=1.E-6, conv_tol_band=1e-5,
+            conv_tol=1.E-6, conv_tol_davidson=1.E-6, conv_tol_band=1e-4,
             max_cycle=100, max_cycle_davidson=10, verbose_davidson=0,
             ace_exx=True, damp_type="anderson", damp_factor=0.3,
             conv_check=True, callback=None, **kwargs):
@@ -987,7 +987,7 @@ class PWKRHF(mol_hf.SCF):
     conv_tol_davidson = getattr(__config__,
                                 'pbc_pwscf_krhf_PWKRHF_conv_tol_davidson', 1e-7)
     conv_tol_band = getattr(__config__, 'pbc_pwscf_krhf_PWKRHF_conv_tol_band',
-                            1e-5)
+                            1e-4)
     max_cycle = getattr(__config__, 'pbc_pwscf_krhf_PWKRHF_max_cycle', 100)
     max_cycle_davidson = getattr(__config__,
                                  'pbc_pwscf_krhf_PWKRHF_max_cycle_davidson',
