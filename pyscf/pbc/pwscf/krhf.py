@@ -1151,23 +1151,26 @@ class PWKRHF(mol_hf.SCF):
             log.info('(Electronic) Zero Point Energy    %24.15f', self.e_zero)
             log.info('Free Energy =                     %24.15f', self.e_free)
 
-        log.info('CPU time for %10s %9.2f, wall time %9.2f',
-                 "init guess".ljust(10), *summary['t-init'])
-        log.info('CPU time for %10s %9.2f, wall time %9.2f',
-                 "init ACE".ljust(10), *summary['t-ace'])
+        def write_time(comp, t_comp, t_tot):
+            tc, tw = t_comp
+            tct, twt = t_tot
+            rc = tc / tct * 100
+            rw = tw / twt * 100
+            log.info('CPU time for %10s %9.2f  ( %6.2f%% ), wall time %9.2f  ( %6.2f%% )', comp.ljust(10), tc, rc, tw, rw)
+
+        t_tot = summary["t-tot"]
+        write_time("init guess", summary["t-init"], t_tot)
+        write_time("init ACE", summary["t-ace"], t_tot)
         t_fock = np.zeros(2)
         for op in summary["e_comp_name_lst"]:
-            log.info('CPU time for %10s %9.2f, wall time %9.2f',
-                     ("op %s"%op).ljust(10), *summary['t-%s'%op])
-            t_fock += summary['t-%s'%op]
-        log.info('CPU time for %10s %9.2f, wall time %9.2f',
-                 "dvds other".ljust(10), *(summary['t-dvds']-t_fock))
-        t_other = summary['t-tot'] - summary['t-init'] - summary['t-ace'] - \
-                    summary['t-dvds']
-        log.info('CPU time for %10s %9.2f, wall time %9.2f',
-                 "all other".ljust(10), *t_other)
-        log.info('CPU time for %10s %9.2f, wall time %9.2f',
-                 "full SCF".ljust(10), *summary["t-tot"])
+            write_time("op %s"%op, summary["t-%s"%op], t_tot)
+            t_fock += summary["t-%s"%op]
+        t_dvds = np.clip(summary['t-dvds']-t_fock, 0, None)
+        write_time("dvds other", t_dvds, t_tot)
+        t_other = t_tot - summary["t-init"] - summary["t-ace"] - \
+                    summary["t-dvds"]
+        write_time("all other", t_other, t_tot)
+        write_time("full SCF", t_tot, t_tot)
 
     def get_init_guess(self, key="hcore", nv=None, fC_ks=None):
         if nv is None: nv = self.nv
