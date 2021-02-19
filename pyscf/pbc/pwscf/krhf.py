@@ -169,12 +169,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     # init guess and SCF chkfile
     tick = np.asarray([time.clock(), time.time()])
     if mf.init_guess[:3] == "chk":
-        from pyscf.lib.chkfile import load
-        scf_dict = load(mf.chkfile, "scf")
-        mocc_ks = scf_dict["mo_occ"]
-        scf_dict = None
-        fchk = h5py.File(mf.chkfile, "a")
-        C_ks = fchk["mo_coeff"]
+        fchk, C_ks, mocc_ks = mf.init_guess_by_chkfile()
         dump_chk = True
     else:
         if isinstance(mf.chkfile, str):
@@ -635,31 +630,25 @@ def init_guess_random(cell, n_ks, C_ks):
     return C_ks
 
 
-def init_guess_by_chkfile(cell, chkfile_name, project=None, fC_ks=None):
-    from pyscf.pbc.scf.chkfile import load_scf
-    chk_cell, scf_rec = load_scf(chkfile_name)
-    if project is None:
-        project = abs(cell.ke_cutoff - chk_cell.ke_cutoff) > 1e-2
+def init_guess_by_chkfile(cell, chkfile_name, nv, project=None):
+    from pyscf.lib.chkfile import load
+    scf_dict = load(chkfile_name, "scf")
+    mocc_ks = scf_dict["mo_occ"]
+    scf_dict = None
 
-    mocc_ks = scf_rec['mo_occ']
+    fchk = h5py.File(chkfile_name, "a")
+    C_ks = fchk["mo_coeff"]
 
-    nkpts = len(mocc_ks)
-    with h5py.File(chkfile_name, "r") as fchk:
-        if fC_ks is None:
-            C_ks = [fchk["mo_coeff/%d"%k][()] for k in range(nkpts)]
-        else:
-            C_ks = fC_ks
-            for k in range(nkpts):
-                key = "%d"%k
-                if key in C_ks: del C_ks[key]
-                C_ks[key] = fchk["mo_coeff/%d"%k][()]
+    no = cell.nelectron // 2
+    ntot = no + nv
+    n = C_ks["0"].shape[0]
+    if ntot > n:
+        logger.warn(cell, "Requesting more init orbitals than in the chkfile (%d > %d). %d random orbitals will be added. This may slow down the SCF process.", ntot, n, ntot-n)
+        nkpts = len(C_ks)
+        C_ks = init_guess_random(cell, [ntot]*nkpts, C_ks)
+        mocc_ks = get_mo_occ(cell, C_ks=C_ks)
 
-    if project:
-        raise NotImplementedError
-
-    C_ks = orth_mo(cell, C_ks, mocc_ks)
-
-    return C_ks, mocc_ks
+    return fchk, C_ks, mocc_ks
 
 
 def initialize_ACE(mf, C_ks, mocc_ks, kpts, mesh, Gv,
@@ -1085,10 +1074,11 @@ class PWKRHF(mol_hf.SCF):
                         ' = -1/2 * Nelec*madelung = %.12g',
                         madelung*cell.nelectron * -.5)
 
-    def init_guess_by_chkfile(self, chk=None, project=None, kpts=None):
+    def init_guess_by_chkfile(self, chk=None, nv=None, project=None):
         if chk is None: chk = self.chkfile
-        if kpts is None: kpts = self.kpts
-        return init_guess_by_chkfile(self.cell, chk, project, kpts)
+        if nv is None: nv = self.nv
+        # return init_guess_by_chkfile(self.cell, chk, project)
+        return init_guess_by_chkfile(self.cell, chk, nv, project=project)
     def from_chk(self, chk=None, project=None, kpts=None):
         return self.init_guess_by_chkfile(chk, project, kpts)
 
@@ -1142,20 +1132,13 @@ class PWKRHF(mol_hf.SCF):
     def get_init_guess(self, key="hcore", nv=None, fC_ks=None):
         if nv is None: nv = self.nv
 
-        if key[:3] == "chk":
-            # try:
-            C_ks, mocc_ks = self.from_chk()
-            # except (IOError, KeyError):
-            #     logger.warn(self, 'Fail to read %s. Use hcore initial guess',
-            #                 self.chkfile)
-            #     C_ks, mocc_ks = get_init_guess(self, nv=nv, key="hcore",
-            #                                    fC_ks=fC_ks)
-        elif key in ["h1e","hcore","cycle1"]:
+        if key in ["h1e","hcore","cycle1"]:
             C_ks, mocc_ks = get_init_guess(self, nv=nv, key=key, fC_ks=fC_ks)
         else:
             logger.warn(self, "Unknown init guess %s. Use hcore initial guess",
                         key)
-            C_ks, mocc_ks = get_init_guess(self, nv=nv, key=key, fC_ks=fC_ks)
+            C_ks, mocc_ks = get_init_guess(self, nv=nv, key="hcore",
+                                           fC_ks=fC_ks)
 
         # add extra orbs if necessary
         cell = self.cell
