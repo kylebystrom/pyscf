@@ -145,7 +145,7 @@ def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
 
 
 def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
-            nbandv=0, nbandv_extra=None,
+            nbandv=0, nbandv_extra=1,
             conv_tol=1.E-6, conv_tol_davidson=1.E-6, conv_tol_band=1e-4,
             max_cycle=100, max_cycle_davidson=10, verbose_davidson=0,
             ace_exx=True, damp_type="anderson", damp_factor=0.3,
@@ -163,7 +163,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
             nbandv (int):
                 How many virtual bands to compute? Default is zero.
             nbandv_extra (int):
-                How many extra virtual bands to include to facilitate the convergence of the davidson algorithm for the highest few virtual bands? Default is 0 if nbandv = 0, and 2 if nbandv > 0.
+                How many extra virtual bands to include to facilitate the convergence of the davidson algorithm for the highest few virtual bands? Default is 1.
     '''
 
     cput0 = (time.clock(), time.time())
@@ -172,7 +172,6 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     nkpts = len(kpts)
 
     nbando = cell.nelectron // 2
-    if nbandv_extra is None: nbandv_extra = 0 if nbandv == 0 else 1
     nbandv_tot = nbandv + nbandv_extra
     nband = nbando + nbandv
     nband_tot = nbando + nbandv_tot
@@ -1077,7 +1076,7 @@ class PWKRHF(mol_hf.SCF):
         self.scf_summary["e_comp_name_lst"] = ["kin", "ppl", "ppnl", "coul", "ex"]
 
         self.nv = 0 # number of virtual bands to compute
-        self.nv_extra = None    # to facilitate converging the highest virtual
+        self.nv_extra = 1    # to facilitate converging the highest virtual
         self.init_guess = "hcore"
 
 # If _acexi_to_save is specified (as a str), the ACE xi vectors will be saved in this file. Otherwise, a tempfile is used and discarded after the calculation.
@@ -1096,7 +1095,7 @@ class PWKRHF(mol_hf.SCF):
         logger.info(self, "SCF conv_tol = %s", self.conv_tol)
         logger.info(self, "SCF max_cycle = %d", self.max_cycle)
         logger.info(self, "Num virtual bands to compute = %d", self.nv)
-        logger.info(self, "Num extra v-bands included to help convergence = %s",
+        logger.info(self, "Num extra v-bands included to help convergence = %d",
                     self.nv_extra)
         logger.info(self, "Band energy conv_tol = %s", self.conv_tol_band)
         logger.info(self, "Davidson conv_tol = %s", self.conv_tol_davidson)
