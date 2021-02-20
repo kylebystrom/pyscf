@@ -23,126 +23,6 @@ import pyscf.lib.parameters as param
 
 THR_OCC = 1E-3
 
-def kernel(mf, kpts, C0_ks=None, conv_tol=1.E-6, conv_tol_davidson=1.E-6,
-           max_cycle=100, max_cycle_davidson=100, verbose_davidson=0,
-           dump_chk=True, conv_check=True, callback=None, **kwargs):
-    ''' Kernel function for SCF in a PW basis
-    '''
-
-    cput0 = (time.clock(), time.time())
-
-    cell = mf.cell
-    nkpts = len(kpts)
-
-    if C0_ks is None:
-        C_ks, mocc_ks = mf.get_init_guess(key=mf.init_guess)
-    else:
-        C_ks = C0_ks
-        mocc_ks = get_mo_occ(cell, C_ks=C_ks)
-
-    # init E
-    mesh = cell.mesh
-    Gv = cell.get_Gv(mesh)
-    vpplocR = mf.get_vpplocR(mesh=mesh, Gv=Gv)
-    vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
-    moe_ks = mf.get_mo_energy(C_ks, mocc_ks, mesh=mesh, Gv=Gv,
-                              vpplocR=vpplocR, vj_R=vj_R)
-    mocc_ks = get_mo_occ(cell, moe_ks)
-    e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks, mesh=mesh, Gv=Gv,
-                          vpplocR=vpplocR)
-    logger.info(mf, 'init E= %.15g', e_tot)
-    mf.dump_moe(moe_ks, mocc_ks)
-
-    scf_conv = False
-
-    if mf.max_cycle <= 0:
-        return scf_conv, e_tot, moe_ks, C_ks, mocc_ks
-
-    if dump_chk and mf.chkfile:
-        # Explicit overwrite the mol object in chkfile
-        # Note in pbc.scf, mf.mol == mf.cell, cell is saved under key "mol"
-        mol_chkfile.save_mol(cell, mf.chkfile)
-
-    fc_tot = 0
-    fc_this = 0
-    cput1 = logger.timer(mf, 'initialize pwscf', *cput0)
-    for cycle in range(max_cycle):
-
-        conv_ks, moe_ks, C_ks, fc_ks = mf.converge_band(
-                            C_ks, mocc_ks, kpts,
-                            mesh=mesh, Gv=Gv,
-                            C_ks_exx=list(C_ks),
-                            vpplocR=vpplocR, vj_R=vj_R,
-                            conv_tol_davidson=conv_tol_davidson,
-                            max_cycle_davidson=max_cycle_davidson,
-                            verbose_davidson=verbose_davidson)
-        fc_this = sum(fc_ks)
-        fc_tot += fc_this
-
-        vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
-        moe_ks = mf.get_mo_energy(C_ks, mocc_ks, mesh=mesh, Gv=Gv,
-                                  vpplocR=vpplocR, vj_R=vj_R)
-        mocc_ks = get_mo_occ(cell, moe_ks)
-        last_hf_e = e_tot
-        e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks, mesh=mesh, Gv=Gv,
-                              vpplocR=vpplocR)
-        de = e_tot-last_hf_e if cycle > 0 else 10
-        logger.info(mf, 'cycle= %d E= %.15g  delta_E= %4.3g  %d FC (%d tot)',
-                    cycle+1, e_tot, de, fc_this, fc_tot)
-        mf.dump_moe(moe_ks, mocc_ks)
-
-        if callable(mf.check_convergence):
-            scf_conv = mf.check_convergence(locals())
-        elif abs(e_tot-last_hf_e) < conv_tol:
-            scf_conv = True
-
-        if dump_chk:
-            mf.dump_chk(locals())
-
-        if callable(callback):
-            callback(locals())
-
-        cput1 = logger.timer(mf, 'cycle= %d'%(cycle+1), *cput1)
-
-        if scf_conv:
-            break
-
-    if scf_conv and conv_check:
-        # An extra diagonalization, to remove level shift
-        #fock = mf.get_fock(h1e, s1e, vhf, dm)  # = h1e + vhf
-        conv_ks, moe_ks, C_ks, fc_ks = mf.converge_band(
-                            C_ks, mocc_ks, kpts,
-                            mesh=mesh, Gv=Gv,
-                            vpplocR=vpplocR, vj_R=vj_R,
-                            conv_tol_davidson=conv_tol_davidson,
-                            max_cycle_davidson=max_cycle_davidson,
-                            verbose_davidson=verbose_davidson)
-        fc_this = sum(fc_ks)
-        fc_tot += fc_this
-        vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
-        moe_ks = mf.get_mo_energy(C_ks, mocc_ks, mesh=mesh, Gv=Gv,
-                                  vpplocR=vpplocR, vj_R=vj_R)
-        mocc_ks = get_mo_occ(cell, moe_ks)
-        last_hf_e = e_tot
-        e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks, mesh=mesh, Gv=Gv,
-                              vpplocR=vpplocR)
-        de = e_tot-last_hf_e if cycle > 0 else 10
-        if callable(mf.check_convergence):
-            scf_conv = mf.check_convergence(locals())
-        elif abs(e_tot-last_hf_e) < conv_tol:
-            scf_conv = True
-        logger.info(mf, 'Extra cycle  E= %.15g  delta_E= %4.3g  %d FC (%d tot)',
-                    e_tot, de, fc_this, fc_tot)
-        mf.dump_moe(moe_ks, mocc_ks)
-
-        if dump_chk:
-            mf.dump_chk(locals())
-
-    logger.timer(mf, 'scf_cycle', *cput0)
-    # A post-processing hook before return
-    mf.post_kernel(locals())
-    return scf_conv, e_tot, moe_ks, C_ks, mocc_ks
-
 
 def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
             nbandv=0, nbandv_extra=1,
@@ -1208,36 +1088,25 @@ class PWKRHF(mol_hf.SCF):
     def scf(self, C0_ks=None, **kwargs):
         self.dump_flags()
 
-        if self.double_loop_scf:
-            if isinstance(self._acexi_to_save, tempfile._TemporaryFileWrapper):
-                facexi = lib.H5TmpFile(self._acexi_to_save.name)
-            else:
-                facexi = self._acexi_to_save
-            self.converged, self.e_tot, self.mo_energy, self.mo_coeff, \
-                    self.mo_occ = kernel_doubleloop(self, self.kpts,
-                               C0_ks=C0_ks, facexi=facexi,
-                               nbandv=self.nv, nbandv_extra=self.nv_extra,
-                               conv_tol=self.conv_tol, max_cycle=self.max_cycle,
-                               conv_tol_band=self.conv_tol_band,
-                               conv_tol_davidson=self.conv_tol_davidson,
-                               max_cycle_davidson=self.max_cycle_davidson,
-                               verbose_davidson=self.verbose_davidson,
-                               ace_exx=self.ace_exx,
-                               damp_type=self.damp_type,
-                               damp_factor=self.damp_factor,
-                               conv_check=self.conv_check,
-                               callback=self.callback,
-                               **kwargs)
+        if isinstance(self._acexi_to_save, tempfile._TemporaryFileWrapper):
+            facexi = lib.H5TmpFile(self._acexi_to_save.name)
         else:
-            self.converged, self.e_tot, self.mo_energy, self.mo_coeff, \
-                    self.mo_occ = kernel(self, self.kpts, C0_ks=C0_ks,
-                               conv_tol=self.conv_tol, max_cycle=self.max_cycle,
-                               conv_tol_davidson=self.conv_tol_davidson,
-                               max_cycle_davidson=self.max_cycle_davidson,
-                               verbose_davidson=self.verbose_davidson,
-                               conv_check=self.conv_check,
-                               callback=self.callback,
-                               **kwargs)
+            facexi = self._acexi_to_save
+        self.converged, self.e_tot, self.mo_energy, self.mo_coeff, \
+                self.mo_occ = kernel_doubleloop(self, self.kpts,
+                           C0_ks=C0_ks, facexi=facexi,
+                           nbandv=self.nv, nbandv_extra=self.nv_extra,
+                           conv_tol=self.conv_tol, max_cycle=self.max_cycle,
+                           conv_tol_band=self.conv_tol_band,
+                           conv_tol_davidson=self.conv_tol_davidson,
+                           max_cycle_davidson=self.max_cycle_davidson,
+                           verbose_davidson=self.verbose_davidson,
+                           ace_exx=self.ace_exx,
+                           damp_type=self.damp_type,
+                           damp_factor=self.damp_factor,
+                           conv_check=self.conv_check,
+                           callback=self.callback,
+                           **kwargs)
         self._finalize()
         return self.e_tot
     kernel = lib.alias(scf, alias_name='kernel')
