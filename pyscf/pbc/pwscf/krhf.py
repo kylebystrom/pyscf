@@ -109,7 +109,6 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     C_ks_exx = list(C_ks) if facexi is None else None
     moe_ks = mf.get_mo_energy(C_ks, mocc_ks, C_ks_exx=C_ks_exx, facexi=facexi,
                               vpplocR=vpplocR, vj_R=vj_R)
-    mocc_ks = get_mo_occ(cell, moe_ks)
     e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks, vpplocR=vpplocR)
     logger.info(mf, 'init E= %.15g', e_tot)
     mf.dump_moe(moe_ks, mocc_ks, nband=nband)
