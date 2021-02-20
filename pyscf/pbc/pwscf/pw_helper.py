@@ -12,6 +12,7 @@ import scipy.linalg
 from pyscf.pbc import tools, df
 from pyscf.pbc.gto import pseudo
 from pyscf import lib
+from pyscf.lib import logger
 
 
 """ Helper functions
@@ -33,17 +34,19 @@ def get_no_ks_from_mocc(mocc_ks):
     return np.asarray([np.sum(np.asarray(mocc) > 0) for mocc in mocc_ks])
 
 
-def get_C_ks_G(cell, kpts, mo_coeff_ks, no_ks, fC_ks=None):
+def get_C_ks_G(cell, kpts, mo_coeff_ks, n_ks, fC_ks=None, verbose=0):
     """ Return Cik(G) for input MO coeff. The normalization convention is such that Cik(G).conj()@Cjk(G) = delta_ij.
     """
+    log = logger.new_logger(cell, verbose)
+
     nkpts = len(kpts)
 
     if not fC_ks is None:
         assert(isinstance(fC_ks, h5py.Group))
-        Co_ks_G = fC_ks
+        C_ks_G = fC_ks
         incore = False
     else:
-        Co_ks_G = [None] * nkpts
+        C_ks_G = [None] * nkpts
         incore = True
 
     dtype = np.complex128
@@ -58,36 +61,46 @@ def get_C_ks_G(cell, kpts, mo_coeff_ks, no_ks, fC_ks=None):
     weight = mydf.grids.weights[0]
     fac = (weight/ngrids)**0.5
 
-    frac = 0.6
-    max_memory = (cell.max_memory - lib.current_memory()[0]) * frac
-    kblksize = int(np.floor(max_memory*1e6 / (ngrids*np.max(no_ks)*dsize)))
+    frac = 0.4  # to be safe
+    cur_memory = lib.current_memory()[0]
+    max_memory = (cell.max_memory - cur_memory) * frac
+    # FFT needs 2 temp copies of MOs
+    extra_memory = 2*ngrids*np.max(n_ks)*dsize / 1.e6
+    # add 1 for ao_ks
+    perk_memory = ngrids*(np.max(n_ks)+1)*dsize / 1.e6
+    kblksize = min(int(np.floor((max_memory-extra_memory) / perk_memory)),
+                   nkpts)
     if kblksize == 0:
-        logger.warn(cell, "Available memory %s MB cannot hold orbitals of a single k-point. Increase memory to at least %s MB", max_memory, ngrids*np.max(no_ks)*dsize/(frac*1e6))
+        log.warn("Available memory %s MB cannot perform conversion for orbitals of a single k-point. Increase memory to at least %s MB", max_memory, (perk_memory + extra_memory) / frac + cur_memory)
         raise RuntimeError
+
+    log.debug1("max memory= %s MB, extra memory= %s MB, perk memory= %s MB, kblksize= %s", max_memory, extra_memory, perk_memory, kblksize)
 
     for k0,k1 in lib.prange(0, nkpts, kblksize):
         nk = k1 - k0
-        Co_ks_R = [np.zeros([ngrids,no_ks[k]], dtype=dtype)
+        C_ks_R = [np.zeros([ngrids,n_ks[k]], dtype=dtype)
                    for k in range(k0,k1)]
         for ao_ks_etc, p0, p1 in mydf.aoR_loop(mydf.grids, kpts[k0:k1]):
             ao_ks, mask = ao_ks_etc[0], ao_ks_etc[2]
             for krel, ao in enumerate(ao_ks):
                 k = krel + k0
-                Co_k = mo_coeff_ks[k][:,:no_ks[k]]
-                Co_ks_R[krel][p0:p1] = lib.dot(ao, Co_k)
+                C_k = mo_coeff_ks[k][:,:n_ks[k]]
+                C_ks_R[krel][p0:p1] = lib.dot(ao, C_k)
                 if k > 0:
-                    Co_ks_R[krel][p0:p1] = np.exp(-1j * (coords[p0:p1] @
-                        kpts[k].T)).reshape(-1,1) * lib.dot(ao, Co_k)
+                    C_ks_R[krel][p0:p1] = np.exp(-1j * (coords[p0:p1] @
+                        kpts[k].T)).reshape(-1,1) * lib.dot(ao, C_k)
             ao = ao_ks = None
 
         if incore:
             for krel in range(nk):
-                Co_ks_G[krel+k0] = tools.fft(Co_ks_R[krel].T * fac, mesh)
+                C_k_R = C_ks_R[krel].T * fac
+                C_ks_G[krel+k0] = tools.fft(C_k_R, mesh)
         else:
             for krel in range(nk):
-                Co_ks_G["%d"%(krel+k0)] = tools.fft(Co_ks_R[krel].T * fac, mesh)
+                C_k_R = C_ks_R[krel].T * fac
+                C_ks_G["%d"%(krel+k0)] = tools.fft(C_k_R, mesh)
 
-    return Co_ks_G
+    return C_ks_G
 
 
 """ kinetic energy

@@ -109,6 +109,8 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     C_ks_exx = list(C_ks) if facexi is None else None
     moe_ks = mf.get_mo_energy(C_ks, mocc_ks, C_ks_exx=C_ks_exx, facexi=facexi,
                               vpplocR=vpplocR, vj_R=vj_R)
+    # mocc_ks = get_mo_occ(cell, moe_ks)
+    # sort_mo(mocc_ks, moe_ks, C_ks)
     e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks, vpplocR=vpplocR)
     logger.info(mf, 'init E= %.15g', e_tot)
     mf.dump_moe(moe_ks, mocc_ks, nband=nband)
@@ -247,6 +249,27 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     # A post-processing hook before return
     mf.post_kernel(locals())
     return scf_conv, e_tot, moe_ks, C_ks, mocc_ks
+
+
+# def sort_mo(mocc_ks, moe_ks, C_ks):
+#     incore = isinstance(C_ks, list)
+#     nkpts = len(mocc_ks)
+#     for k in range(nkpts):
+#         mocc = mocc_ks[k]
+#         no = np.sum(mocc>THR_OCC)
+#         if np.sum(mocc[:no]>THR_OCC) < no:
+#             mocc_ks[k] = np.asarray([2 if i < no else 0
+#                                     for i in range(mocc.size)])
+#             moe = moe_ks[k]
+#             order = np.argsort(moe)[::-1]
+#             moe_ks[k] = moe[order]
+#             if incore:
+#                 C = C_ks[k]
+#             else:
+#                 key = "%d"%k
+#                 C = C_ks[key][()]
+#                 del C_ks[key]
+#                 C_ks[key] = C[order]
 
 
 def remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra):
@@ -508,7 +531,9 @@ def get_init_guess(mf, basis=None, pseudo=None, nv=0, key="hcore", fC_ks=None):
     else:
         raise NotImplementedError("Init guess %s not implemented" % key)
 
-    C_ks = pw_helper.get_C_ks_G(cell, kpts, mo_coeff, ntot_ks, fC_ks=fC_ks)
+    logger.debug1(mf, "converting init MOs from GTO basis to PW basis")
+    C_ks = pw_helper.get_C_ks_G(cell, kpts, mo_coeff, ntot_ks, fC_ks=fC_ks,
+                                verbose=mf.cell.verbose)
     mocc_ks = get_mo_occ(cell, C_ks=C_ks)
 
     C_ks = orth_mo(mf, C_ks, mocc_ks)
@@ -528,8 +553,7 @@ def add_random_mo(cell, n_ks, C_ks, mocc_ks):
         n0 = C_ks[k].shape[0] if incore else C_ks["%d"%k].shape[0]
         if n0 < n:
             n1 = n - n0
-            logger.warn(cell, "Requesting more init orbitals than in the chkfile (%d > %d) for kpt %d. Adding %d random orbitals.",
-                        n, n0, k, n1)
+            logger.warn(cell, "Requesting more orbitals than currently have (%d > %d) for kpt %d. Adding %d random orbitals.", n, n0, k, n1)
             C0 = C_ks[k] if incore else C_ks["%d"%k][()]
             C = add_random_mo1(cell, n, C0)
             if incore:
