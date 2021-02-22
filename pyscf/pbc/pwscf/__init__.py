@@ -22,3 +22,6 @@
 from pyscf.pbc.pwscf import krhf
 
 PWKRHF = KRHF = krhf.PWKRHF
+
+from pyscf.pbc.pwscf import kmp2
+PWKRMP2 = KRMP2 = PWKMP2 = KMP2 = kmp2.PWKRMP2
