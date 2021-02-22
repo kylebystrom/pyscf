@@ -61,18 +61,18 @@ def get_C_ks_G(cell, kpts, mo_coeff_ks, n_ks, fC_ks=None, verbose=0):
     weight = mydf.grids.weights[0]
     fac = (weight/ngrids)**0.5
 
-    frac = 0.4  # to be safe
+    frac = 0.5  # to be safe
     cur_memory = lib.current_memory()[0]
     max_memory = (cell.max_memory - cur_memory) * frac
+    log.debug1("max_memory= %s MB (currently used %s MB)", cell.max_memory, cur_memory)
     # FFT needs 2 temp copies of MOs
     extra_memory = 2*ngrids*np.max(n_ks)*dsize / 1.e6
     # add 1 for ao_ks
     perk_memory = ngrids*(np.max(n_ks)+1)*dsize / 1.e6
     kblksize = min(int(np.floor((max_memory-extra_memory) / perk_memory)),
                    nkpts)
-    if kblksize == 0:
-        log.warn("Available memory %s MB cannot perform conversion for orbitals of a single k-point. Increase memory to at least %s MB", max_memory, (perk_memory + extra_memory) / frac + cur_memory)
-        raise RuntimeError
+    if kblksize <= 0:
+        log.warn("Available memory %s MB cannot perform conversion for orbitals of a single k-point. Calculations may crash and `cell.memory = %s` is recommended.", max_memory, (perk_memory + extra_memory) / frac + cur_memory)
 
     log.debug1("max memory= %s MB, extra memory= %s MB, perk memory= %s MB, kblksize= %s", max_memory, extra_memory, perk_memory, kblksize)
 
