@@ -230,14 +230,14 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         elif abs(de) < conv_tol and abs(de_band) < conv_tol_band:
             scf_conv = True
 
-        if dump_chk:
-            mf.dump_chk(locals())
-
-        if callable(callback):
-            callback(locals())
-
     # remove extra virtual bands before return
     remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra)
+
+    if dump_chk:
+        mf.dump_chk(locals())
+
+    if callable(callback):
+        callback(locals())
 
     if dump_chk: fchk.close()
     if ace_exx: facexi.close()
@@ -275,8 +275,9 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
 def remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra):
     if nbandv_extra > 0:
         nkpts = len(moe_ks)
-        moe_ks = [moe_ks[k][:-nbandv_extra] for k in range(nkpts)]
-        mocc_ks = [mocc_ks[k][:-nbandv_extra] for k in range(nkpts)]
+        for k in range(nkpts):
+            moe_ks[k] = moe_ks[k][:-nbandv_extra]
+            mocc_ks[k] = mocc_ks[k][:-nbandv_extra]
         if isinstance(C_ks, list):
             for k in range(nkpts):
                 C_ks[k] = C_ks[k][:-nbandv_extra]
@@ -692,14 +693,14 @@ def apply_Fock_local_kpt(cell, C_k, kpt, mesh, Gv, vpplocR, vj_R, ret_E=False):
         return Cbar_k, tspans
 
 
-def apply_Fock_nonlocal_kpt(cell, C_k, kpt, kpts, mesh, Gv, exxdiv, madelung,
-                            C_ks_exx=None, mocc_ks=None, ace_xi_k=None,
+def apply_Fock_nonlocal_kpt(cell, C_k, kpt, mocc_ks, kpts, mesh, Gv, exxdiv,
+                            madelung, C_ks_exx=None, ace_xi_k=None,
                             ret_E=False):
     r""" Apply non-local part of the Fock opeartor to orbitals at given k-point. The non-local part includes the exact exchange.
     """
     tick = np.asarray([time.clock(), time.time()])
     if ace_xi_k is None:
-        assert(not (C_ks_exx is None or mocc_ks is None))
+        assert(not C_ks_exx is None)
         Cbar_k = pw_helper.apply_vk_kpt(cell, C_k, kpt, C_ks_exx, mocc_ks, kpts,
                                         mesh=mesh, Gv=Gv)
     else:
@@ -721,8 +722,8 @@ def apply_Fock_nonlocal_kpt(cell, C_k, kpt, kpts, mesh, Gv, exxdiv, madelung,
         return Cbar_k, tspans
 
 
-def apply_Fock_kpt(mf, C_k, kpt, mesh, Gv, vpplocR, vj_R, exxdiv,
-                   C_ks_exx=None, mocc_ks=None, ace_xi_k=None, ret_E=False):
+def apply_Fock_kpt(mf, C_k, kpt, mocc_ks, mesh, Gv, vpplocR, vj_R, exxdiv,
+                   C_ks_exx=None, ace_xi_k=None, ret_E=False):
     """ Apply Fock operator to orbitals at given k-point.
     """
     cell = mf.cell
@@ -732,9 +733,9 @@ def apply_Fock_kpt(mf, C_k, kpt, mesh, Gv, vpplocR, vj_R, exxdiv,
                                  ret_E=ret_E)
 # nonlocal part
     madelung = mf.madelung
-    res_nl = apply_Fock_nonlocal_kpt(cell, C_k, kpt, kpts,
+    res_nl = apply_Fock_nonlocal_kpt(cell, C_k, kpt, mocc_ks, kpts,
                                      mesh, Gv, exxdiv, madelung,
-                                     C_ks_exx=C_ks_exx, mocc_ks=mocc_ks,
+                                     C_ks_exx=C_ks_exx,
                                      ace_xi_k=ace_xi_k, ret_E=ret_E)
     Cbar_k = res_l[0] + res_nl[0]
 
@@ -778,8 +779,8 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None,
         kpt = kpts[k]
         C_k = C_ks[k] if C_incore else C_ks["%d"%k][()]
         ace_xi_k = None if facexi is None else facexi["ace_xi/%d"%k][()]
-        Cbar_k = mf.apply_Fock_kpt(C_k, kpt, mesh, Gv, vpplocR, vj_R, mf.exxdiv,
-                                   C_ks_exx=C_ks_exx, mocc_ks=mocc_ks,
+        Cbar_k = mf.apply_Fock_kpt(C_k, kpt, mocc_ks, mesh, Gv, vpplocR, vj_R,
+                                   mf.exxdiv, C_ks_exx=C_ks_exx,
                                    ace_xi_k=ace_xi_k, ret_E=False)
         moe_k = np.einsum("ig,ig->i", C_k.conj(), Cbar_k)
         if (moe_k.imag > 1e-6).any():
@@ -817,10 +818,10 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
             no_k = no_ks[k]
             Co_k = C_ks[k][:no_k] if C_incore else C_ks["%d"%k][:no_k]
             ace_xi_k = None if facexi is None else facexi["ace_xi/%d"%k][()]
-            e_comp_k = mf.apply_Fock_kpt(Co_k, kpt, mesh, Gv,
+            e_comp_k = mf.apply_Fock_kpt(Co_k, kpt, mocc_ks, mesh, Gv,
                                          vpplocR, vj_R, "all",
-                                         C_ks_exx=C_ks_exx, mocc_ks=mocc_ks,
-                                         ace_xi_k=ace_xi_k, ret_E=True)[1]
+                                         C_ks_exx=C_ks_exx, ace_xi_k=ace_xi_k,
+                                         ret_E=True)[1]
             e_ks[k] = np.sum(e_comp_k)
             e_comp += e_comp_k
         e_comp /= nkpts
@@ -863,9 +864,10 @@ def converge_band_kpt(mf, C_k, kpt, mocc_ks, nband=None, mesh=None, Gv=None,
     def FC(C_k_, ret_E=False):
         fc[0] += 1
         C_k_ = np.asarray(C_k_)
-        Cbar_k_ = mf.apply_Fock_kpt(C_k_, kpt, mesh, Gv, vpplocR, vj_R, "all",
-                                    C_ks_exx=C_ks_exx, mocc_ks=mocc_ks,
-                                    ace_xi_k=ace_xi_k, ret_E=False)
+        Cbar_k_ = mf.apply_Fock_kpt(C_k_, kpt, mocc_ks, mesh, Gv,
+                                    vpplocR, vj_R, "all",
+                                    C_ks_exx=C_ks_exx, ace_xi_k=ace_xi_k,
+                                    ret_E=False)
         return Cbar_k_
 
     tick = np.asarray([time.clock(), time.time()])
