@@ -122,8 +122,13 @@ def get_vpplocR(cell, mesh=None, Gv=None):
     ngrids = Gv.shape[0]
     fac = ngrids / cell.vol
     SI = cell.get_SI()
-    vpplocG = pseudo.get_vlocG(cell, Gv)
-    vpplocG = -np.einsum('ij,ij->j', SI, vpplocG)
+    if cell.pseudo is None:
+        Zs = cell.atom_charges()
+        coulG = tools.get_coulG(cell, Gv=Gv)
+        vpplocG = - np.einsum("a,ag,g->g", Zs, SI, coulG)
+    else:
+        vpplocG = pseudo.get_vlocG(cell, Gv)
+        vpplocG = -np.einsum('ij,ij->j', SI, vpplocG)
 
     return tools.ifft(vpplocG, mesh).real * fac
 
@@ -136,6 +141,9 @@ def apply_ppl_kpt(C_k, mesh, vpplocR):
 
 
 def apply_ppnl_kpt(cell, C_k, kpt, mesh, Gv):
+    if cell.pseudo is None:
+        return np.zeros_like(C_k)
+
     SI = cell.get_SI()
     no = C_k.shape[0]
     ngrids = Gv.shape[0]
