@@ -375,8 +375,10 @@ def get_mo_occ(cell, moe_ks=None, C_ks=None):
             mocc_ks = [np.asarray([2 if i < no else 0
                        for i in range(C_k.shape[0])]) for C_k in C_ks]
         elif isinstance(C_ks, h5py.Group):
+            nkpts = len(C_ks)
             mocc_ks = [np.asarray([2 if i < no else 0
-                       for i in range(C_ks[k].shape[0])]) for k in C_ks]
+                       for i in range(C_ks["%d"%k].shape[0])])
+                       for k in range(nkpts)]
         else:
             raise RuntimeError
     else:
