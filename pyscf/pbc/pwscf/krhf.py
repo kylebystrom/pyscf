@@ -424,14 +424,16 @@ def dump_moe(mf, moe_ks_, mocc_ks_, nband=None, trigger_level=logger.DEBUG):
         np.set_printoptions(threshold=1000)
 
 
-def orth(cell, C, thr, follow=True):
+def orth(cell, C, thr, thr_lindep=1e-8, follow=True):
     n = C.shape[0]
     S = C.conj() @ C.T
     nonorth_err = np.max(np.abs(S - np.eye(S.shape[0])))
     if nonorth_err > thr:
         logger.warn(cell, "non-orthogonality detected in the initial MOs (max |off-diag ovlp|= %s). Symm-orth them now.", nonorth_err)
         e, u = scipy.linalg.eigh(S)
-        if follow:
+        idx_keep = np.where(e > thr_lindep)[0]
+        nkeep = idx_keep.size
+        if follow and n == nkeep:
             # reorder to maximally overlap original orbs
             idx = []
             for i in range(n):
@@ -442,25 +444,25 @@ def orth(cell, C, thr, follow=True):
                 idx.append(j)
             U = (u[:,idx]*e[idx]**-0.5).T
         else:
-            U = (u*e**-0.5).T
+            U = (u[:,idx_keep]*e[idx_keep]**-0.5).T
         C = U @ C
 
     return C
 
 
-def orth_mo1(cell, C, mocc, thr=1e-3):
+def orth_mo1(cell, C, mocc, thr=1e-3, thr_lindep=1e-8, follow=True):
     """ orth occupieds and virtuals separately
     """
     Co = C[mocc>THR_OCC]
     Cv = C[mocc<THR_OCC]
     # orth occ
-    Co = orth(cell, Co, thr, follow=True)
-    C[mocc>THR_OCC] = Co
+    Co = orth(cell, Co, thr, thr_lindep, follow)
     # project out occ from vir and orth vir
     if Cv.shape[0] > 0:
         Cv -= (Cv @ Co.conj().T) @ Co
-        Cv = orth(cell, Cv, thr)
-        C[mocc<THR_OCC] = Cv
+        Cv = orth(cell, Cv, thr, thr_lindep, follow)
+
+    C = np.vstack([Co,Cv])
 
     return C
 
@@ -473,7 +475,9 @@ def orth_mo(cell, C_ks, mocc_ks, thr=1e-3):
     elif isinstance(C_ks, h5py.Group):
         for k in range(nkpts):
             key = "%d"%k
-            C_ks[key][()] = orth_mo1(cell, C_ks[key][()], mocc_ks[k], thr)
+            C_k = C_ks[key][()]
+            del C_ks[key]
+            C_ks[key] = orth_mo1(cell, C_k, mocc_ks[k], thr)
     else:
         raise RuntimeError
 
