@@ -21,6 +21,11 @@ from pyscf.lib import logger
 import pyscf.lib.parameters as param
 
 
+# TODO
+# 1. fractional occupation (for metals)
+# 2. ccecp
+
+
 THR_OCC = 1E-3
 
 
@@ -88,17 +93,18 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     tock = np.asarray([time.clock(), time.time()])
     mf.scf_summary["t-init"] = tock - tick
 
-    # file for store acexi
-    if ace_exx:
-        if facexi is None:
-            swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
-            logger.info(mf, "ACE xi vectors will be written to %s", swapfile.name)
-            facexi = lib.H5TmpFile(swapfile.name)
-            swapfile = None
-        elif isinstance(facexi, str):
-            facexi = h5py.File(facexi, "w")
+    if facexi is None:
+        swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+        logger.info(mf, "ACE xi vectors will be written to %s", swapfile.name)
+        facexi = lib.H5TmpFile(swapfile.name)
+        swapfile = None
+    elif isinstance(facexi, str):
+        facexi = h5py.File(facexi, "w")
+
+    if not ace_exx:
+        C_ks_exx = facexi.create_group("C_ks_exx")
     else:
-        facexi = None
+        C_ks_exx = None
 
     # init E
     mesh = cell.mesh
@@ -106,10 +112,10 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     vpplocR = mf.get_vpplocR(mesh=mesh, Gv=Gv)
     vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
     mf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, facexi=facexi)
-    C_ks_exx = list(C_ks) if facexi is None else None
+    copy_C_ks(C_ks, C_ks_exx)
     moe_ks = mf.get_mo_energy(C_ks, mocc_ks, C_ks_exx=C_ks_exx, facexi=facexi,
                               vpplocR=vpplocR, vj_R=vj_R)
-    # mocc_ks = get_mo_occ(cell, moe_ks)
+    mocc_ks = get_mo_occ(cell, moe_ks)
     # sort_mo(mocc_ks, moe_ks, C_ks)
     e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks, vpplocR=vpplocR)
     logger.info(mf, 'init E= %.15g', e_tot)
@@ -156,7 +162,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         # update coulomb potential, facexi, and energies
         vj_R = mf.get_vj_R(C_ks, mocc_ks)
         mf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, facexi=facexi)
-        C_ks_exx = list(C_ks) if facexi is None else None
+        copy_C_ks(C_ks, C_ks_exx)
         last_hf_moe = moe_ks
         moe_ks = mf.get_mo_energy(C_ks, mocc_ks,
                                   C_ks_exx=C_ks_exx, facexi=facexi,
@@ -208,7 +214,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         fc_tot += fc_this
         vj_R = mf.get_vj_R(C_ks, mocc_ks)
         mf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, facexi=facexi)
-        C_ks_exx = list(C_ks) if facexi is None else None
+        copy_C_ks(C_ks, C_ks_exx)
         last_hf_moe = moe_ks
         moe_ks = mf.get_mo_energy(C_ks, mocc_ks,
                                   C_ks_exx=C_ks_exx, facexi=facexi,
@@ -357,6 +363,23 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
     return scf_conv, fc_tot, C_ks, moe_ks, e_tot
 
 
+def copy_C_ks(C_ks, C_ks_exx):
+    if C_ks_exx is None:
+        return None
+    else:
+        nkpts = len(C_ks)
+        for k in range(nkpts):
+            key = "%d" % k
+            C = C_ks[k] if isinstance(C_ks, list) else C_ks[key][()]
+            if isinstance(C_ks_exx, list):
+                C_ks_exx[k] = C.copy()
+            else:
+                if key in C_ks_exx: del C_ks_exx[key]
+                C_ks_exx[key] = C
+
+        return C_ks_exx
+
+
 def get_mo_occ(cell, moe_ks=None, C_ks=None):
     if not moe_ks is None:
         no = cell.nelectron // 2
@@ -397,17 +420,27 @@ def dump_moe(mf, moe_ks_, mocc_ks_, nband=None, trigger_level=logger.DEBUG):
         else:
             moe_ks = moe_ks_
             mocc_ks = mocc_ks_
-        ehomo_ks = [np.max(moe_ks[k][mocc_ks[k]>THR_OCC])
-                    for k in range(nkpts)]
+
+        has_occ = np.where([(mocc_ks[k] > THR_OCC).any()
+                           for k in range(nkpts)])[0]
+        if len(has_occ) == 0:
+            raise RuntimeError("No occupied orbitals found in any k-point.")
+        ehomo_ks = np.asarray([np.max(moe_ks[k][mocc_ks[k]>THR_OCC])
+                              for k in has_occ])
         ehomo = np.max(ehomo_ks)
-        khomos = np.where(abs(ehomo_ks-ehomo) < 1e-4)[0]
+        khomos = has_occ[np.where(abs(ehomo_ks-ehomo) < 1e-4)[0]]
+
         logger.debug(mf, '  HOMO = %.15g  kpt'+' %d'*khomos.size,
                      ehomo, *khomos)
-        if np.sum(mocc_ks[0]<THR_OCC) > 0:
-            elumo_ks = [np.min(moe_ks[k][mocc_ks[k]<THR_OCC])
-                        for k in range(nkpts)]
+
+        has_vir = np.where([(mocc_ks[k] < THR_OCC).any()
+                           for k in range(nkpts)])[0]
+        if len(has_vir) > 0:
+            elumo_ks = np.asarray([np.min(moe_ks[k][mocc_ks[k]<THR_OCC])
+                                  for k in has_occ])
             elumo = np.min(elumo_ks)
-            klumos = np.where(abs(elumo_ks-elumo) < 1e-4)[0]
+            klumos = has_vir[np.where(abs(elumo_ks-elumo) < 1e-4)[0]]
+
             logger.debug(mf, '  LUMO = %.15g  kpt'+' %d'*klumos.size,
                          elumo, *klumos)
             logger.debug(mf, '  Egap = %.15g', elumo-ehomo)
@@ -458,7 +491,8 @@ def orth_mo1(cell, C, mocc, thr=1e-3, thr_lindep=1e-8, follow=True):
     Co = C[mocc>THR_OCC]
     Cv = C[mocc<THR_OCC]
     # orth occ
-    Co = orth(cell, Co, thr, thr_lindep, follow)
+    if Co.shape[0] > 0:
+        Co = orth(cell, Co, thr, thr_lindep, follow)
     # project out occ from vir and orth vir
     if Cv.shape[0] > 0:
         Cv -= (Cv @ Co.conj().T) @ Co
@@ -535,13 +569,17 @@ def get_init_guess(mf, basis=None, pseudo=None, nv=0, key="hcore", fC_ks=None):
         s1e = pmf.get_ovlp()
         mo_energy, mo_coeff = pmf.eig(h1e, s1e)
         mo_occ = pmf.get_occ(mo_energy, mo_coeff)
+    elif key.lower() == "scf":
+        pmf.kernel()
+        mo_coeff = pmf.mo_coeff
+        mo_occ = pmf.mo_occ
     else:
         raise NotImplementedError("Init guess %s not implemented" % key)
 
     logger.debug1(mf, "converting init MOs from GTO basis to PW basis")
     C_ks = pw_helper.get_C_ks_G(cell, kpts, mo_coeff, ntot_ks, fC_ks=fC_ks,
                                 verbose=mf.cell.verbose)
-    mocc_ks = get_mo_occ(cell, C_ks=C_ks)
+    mocc_ks = [mo_occ[k][:ntot_ks[k]] for k in range(nkpts)]
 
     C_ks = orth_mo(mf, C_ks, mocc_ks)
 
@@ -1100,7 +1138,7 @@ class PWKRHF(mol_hf.SCF):
     def get_init_guess(self, key="hcore", nv=None, fC_ks=None):
         if nv is None: nv = self.nv
 
-        if key in ["h1e","hcore","cycle1"]:
+        if key in ["h1e","hcore","cycle1","scf"]:
             C_ks, mocc_ks = get_init_guess(self, nv=nv, key=key, fC_ks=fC_ks)
         else:
             logger.warn(self, "Unknown init guess %s. Use hcore initial guess",
