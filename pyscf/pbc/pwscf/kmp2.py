@@ -155,9 +155,12 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None):
             no_j = no_ks[kj]
             kptij = kpti + kpts[kj]
 
+            tick[:] = time.clock(), time.time()
+
             Co_kj_R = C_ks_R["%d"%kj][:no_j]
 
-            tick[:] = time.clock(), time.time()
+            tock[:] = time.clock(), time.time()
+            tspans[3] += tock - tick
 
             done = [False] * nkpts
             kab_lst = []
@@ -170,8 +173,8 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None):
                 kptijab_lst.append(kptija-kpts[kb])
                 done[ka] = done[kb] = True
 
-            tock[:] = time.clock(), time.time()
-            tspans[2] += tock - tick
+            tick[:] = time.clock(), time.time()
+            tspans[2] += tick - tock
 
             nkab = len(kab_lst)
             for ikab in range(nkab):
@@ -195,12 +198,11 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None):
                                      buffer=buf2)
                 fill_oovv(oovv_ka, v_ia, Co_kj_R, Cv_kb_R, fac_oovv)
                 tick[:] = time.clock(), time.time()
-                tspans[4] += tock - tock
+                tspans[4] += tick - tock
 
                 Cv_kb_R = v_ia = None
 
                 if ka != kb:
-                    tick[:] = time.clock(), time.time()
                     Cv_ka_R = C_ks_R["%d"%ka][no_a:no_a+nv_a]
                     v_ib = v_ia_ks_R["%d"%kb][:]
                     tock[:] = time.clock(), time.time()
