@@ -125,12 +125,14 @@ def get_vpplocR(cell, mesh=None, Gv=None):
     if cell.pseudo is None:
         Zs = cell.atom_charges()
         coulG = tools.get_coulG(cell, Gv=Gv)
-        vpplocG = - np.einsum("a,ag,g->g", Zs, SI, coulG)
+        vpplocG = -np.einsum("a,ag,g->g", Zs, SI, coulG)
+        vpplocR = tools.ifft(vpplocG, mesh).real * fac
     else:
         vpplocG = pseudo.get_vlocG(cell, Gv)
         vpplocG = -np.einsum('ij,ij->j', SI, vpplocG)
+        vpplocR = tools.ifft(vpplocG, mesh).real * fac
 
-    return tools.ifft(vpplocG, mesh).real * fac
+    return vpplocR
 
 
 def apply_ppl_kpt(C_k, mesh, vpplocR):
@@ -470,9 +472,7 @@ def apply_vk_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv,
     return Cbar_ks
 
 
-def initialize_ACE_from_W(C_ks, W_ks, facexi, dataname):
-    if dataname in facexi: del facexi[dataname]
-    xi_ks = facexi.create_group(dataname)
+def initialize_ACE_from_W(C_ks, W_ks, ace_xi_ks):
 
     C_incore = isinstance(C_ks, list)
     incore = isinstance(W_ks, list)
@@ -482,21 +482,27 @@ def initialize_ACE_from_W(C_ks, W_ks, facexi, dataname):
         C_k = C_ks[k] if C_incore else C_ks["%d"%k][()]
         W_k = W_ks[k] if incore else W_ks["%d"%k][()]
         L_k = scipy.linalg.cholesky(C_k.conj()@W_k.T, lower=True)
-        xi_ks["%d"%k] = scipy.linalg.solve_triangular(L_k.conj(), W_k,
-                                                      lower=True)
+
+        key = "%d"%k
+        if key in ace_xi_ks: del ace_xi_ks[key]
+        ace_xi_ks[key] = scipy.linalg.solve_triangular(L_k.conj(), W_k,
+                                                       lower=True)
 
         # debug
-        # xi_k = xi_ks["%d"%k][()]
+        # xi_k = ace_xi_ks["%d"%k][()]
         # W_k_prime = (C_k @ xi_k.conj().T) @ xi_k
         # assert(np.linalg.norm(W_k - W_k_prime) < 1e-8)
 
-    return facexi
+    return ace_xi_ks
 
 
-def initialize_ACE(cell, C_ks, mocc_ks, kpts, mesh, Gv, facexi, dataname,
-                   Ct_ks=None):
+def initialize_ACE(cell, C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks, Ct_ks=None):
+    """
+        Args:
+            ace_xi_ks: h5py Group
+    """
 
-    if not facexi is None:
+    if not ace_xi_ks is None:
         swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
         fout = lib.H5TmpFile(swapfile.name)
         swapfile = None
@@ -511,7 +517,7 @@ def initialize_ACE(cell, C_ks, mocc_ks, kpts, mesh, Gv, facexi, dataname,
             # for k in range(nkpts):
             #     print(np.linalg.norm(W_ks[k] - W_ks_[k]))
             # sys.exit(1)
-            initialize_ACE_from_W(C_ks, W_ks, facexi, dataname)
+            initialize_ACE_from_W(C_ks, W_ks, ace_xi_ks)
         else:
             W_ks = apply_vk_s1(cell, C_ks, Ct_ks, mocc_ks, kpts, mesh, Gv,
                                fout=fout)
@@ -523,7 +529,7 @@ def initialize_ACE(cell, C_ks, mocc_ks, kpts, mesh, Gv, facexi, dataname,
             # for k in range(nkpts):
             #     print(np.linalg.norm(W_ks[k] - W_ks_[k]))
             # sys.exit(1)
-            initialize_ACE_from_W(Ct_ks, W_ks, facexi, dataname)
+            initialize_ACE_from_W(Ct_ks, W_ks, ace_xi_ks)
 
 
 """ Charge mixing methods
