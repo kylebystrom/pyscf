@@ -113,10 +113,9 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
     mf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, facexi=facexi)
     copy_C_ks(C_ks, C_ks_exx)
-    moe_ks = mf.get_mo_energy(C_ks, mocc_ks, C_ks_exx=C_ks_exx, facexi=facexi,
-                              vpplocR=vpplocR, vj_R=vj_R)
-    mocc_ks = get_mo_occ(cell, moe_ks)
-    # sort_mo(mocc_ks, moe_ks, C_ks)
+    moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks,
+                                       C_ks_exx=C_ks_exx, facexi=facexi,
+                                       vpplocR=vpplocR, vj_R=vj_R)
     e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks, vpplocR=vpplocR)
     logger.info(mf, 'init E= %.15g', e_tot)
     mf.dump_moe(moe_ks, mocc_ks, nband=nband)
@@ -145,7 +144,8 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         logger.debug(mf, "  Performing charge SCF with conv_tol= %.3g conv_tol_davidson= %.3g", chg_conv_tol, conv_tol_davidson)
 
         # charge SCF
-        chg_scf_conv, fc_this, C_ks, chg_moe_ks, chg_e_tot = mf.kernel_charge(
+        chg_scf_conv, fc_this, C_ks, chg_moe_ks, chg_mocc_ks, chg_e_tot = \
+                            mf.kernel_charge(
                                 C_ks, mocc_ks, kpts, nband, mesh=mesh, Gv=Gv,
                                 max_cycle=max_cycle, conv_tol=chg_conv_tol,
                                 max_cycle_davidson=max_cycle_davidson,
@@ -160,16 +160,16 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
             logger.warn(mf, "  Charge SCF not converged.")
 
         # update coulomb potential, facexi, and energies
+        mocc_ks = chg_mocc_ks
         vj_R = mf.get_vj_R(C_ks, mocc_ks)
         mf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, facexi=facexi)
         copy_C_ks(C_ks, C_ks_exx)
         last_hf_moe = moe_ks
-        moe_ks = mf.get_mo_energy(C_ks, mocc_ks,
-                                  C_ks_exx=C_ks_exx, facexi=facexi,
-                                  vpplocR=vpplocR, vj_R=vj_R)
+        moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks,
+                                           C_ks_exx=C_ks_exx, facexi=facexi,
+                                           vpplocR=vpplocR, vj_R=vj_R)
         de_band = np.max([np.max(abs(moe_ks[k] - last_hf_moe[k])[:nband])
                          for k in range(nkpts)])
-        mocc_ks = get_mo_occ(cell, moe_ks)
         last_hf_e = e_tot
         e_tot = mf.energy_tot(C_ks, mocc_ks, C_ks_exx=C_ks_exx, facexi=facexi,
                               vpplocR=vpplocR, vj_R=vj_R)
@@ -201,7 +201,8 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         conv_tol_davidson = max(conv_tol*0.1, chg_conv_tol*0.01)
         logger.debug(mf, "  Performing charge SCF with conv_tol= %.3g conv_tol_davidson= %.3g", chg_conv_tol, conv_tol_davidson)
 
-        chg_scf_conv, fc_this, C_ks, chg_moe_ks, chg_e_tot = mf.kernel_charge(
+        chg_scf_conv, fc_this, C_ks, chg_moe_ks, chg_mocc_ks, chg_e_tot = \
+                            mf.kernel_charge(
                                 C_ks, mocc_ks, kpts, nband, mesh=mesh, Gv=Gv,
                                 max_cycle=max_cycle, conv_tol=chg_conv_tol,
                                 max_cycle_davidson=max_cycle_davidson,
@@ -212,16 +213,17 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
                                 vpplocR=vpplocR, vj_R=vj_R,
                                 last_hf_e=e_tot)
         fc_tot += fc_this
+
+        mocc_ks = chg_mocc_ks
         vj_R = mf.get_vj_R(C_ks, mocc_ks)
         mf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, facexi=facexi)
         copy_C_ks(C_ks, C_ks_exx)
         last_hf_moe = moe_ks
-        moe_ks = mf.get_mo_energy(C_ks, mocc_ks,
-                                  C_ks_exx=C_ks_exx, facexi=facexi,
-                                  vpplocR=vpplocR, vj_R=vj_R)
+        moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks,
+                                           C_ks_exx=C_ks_exx, facexi=facexi,
+                                           vpplocR=vpplocR, vj_R=vj_R)
         de_band = np.max([np.max(abs(moe_ks[k] - last_hf_moe[k])[:nband])
                          for k in range(nkpts)])
-        mocc_ks = get_mo_occ(cell, moe_ks)
         last_hf_e = e_tot
         e_tot = mf.energy_tot(C_ks, mocc_ks, C_ks_exx=C_ks_exx, facexi=facexi,
                               vpplocR=vpplocR, vj_R=vj_R)
@@ -336,6 +338,9 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
         fc_this = sum(fc_ks)
         fc_tot += fc_this
 
+        # update mo occ
+        mocc_ks = get_mo_occ(cell, moe_ks)
+
         # update coulomb potential and energy
         last_vj_R = vj_R
         vj_R = mf.get_vj_R(C_ks, mocc_ks)
@@ -360,7 +365,7 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
         if scf_conv:
             break
 
-    return scf_conv, fc_tot, C_ks, moe_ks, e_tot
+    return scf_conv, fc_tot, C_ks, moe_ks, mocc_ks, e_tot
 
 
 def copy_C_ks(C_ks, C_ks_exx):
@@ -437,7 +442,7 @@ def dump_moe(mf, moe_ks_, mocc_ks_, nband=None, trigger_level=logger.DEBUG):
                            for k in range(nkpts)])[0]
         if len(has_vir) > 0:
             elumo_ks = np.asarray([np.min(moe_ks[k][mocc_ks[k]<THR_OCC])
-                                  for k in has_occ])
+                                  for k in has_vir])
             elumo = np.min(elumo_ks)
             klumos = has_vir[np.where(abs(elumo_ks-elumo) < 1e-4)[0]]
 
@@ -738,7 +743,7 @@ def apply_Fock_local_kpt(cell, C_k, kpt, mesh, Gv, vpplocR, vj_R, ret_E=False):
 
 
 def apply_Fock_nonlocal_kpt(cell, C_k, kpt, mocc_ks, kpts, mesh, Gv, exxdiv,
-                            madelung, C_ks_exx=None, ace_xi_k=None,
+                            C_ks_exx=None, ace_xi_k=None,
                             ret_E=False):
     r""" Apply non-local part of the Fock opeartor to orbitals at given k-point. The non-local part includes the exact exchange.
     """
@@ -749,12 +754,6 @@ def apply_Fock_nonlocal_kpt(cell, C_k, kpt, mocc_ks, kpts, mesh, Gv, exxdiv,
                                         mesh=mesh, Gv=Gv)
     else:
         Cbar_k = pw_helper.apply_vk_kpt_ace(C_k, ace_xi_k)
-    if exxdiv == "ewald":
-        k = member(kpt, kpts)[0]
-        occ = mocc_ks[k] > 0
-        Cbar_k[occ] += madelung * C_k[occ]
-    elif exxdiv == "all":
-        Cbar_k += madelung * C_k
     Cbar_k *= -1
     e = np.einsum("ig,ig->", C_k.conj(), Cbar_k)
     tock = np.asarray([time.clock(), time.time()])
@@ -776,10 +775,8 @@ def apply_Fock_kpt(mf, C_k, kpt, mocc_ks, mesh, Gv, vpplocR, vj_R, exxdiv,
     res_l = apply_Fock_local_kpt(cell, C_k, kpt, mesh, Gv, vpplocR, vj_R,
                                  ret_E=ret_E)
 # nonlocal part
-    madelung = mf.madelung
     res_nl = apply_Fock_nonlocal_kpt(cell, C_k, kpt, mocc_ks, kpts,
-                                     mesh, Gv, exxdiv, madelung,
-                                     C_ks_exx=C_ks_exx,
+                                     mesh, Gv, exxdiv, C_ks_exx=C_ks_exx,
                                      ace_xi_k=ace_xi_k, ret_E=ret_E)
     Cbar_k = res_l[0] + res_nl[0]
 
@@ -806,13 +803,14 @@ def apply_Fock_kpt(mf, C_k, kpt, mocc_ks, mesh, Gv, vpplocR, vj_R, exxdiv,
         return Cbar_k
 
 
-def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None,
+def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
                   C_ks_exx=None, facexi=None, vpplocR=None, vj_R=None):
     cell = mf.cell
     if vpplocR is None: vpplocR = mf.get_vpplocR()
     if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks)
     if mesh is None: mesh = cell.mesh
     if Gv is None: Gv = cell.get_Gv(mesh)
+    if exxdiv is None: exxdiv = mf.exxdiv
 
     C_incore = isinstance(C_ks, list)
 
@@ -824,7 +822,7 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None,
         C_k = C_ks[k] if C_incore else C_ks["%d"%k][()]
         ace_xi_k = None if facexi is None else facexi["ace_xi/%d"%k][()]
         Cbar_k = mf.apply_Fock_kpt(C_k, kpt, mocc_ks, mesh, Gv, vpplocR, vj_R,
-                                   mf.exxdiv, C_ks_exx=C_ks_exx,
+                                   exxdiv, C_ks_exx=C_ks_exx,
                                    ace_xi_k=ace_xi_k, ret_E=False)
         moe_k = np.einsum("ig,ig->i", C_k.conj(), Cbar_k)
         if (moe_k.imag > 1e-6).any():
@@ -832,7 +830,12 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None,
                         moe_k, k)
         moe_ks[k] = moe_k.real
 
-    return moe_ks
+    mocc_ks = get_mo_occ(cell, moe_ks)
+    if exxdiv == "ewald":
+        for k in range(nkpts):
+            moe_ks[k][mocc_ks[k] > THR_OCC] -= mf._madelung
+
+    return moe_ks, mocc_ks
 
 
 def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
@@ -845,6 +848,7 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
     if vpplocR is None: vpplocR = mf.get_vpplocR()
     if mesh is None: mesh = cell.mesh
     if Gv is None: Gv = cell.get_Gv(mesh)
+    if exxdiv is None: exxdiv = mf.exxdiv
 
     C_incore = isinstance(C_ks, list)
 
@@ -863,12 +867,17 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
             Co_k = C_ks[k][:no_k] if C_incore else C_ks["%d"%k][:no_k]
             ace_xi_k = None if facexi is None else facexi["ace_xi/%d"%k][()]
             e_comp_k = mf.apply_Fock_kpt(Co_k, kpt, mocc_ks, mesh, Gv,
-                                         vpplocR, vj_R, "all",
+                                         vpplocR, vj_R, exxdiv,
                                          C_ks_exx=C_ks_exx, ace_xi_k=ace_xi_k,
                                          ret_E=True)[1]
             e_ks[k] = np.sum(e_comp_k)
             e_comp += e_comp_k
         e_comp /= nkpts
+
+        if exxdiv == "ewald":
+            e_comp[mf.scf_summary["e_comp_name_lst"].index("ex")] += \
+                                                        mf._etot_shift_ewald
+
         for comp,e in zip(mf.scf_summary["e_comp_name_lst"],e_comp):
             mf.scf_summary[comp] = e
     else:
@@ -880,6 +889,10 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
                                        vpplocR, ret_E=True)[1]
             e_ks[k] = np.sum(e1_comp) * 0.5 + np.sum(moe_ks[k][:no_k])
     e_scf = np.sum(e_ks) / nkpts
+
+    if moe_ks is None and exxdiv == "ewald":
+        # Note: ewald correction is not needed if e_tot is computed from moe_ks since the correction is already in the mo energy
+        e_scf += mf._etot_shift_ewald
 
     return e_scf
 
@@ -909,7 +922,7 @@ def converge_band_kpt(mf, C_k, kpt, mocc_ks, nband=None, mesh=None, Gv=None,
         fc[0] += 1
         C_k_ = np.asarray(C_k_)
         Cbar_k_ = mf.apply_Fock_kpt(C_k_, kpt, mocc_ks, mesh, Gv,
-                                    vpplocR, vj_R, "all",
+                                    vpplocR, vj_R, "none",
                                     C_ks_exx=C_ks_exx, ace_xi_k=ace_xi_k,
                                     ret_E=False)
         return Cbar_k_
@@ -1020,7 +1033,8 @@ class PWKRHF(mol_hf.SCF):
         self.kpts = kpts
         self.exxdiv = exxdiv
         if self.exxdiv == "ewald":
-            self.madelung = tools.pbc.madelung(self.cell, self.kpts)
+            self._madelung = tools.pbc.madelung(self.cell, self.kpts)
+            self._etot_shift_ewald = -0.5*self._madelung*cell.nelectron
         self.scf_summary["nuc"] = self.cell.energy_nuc()
         self.scf_summary["e_comp_name_lst"] = ["kin", "ppl", "ppnl", "coul", "ex"]
 
@@ -1071,7 +1085,7 @@ class PWKRHF(mol_hf.SCF):
         cell = self.cell
         if ((cell.dimension >= 2 and cell.low_dim_ft_type != 'inf_vacuum') and
             isinstance(self.exxdiv, str) and self.exxdiv.lower() == 'ewald'):
-            madelung = self.madelung
+            madelung = self._madelung
             logger.info(self, '    madelung (= occupied orbital energy shift) = %s', madelung)
             logger.info(self, '    Total energy shift due to Ewald probe charge'
                         ' = -1/2 * Nelec*madelung = %.12g',
