@@ -525,7 +525,8 @@ def orth_mo(cell, C_ks, mocc_ks, thr=1e-3):
     return C_ks
 
 
-def get_init_guess(mf, basis=None, pseudo=None, nv=0, key="hcore", fC_ks=None):
+def get_init_guess(cell0, kpts, basis=None, pseudo=None, nv=0,
+                   key="hcore", fC_ks=None):
     """
         Args:
             nv (int):
@@ -537,15 +538,14 @@ def get_init_guess(mf, basis=None, pseudo=None, nv=0, key="hcore", fC_ks=None):
     if not fC_ks is None:
         assert(isinstance(fC_ks, h5py.Group))
 
-    kpts = mf.kpts
     nkpts = len(kpts)
 
-    if basis is None: basis = mf.cell.basis
-    if pseudo is None: pseudo = mf.cell.pseudo
-    cell = copy.copy(mf.cell)
+    if basis is None: basis = cell0.basis
+    if pseudo is None: pseudo = cell0.pseudo
+    cell = copy.copy(cell0)
     cell.basis = basis
     cell.pseudo = pseudo
-    cell.ke_cutoff = mf.cell.ke_cutoff
+    cell.ke_cutoff = cell0.ke_cutoff
     cell.verbose = 0
     cell.build()
 
@@ -556,13 +556,12 @@ def get_init_guess(mf, basis=None, pseudo=None, nv=0, key="hcore", fC_ks=None):
     ntot = no + nv
     ntot_ks = [min(ntot,nao)] * nkpts
 
-    logger.info(mf, "generating init guess using %s basis", cell.basis)
+    logger.info(cell0, "generating init guess using %s basis", cell.basis)
 
     if len(kpts) < 30:
         pmf = scf.KRHF(cell, kpts)
     else:
         pmf = scf.KRHF(cell, kpts).density_fit()
-    pmf.exxdiv = mf.exxdiv
 
     if key.lower() == "cycle1":
         pmf.max_cycle = 0
@@ -581,14 +580,14 @@ def get_init_guess(mf, basis=None, pseudo=None, nv=0, key="hcore", fC_ks=None):
     else:
         raise NotImplementedError("Init guess %s not implemented" % key)
 
-    logger.debug1(mf, "converting init MOs from GTO basis to PW basis")
+    logger.debug1(cell0, "converting init MOs from GTO basis to PW basis")
     C_ks = pw_helper.get_C_ks_G(cell, kpts, mo_coeff, ntot_ks, fC_ks=fC_ks,
-                                verbose=mf.cell.verbose)
+                                verbose=cell0.verbose)
     mocc_ks = [mo_occ[k][:ntot_ks[k]] for k in range(nkpts)]
 
-    C_ks = orth_mo(mf, C_ks, mocc_ks)
+    C_ks = orth_mo(cell0, C_ks, mocc_ks)
 
-    C_ks, mocc_ks = add_random_mo(mf.cell, [ntot]*nkpts, C_ks, mocc_ks)
+    C_ks, mocc_ks = add_random_mo(cell0, [ntot]*nkpts, C_ks, mocc_ks)
 
     return C_ks, mocc_ks
 
@@ -1149,16 +1148,20 @@ class PWKRHF(mol_hf.SCF):
         write_time("all other", t_other, t_tot)
         write_time("full SCF", t_tot, t_tot)
 
-    def get_init_guess(self, key="hcore", nv=None, fC_ks=None):
+    def get_init_guess(self, cell=None, kpts=None, basis=None, pseudo=None,
+                       nv=None, key="hcore", fC_ks=None):
+        if cell is None: cell = self.cell
+        if kpts is None: kpts = self.kpts
         if nv is None: nv = self.nv
 
         if key in ["h1e","hcore","cycle1","scf"]:
-            C_ks, mocc_ks = get_init_guess(self, nv=nv, key=key, fC_ks=fC_ks)
+            # C_ks, mocc_ks = get_init_guess(self, nv=nv, key=key, fC_ks=fC_ks)
+            C_ks, mocc_ks = get_init_guess(cell, kpts,
+                                           basis=basis, pseudo=pseudo,
+                                           nv=nv, key=key, fC_ks=fC_ks)
         else:
-            logger.warn(self, "Unknown init guess %s. Use hcore initial guess",
-                        key)
-            C_ks, mocc_ks = get_init_guess(self, nv=nv, key="hcore",
-                                           fC_ks=fC_ks)
+            logger.warn(self, "Unknown init guess %s", key)
+            raise RuntimeError
 
         return C_ks, mocc_ks
 
