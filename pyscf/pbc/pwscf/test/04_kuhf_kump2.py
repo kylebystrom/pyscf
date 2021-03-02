@@ -50,7 +50,7 @@ if __name__ == "__main__":
     pwmf.kernel()
 
 # krmp2
-    # pwmp = pwscf.KUP2(pwmf)
-    # pwmp.kernel()
-    #
-    # assert(abs(pwmp.e_corr - -0.172159082251055) < 1.e-4)
+    pwmp = pwscf.KUMP2(pwmf)
+    pwmp.kernel()
+
+    assert(abs(pwmp.e_corr - -0.00427971975119727) < 1.e-4)

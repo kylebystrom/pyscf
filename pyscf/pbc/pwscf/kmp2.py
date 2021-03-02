@@ -120,6 +120,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None):
     tspans[0] = np.asarray(cput1) - np.asarray(cput0)
 
     emp2_d = emp2_x = 0.
+    emp2_ss = emp2_os = 0.
     for ki in range(nkpts):
         kpti = kpts[ki]
         no_i = no_ks[ki]
@@ -242,6 +243,8 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None):
                     eijab_x *= 2
                 emp2_d += eijab_d
                 emp2_x += eijab_x
+                emp2_ss += eijab_d * 0.5 + eijab_x
+                emp2_os += eijab_d * 0.5
                 tock[:] = time.clock(), time.time()
                 tspans[5] += tock - tick
 
@@ -254,9 +257,13 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None):
 
     emp2_d /= nkpts
     emp2_x /= nkpts
+    emp2_ss /= nkpts
+    emp2_os /= nkpts
     emp2 = emp2_d + emp2_x
     summary["e_corr_d"] = emp2_d
     summary["e_corr_x"] = emp2_x
+    summary["e_corr_ss"] = emp2_ss
+    summary["e_corr_os"] = emp2_os
     summary["e_corr"] = emp2
 
     cput1 = logger.timer(cell, 'pwmp2', *cput0)
@@ -306,6 +313,8 @@ class PWKRMP2:
         log.info('Correlation Energy =              %24.15f', self.e_corr)
         write('Direct Energy =                   %24.15f', 'e_corr_d')
         write('Exchange Energy =                 %24.15f', 'e_corr_x')
+        write('Same-spin Energy =                %24.15f', 'e_corr_ss')
+        write('Opposite-spin Energy =            %24.15f', 'e_corr_os')
 
         def write_time(comp, t_comp, t_tot):
             tc, tw = t_comp
