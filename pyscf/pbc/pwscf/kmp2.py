@@ -42,7 +42,7 @@ def fill_oovv(oovv, v_ia, Co_kj_R, Cv_kb_R, fac=None):
     for j in range(no_j):
         rho_jb_R = Co_kj_R[j].conj() * Cv_kb_R
         for i in range(no_i):
-            oovv[i,j] = v_ia[i] @ rho_jb_R.T
+            oovv[i,j] = lib.dot(v_ia[i], rho_jb_R.T)
     if not fac is None: oovv *= fac
 
     return oovv

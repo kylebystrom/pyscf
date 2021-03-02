@@ -483,7 +483,7 @@ def dump_moe(mf, moe_ks_, mocc_ks_, nband=None, trigger_level=logger.DEBUG):
 
 def orth(cell, C, thr, thr_lindep=1e-8, follow=True):
     n = C.shape[0]
-    S = C.conj() @ C.T
+    S = lib.dot(C.conj(), C.T)
     nonorth_err = np.max(np.abs(S - np.eye(S.shape[0])))
     if nonorth_err > thr:
         logger.warn(cell, "non-orthogonality detected in the initial MOs (max |off-diag ovlp|= %s). Symm-orth them now.", nonorth_err)
@@ -502,7 +502,7 @@ def orth(cell, C, thr, thr_lindep=1e-8, follow=True):
             U = (u[:,idx]*e[idx]**-0.5).T
         else:
             U = (u[:,idx_keep]*e[idx_keep]**-0.5).T
-        C = U @ C
+        C = lib.dot(U, C)
 
     return C
 
@@ -517,7 +517,7 @@ def orth_mo1(cell, C, mocc, thr=1e-3, thr_lindep=1e-8, follow=True):
         Co = orth(cell, Co, thr, thr_lindep, follow)
     # project out occ from vir and orth vir
     if Cv.shape[0] > 0:
-        Cv -= (Cv @ Co.conj().T) @ Co
+        Cv -= lib.dot(lib.dot(Cv, Co.conj().T), Co)
         Cv = orth(cell, Cv, thr, thr_lindep, follow)
 
     C = np.vstack([Co,Cv])
@@ -640,7 +640,7 @@ def add_random_mo1(cell, n, C0):
         return C0
 
     C1 = np.random.rand(n-n0, ngrids) + 0j
-    C1 -= (C1@C0.conj().T) @ C0
+    C1 -= lib.dot(lib.dot(C1, C0.conj().T), C0)
     C1 = orth(cell, C1, 1e-3, follow=False)
 
     return np.vstack([C0,C1])

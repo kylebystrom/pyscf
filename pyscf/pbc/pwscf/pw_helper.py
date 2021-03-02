@@ -87,7 +87,7 @@ def get_C_ks_G(cell, kpts, mo_coeff_ks, n_ks, fC_ks=None, verbose=0):
                 C_k = mo_coeff_ks[k][:,:n_ks[k]]
                 C_ks_R[krel][p0:p1] = lib.dot(ao, C_k)
                 if k > 0:
-                    C_ks_R[krel][p0:p1] = np.exp(-1j * (coords[p0:p1] @
+                    C_ks_R[krel][p0:p1] = np.exp(-1j * lib.dot(coords[p0:p1],
                         kpts[k].T)).reshape(-1,1) * lib.dot(ao, C_k)
             ao = ao_ks = None
 
@@ -288,7 +288,7 @@ def apply_vk_kpt(cell, C_k, kpt1, C_ks, mocc_ks, kpts,
 
 
 def apply_vk_kpt_ace(C_k, ace_xi_k):
-    Cbar_k = (C_k @ ace_xi_k.conj().T) @ ace_xi_k
+    Cbar_k = lib.dot(lib.dot(C_k, ace_xi_k.conj().T), ace_xi_k)
     return Cbar_k
 
 
@@ -481,7 +481,7 @@ def initialize_ACE_from_W(C_ks, W_ks, ace_xi_ks):
     for k in range(nkpts):
         C_k = C_ks[k] if C_incore else C_ks["%d"%k][()]
         W_k = W_ks[k] if incore else W_ks["%d"%k][()]
-        L_k = scipy.linalg.cholesky(C_k.conj()@W_k.T, lower=True)
+        L_k = scipy.linalg.cholesky(lib.dot(C_k.conj(),W_k.T), lower=True)
 
         key = "%d"%k
         if key in ace_xi_ks: del ace_xi_ks[key]
