@@ -26,7 +26,7 @@ def read_fchk(chkfile_name):
 
 
 def kconserv(kptija, reduce_latvec, kdota):
-    tmp = kptija @ reduce_latvec - kdota
+    tmp = lib.dot(kptija.reshape(1,-1), reduce_latvec) - kdota
     return np.where(abs(tmp - np.rint(tmp)).sum(axis=1)<1e-6)[0][0]
 
 
@@ -65,7 +65,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None):
     ngrids = coords.shape[0]
 
     reduce_latvec = cell.lattice_vectors() / (2*np.pi)
-    kdota = kpts @ reduce_latvec
+    kdota = lib.dot(kpts, reduce_latvec)
 
     fac = ngrids**2. / cell.vol
     fac_oovv = fac * ngrids / nkpts
@@ -192,7 +192,8 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None):
                 tock[:] = time.clock(), time.time()
                 tspans[3] += tock - tick
 
-                phase = np.exp(-1j*(coords@kptijab))
+                phase = np.exp(-1j*lib.dot(coords,
+                                           kptijab.reshape(-1,1))).reshape(-1)
                 v_ia *= phase
                 oovv_ka = np.ndarray((no_i,no_j,nv_a,nv_b), dtype=dtype,
                                      buffer=buf2)

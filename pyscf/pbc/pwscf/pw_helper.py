@@ -203,7 +203,8 @@ def apply_ppnl_kpt(cell, C_k, kpt, mesh, Gv):
                         p0, p1 = p1, p1+nl*(l*2+1)
                         hl = np.asarray(hl)
                         SPG_lmi_ = SPG_lmi[p0:p1].reshape(nl,l*2+1,-1)
-                        tmp = hl @ np.einsum("imG,IG->Iim", SPG_lmi_, C_k_)
+                        tmp = np.einsum("imG,IG->Iim", SPG_lmi_, C_k_)
+                        tmp = np.einsum("ij,Iim->Ijm", hl, tmp)
                         Cbar_k += np.einsum("Iim,imG->IG", tmp, SPG_lmi_.conj())
         return Cbar_k / cell.vol
 
