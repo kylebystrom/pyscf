@@ -84,11 +84,12 @@ def get_C_ks_G(cell, kpts, mo_coeff_ks, n_ks, fC_ks=None, verbose=0):
             ao_ks, mask = ao_ks_etc[0], ao_ks_etc[2]
             for krel, ao in enumerate(ao_ks):
                 k = krel + k0
+                kpt = kpts[k].reshape(-1,1)
                 C_k = mo_coeff_ks[k][:,:n_ks[k]]
                 C_ks_R[krel][p0:p1] = lib.dot(ao, C_k)
                 if k > 0:
                     C_ks_R[krel][p0:p1] = np.exp(-1j * lib.dot(coords[p0:p1],
-                        kpts[k].T)).reshape(-1,1) * lib.dot(ao, C_k)
+                        kpt)) * lib.dot(ao, C_k)
             ao = ao_ks = None
 
         if incore:

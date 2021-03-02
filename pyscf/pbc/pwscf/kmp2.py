@@ -327,7 +327,12 @@ class PWKRMP2:
 
         self.e_corr = kernel_dx_(cell, kpts, chkfile, summary, nv=nv)
 
+        self._finalize()
+
         return self.e_corr
+
+    def _finalize(self):
+        logger.note(self, "KMP2 energy = %.15g", self.e_corr)
 
 
 if __name__ == "__main__":

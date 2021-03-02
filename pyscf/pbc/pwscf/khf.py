@@ -99,10 +99,12 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         facexi = h5py.File(facexi, "w")
 
     if ace_exx:
+        if "ace_xi_ks" in facexi: del facexi["ace_xi_ks"]
         ace_xi_ks = facexi.create_group("ace_xi_ks")
         C_ks_exx = None
     else:
         ace_xi_ks = None
+        if "C_ks_exx" in facexi: del facexi["C_ks_exx"]
         C_ks_exx = facexi.create_group("C_ks_exx")
 
     # init E
@@ -1018,23 +1020,23 @@ class PWKRHF(mol_hf.SCF):
     '''PWKRHF base class. non-relativistic RHF using PW basis.
     '''
 
-    conv_tol = getattr(__config__, 'pbc_pwscf_krhf_PWKRHF_conv_tol', 1e-6)
+    conv_tol = getattr(__config__, 'pbc_pwscf_khf_PWKRHF_conv_tol', 1e-6)
     conv_tol_davidson = getattr(__config__,
-                                'pbc_pwscf_krhf_PWKRHF_conv_tol_davidson', 1e-7)
-    conv_tol_band = getattr(__config__, 'pbc_pwscf_krhf_PWKRHF_conv_tol_band',
+                                'pbc_pwscf_khf_PWKRHF_conv_tol_davidson', 1e-7)
+    conv_tol_band = getattr(__config__, 'pbc_pwscf_khf_PWKRHF_conv_tol_band',
                             1e-4)
-    max_cycle = getattr(__config__, 'pbc_pwscf_krhf_PWKRHF_max_cycle', 100)
+    max_cycle = getattr(__config__, 'pbc_pwscf_khf_PWKRHF_max_cycle', 100)
     max_cycle_davidson = getattr(__config__,
-                                 'pbc_pwscf_krhf_PWKRHF_max_cycle_davidson',
+                                 'pbc_pwscf_khf_PWKRHF_max_cycle_davidson',
                                  100)
     verbose_davidson = getattr(__config__,
-                               'pbc_pwscf_krhf_PWKRHF_verbose_davidson', 0)
+                               'pbc_pwscf_khf_PWKRHF_verbose_davidson', 0)
     double_loop_scf = getattr(__config__,
-                              'pbc_pwscf_krhf_PWKRHF_double_loop_scf', True)
-    ace_exx = getattr(__config__, 'pbc_pwscf_krhf_PWKRHF_ace_exx', True)
-    damp_type = getattr(__config__, 'pbc_pwscf_krhf_PWKRHF_damp_type',
+                              'pbc_pwscf_khf_PWKRHF_double_loop_scf', True)
+    ace_exx = getattr(__config__, 'pbc_pwscf_khf_PWKRHF_ace_exx', True)
+    damp_type = getattr(__config__, 'pbc_pwscf_khf_PWKRHF_damp_type',
                         "anderson")
-    damp_factor = getattr(__config__, 'pbc_pwscf_krhf_PWKRHF_damp_factor', 0.3)
+    damp_factor = getattr(__config__, 'pbc_pwscf_khf_PWKRHF_damp_factor', 0.3)
     conv_check = getattr(__config__, 'scf_hf_SCF_conv_check', True)
     check_convergence = None
     callback = None

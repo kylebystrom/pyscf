@@ -8,7 +8,7 @@ import copy
 import numpy as np
 
 from pyscf.pbc import gto, scf
-from pyscf.pbc.pwscf import krhf, pw_helper
+from pyscf.pbc.pwscf import khf, pw_helper
 from pyscf.lib import logger
 from pyscf import __config__
 
@@ -24,7 +24,7 @@ def remove_extra_virbands(mf, C_ks, moe_ks, mocc_ks, nbandv_extra):
     if isinstance(nbandv_extra, int): nbandv_extra = [nbandv_extra] * 2
     for s in [0,1]:
         C_ks_s = get_spin_component(C_ks, s)
-        krhf.remove_extra_virbands(mf, C_ks_s, moe_ks[s], mocc_ks[s],
+        khf.remove_extra_virbands(mf, C_ks_s, moe_ks[s], mocc_ks[s],
                                    nbandv_extra[s])
 
 
@@ -41,7 +41,7 @@ def get_nband(mf, nbandv, nbandv_extra):
 
 
 def get_band_err(mf, moe_ks, last_hf_moe, nband):
-    return max([krhf.get_band_err(mf, moe_ks[s], last_hf_moe[s], nband[s])
+    return max([khf.get_band_err(mf, moe_ks[s], last_hf_moe[s], nband[s])
                for s in [0,1]])
 
 
@@ -57,7 +57,7 @@ def copy_C_ks(mf, C_ks, C_ks_exx):
                 C_ks_exx_s = C_ks_exx.create_group(key)
             else:
                 C_ks_exx_s = C_ks_exx[s]
-            krhf.copy_C_ks(mf, C_ks_s, C_ks_exx_s)
+            khf.copy_C_ks(mf, C_ks_s, C_ks_exx_s)
 
         return C_ks_s
 
@@ -66,7 +66,7 @@ def dump_moe(mf, moe_ks, mocc_ks, nband=None, trigger_level=logger.DEBUG):
     if nband is None: nband = [None,None]
     if isinstance(nband, int): nband = [nband,nband]
     for s in [0,1]:
-        krhf.dump_moe(mf, moe_ks[s], mocc_ks[s],
+        khf.dump_moe(mf, moe_ks[s], mocc_ks[s],
                       nband=nband[s], trigger_level=trigger_level)
 
 
@@ -80,7 +80,7 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
                                             get_spin_component(C_ks_exx, s)
         ace_xi_ks_ = None if ace_xi_ks is None else \
                                             get_spin_component(ace_xi_ks, s)
-        moe_ks[s] = krhf.get_mo_energy(mf, C_ks_, mocc_ks[s],
+        moe_ks[s] = khf.get_mo_energy(mf, C_ks_, mocc_ks[s],
                                        mesh=mesh, Gv=Gv, exxdiv=exxdiv,
                                        C_ks_exx=C_ks_exx_,
                                        ace_xi_ks=ace_xi_ks_,
@@ -94,7 +94,7 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
         nkpts = len(mf.kpts)
         for s in [0,1]:
             for k in range(nkpts):
-                moe_ks[s][k][mocc_ks[s][k] > krhf.THR_OCC] -= mf._madelung
+                moe_ks[s][k][mocc_ks[s][k] > khf.THR_OCC] -= mf._madelung
 
     return moe_ks, mocc_ks
 
@@ -104,10 +104,10 @@ def get_mo_occ(cell, moe_ks=None, C_ks=None):
     for s in [0,1]:
         no = cell.nelec[s]
         if not moe_ks is None:
-            mocc_ks[s] = krhf.get_mo_occ(cell, moe_ks[s], no=no)
+            mocc_ks[s] = khf.get_mo_occ(cell, moe_ks[s], no=no)
         elif not C_ks is None:
             C_ks_s = get_spin_component(C_ks, s)
-            mocc_ks[s] = krhf.get_mo_occ(cell, C_ks=C_ks_s, no=no)
+            mocc_ks[s] = khf.get_mo_occ(cell, C_ks=C_ks_s, no=no)
         else:
             raise RuntimeError
 
@@ -190,9 +190,9 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nv=0,
                                  fC_ks=C_ks, verbose=cell0.verbose)
         mocc_ks = [mo_occ[s][k][:ntot_ks[k]] for k in range(nkpts)]
 
-        C_ks = krhf.orth_mo(cell0, C_ks, mocc_ks)
+        C_ks = khf.orth_mo(cell0, C_ks, mocc_ks)
 
-        C_ks, mocc_ks = krhf.add_random_mo(cell0, [ntot]*nkpts, C_ks, mocc_ks)
+        C_ks, mocc_ks = khf.add_random_mo(cell0, [ntot]*nkpts, C_ks, mocc_ks)
 
         if incore: C_ks_spin[s] = C_ks
         mocc_ks_spin[s] = mocc_ks
@@ -222,11 +222,11 @@ def init_guess_by_chkfile(cell, chkfile_name, nv, project=None):
                 C = C_ks_s[key][:ntot]
                 del C_ks_s[key]
                 C_ks_s[key] = C
-        mocc_ks_s = krhf.get_mo_occ(cell, C_ks=C_ks_s, no=no)
+        mocc_ks_s = khf.get_mo_occ(cell, C_ks=C_ks_s, no=no)
 
-        C_ks_s = krhf.orth_mo(cell, C_ks_s, mocc_ks_s)
+        C_ks_s = khf.orth_mo(cell, C_ks_s, mocc_ks_s)
 
-        C_ks_s, mocc_ks_s = krhf.add_random_mo(cell, [ntot]*nkpts, C_ks_s,
+        C_ks_s, mocc_ks_s = khf.add_random_mo(cell, [ntot]*nkpts, C_ks_s,
                                                mocc_ks_s)
         mocc_ks[s] = mocc_ks_s
 
@@ -344,7 +344,7 @@ def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None,
                                             get_spin_component(C_ks_exx, s)
         ace_xi_ks_s = None if ace_xi_ks is None else \
                                             get_spin_component(ace_xi_ks, s)
-        conv_ks[s], moeout_ks[s], Cout_ks_s, fc_ks[s] = krhf.converge_band(
+        conv_ks[s], moeout_ks[s], Cout_ks_s, fc_ks[s] = khf.converge_band(
                             mf, C_ks_s, mocc_ks[s], kpts, mesh=mesh, Gv=Gv,
                             C_ks_exx=C_ks_exx_s, ace_xi_ks=ace_xi_ks_s,
                             vpplocR=vpplocR, vj_R=vj_R,
@@ -359,12 +359,12 @@ def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None,
     return conv_ks, moeout_ks, Cout_ks, fc_ks
 
 
-class PWKUHF(krhf.PWKRHF):
+class PWKUHF(khf.PWKRHF):
 
     def __init__(self, cell, kpts=np.zeros((1,3)), ekincut=None,
         exxdiv=getattr(__config__, 'pbc_scf_PWKUHF_exxdiv', 'ewald')):
 
-        krhf.PWKRHF.__init__(self, cell, kpts=kpts, exxdiv=exxdiv)
+        khf.PWKRHF.__init__(self, cell, kpts=kpts, exxdiv=exxdiv)
 
         self.nv = [0,0]
         self.nv_extra = [1,1]

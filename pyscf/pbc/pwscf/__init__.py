@@ -19,9 +19,10 @@
 '''Plane wave-based Hartree-Fock for periodic systems
 '''
 
-from pyscf.pbc.pwscf import krhf
+from pyscf.pbc.pwscf import khf, kuhf
 
-PWKRHF = KRHF = krhf.PWKRHF
+PWKRHF = KRHF = khf.PWKRHF
+PWKUHF = KUHF = kuhf.PWKUHF
 
 from pyscf.pbc.pwscf import kmp2
 PWKRMP2 = KRMP2 = PWKMP2 = KMP2 = kmp2.PWKRMP2
