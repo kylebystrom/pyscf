@@ -56,14 +56,11 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     cell = mf.cell
     nkpts = len(kpts)
 
-    nbando = cell.nelectron // 2
-    nbandv_tot = nbandv + nbandv_extra
-    nband = nbando + nbandv
-    nband_tot = nbando + nbandv_tot
-    logger.info(mf, "Num of occ bands= %d", nbando)
-    logger.info(mf, "Num of vir bands= %d", nbandv)
-    logger.info(mf, "Num of all bands= %d", nband)
-    logger.info(mf, "Num of extra vir bands= %d", nbandv_extra)
+    nbando, nbandv_tot, nband, nband_tot = mf.get_nband(nbandv, nbandv_extra)
+    logger.info(mf, "Num of occ bands= %s", nbando)
+    logger.info(mf, "Num of vir bands= %s", nbandv)
+    logger.info(mf, "Num of all bands= %s", nband)
+    logger.info(mf, "Num of extra vir bands= %s", nbandv_extra)
 
     # init guess and SCF chkfile
     tick = np.asarray([time.clock(), time.time()])
@@ -87,7 +84,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
                                               fC_ks=C_ks)
         else:
             C_ks = C0_ks
-            mocc_ks = get_mo_occ(cell, C_ks=C_ks)
+            mocc_ks = mf.get_mo_occ(C_ks=C_ks)
             C_ks, mocc_ks = add_random_mo(mf.cell, [nband_tot]*nkpts, C_ks,
                                           mocc_ks)
     tock = np.asarray([time.clock(), time.time()])
@@ -114,7 +111,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     vpplocR = mf.get_vpplocR(mesh=mesh, Gv=Gv)
     vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
     mf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks)
-    copy_C_ks(C_ks, C_ks_exx)
+    mf.copy_C_ks(C_ks, C_ks_exx)
     moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks,
                                        C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
                                        vpplocR=vpplocR, vj_R=vj_R)
@@ -125,7 +122,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
     scf_conv = False
 
     if mf.max_cycle <= 0:
-        remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra)
+        mf.remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra)
         return scf_conv, e_tot, moe_ks, C_ks, mocc_ks
 
     if dump_chk:
@@ -165,14 +162,13 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         mocc_ks = chg_mocc_ks
         vj_R = mf.get_vj_R(C_ks, mocc_ks)
         mf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks)
-        copy_C_ks(C_ks, C_ks_exx)
+        mf.copy_C_ks(C_ks, C_ks_exx)
         last_hf_moe = moe_ks
         moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks,
                                            C_ks_exx=C_ks_exx,
                                            ace_xi_ks=ace_xi_ks,
                                            vpplocR=vpplocR, vj_R=vj_R)
-        de_band = np.max([np.max(abs(moe_ks[k] - last_hf_moe[k])[:nband])
-                         for k in range(nkpts)])
+        de_band = mf.get_band_err(moe_ks, last_hf_moe, nband)
         last_hf_e = e_tot
         e_tot = mf.energy_tot(C_ks, mocc_ks,
                               C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
@@ -221,14 +217,13 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
         mocc_ks = chg_mocc_ks
         vj_R = mf.get_vj_R(C_ks, mocc_ks)
         mf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks)
-        copy_C_ks(C_ks, C_ks_exx)
+        mf.copy_C_ks(C_ks, C_ks_exx)
         last_hf_moe = moe_ks
         moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks,
                                            C_ks_exx=C_ks_exx,
                                            ace_xi_ks=ace_xi_ks,
                                            vpplocR=vpplocR, vj_R=vj_R)
-        de_band = np.max([np.max(abs(moe_ks[k] - last_hf_moe[k])[:nband])
-                         for k in range(nkpts)])
+        de_band = mf.get_band_err(moe_ks, last_hf_moe, nband)
         last_hf_e = e_tot
         e_tot = mf.energy_tot(C_ks, mocc_ks,
                               C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
@@ -245,7 +240,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
             scf_conv = True
 
     # remove extra virtual bands before return
-    remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra)
+    mf.remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra)
 
     if dump_chk:
         mf.dump_chk(locals())
@@ -286,7 +281,23 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
 #                 C_ks[key] = C[order]
 
 
-def remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra):
+def get_nband(mf, nbandv, nbandv_extra):
+    cell = mf.cell
+    nbando = cell.nelectron // 2
+    nbandv_tot = nbandv + nbandv_extra
+    nband = nbando + nbandv
+    nband_tot = nbando + nbandv_tot
+
+    return nbando, nbandv_tot, nband, nband_tot
+
+
+def get_band_err(mf, moe_ks, last_hf_moe, nband):
+    nkpts = len(mf.kpts)
+    return np.max([np.max(abs(moe_ks[k] - last_hf_moe[k])[:nband])
+                  for k in range(nkpts)])
+
+
+def remove_extra_virbands(mf, C_ks, moe_ks, mocc_ks, nbandv_extra):
     if nbandv_extra > 0:
         nkpts = len(moe_ks)
         for k in range(nkpts):
@@ -345,7 +356,7 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
         fc_tot += fc_this
 
         # update mo occ
-        mocc_ks = get_mo_occ(cell, moe_ks)
+        mocc_ks = mf.get_mo_occ(moe_ks)
 
         # update coulomb potential and energy
         last_vj_R = vj_R
@@ -375,7 +386,7 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
     return scf_conv, fc_tot, C_ks, moe_ks, mocc_ks, e_tot
 
 
-def copy_C_ks(C_ks, C_ks_exx):
+def copy_C_ks(mf, C_ks, C_ks_exx):
     if C_ks_exx is None:
         return None
     else:
@@ -392,9 +403,9 @@ def copy_C_ks(C_ks, C_ks_exx):
         return C_ks_exx
 
 
-def get_mo_occ(cell, moe_ks=None, C_ks=None):
+def get_mo_occ(cell, moe_ks=None, C_ks=None, no=None):
+    if no is None: no = cell.nelectron // 2
     if not moe_ks is None:
-        no = cell.nelectron // 2
         nkpts = len(moe_ks)
         no_tot = no * nkpts
         e_fermi = np.sort(np.concatenate(moe_ks))[no_tot-1]
@@ -405,7 +416,6 @@ def get_mo_occ(cell, moe_ks=None, C_ks=None):
             mocc_k[moe_ks[k] < e_fermi+EPSILON] = 2
             mocc_ks[k] = mocc_k
     elif not C_ks is None:
-        no = cell.nelectron // 2
         if isinstance(C_ks, list):
             mocc_ks = [np.asarray([2 if i < no else 0
                        for i in range(C_k.shape[0])]) for C_k in C_ks]
@@ -809,7 +819,8 @@ def apply_Fock_kpt(mf, C_k, kpt, mocc_ks, mesh, Gv, vpplocR, vj_R, exxdiv,
 
 
 def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
-                  C_ks_exx=None, ace_xi_ks=None, vpplocR=None, vj_R=None):
+                  C_ks_exx=None, ace_xi_ks=None, vpplocR=None, vj_R=None,
+                  ret_mocc=True):
     cell = mf.cell
     if vpplocR is None: vpplocR = mf.get_vpplocR()
     if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks)
@@ -835,12 +846,15 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
                         moe_k, k)
         moe_ks[k] = moe_k.real
 
-    mocc_ks = get_mo_occ(cell, moe_ks)
-    if exxdiv == "ewald":
-        for k in range(nkpts):
-            moe_ks[k][mocc_ks[k] > THR_OCC] -= mf._madelung
+    if ret_mocc:
+        mocc_ks = mf.get_mo_occ(moe_ks)
+        if exxdiv == "ewald":
+            for k in range(nkpts):
+                moe_ks[k][mocc_ks[k] > THR_OCC] -= mf._madelung
 
-    return moe_ks, mocc_ks
+        return moe_ks, mocc_ks
+    else:
+        return moe_ks
 
 
 def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
@@ -1062,8 +1076,8 @@ class PWKRHF(mol_hf.SCF):
         logger.info(self, "SCF init guess = %s", self.init_guess)
         logger.info(self, "SCF conv_tol = %s", self.conv_tol)
         logger.info(self, "SCF max_cycle = %d", self.max_cycle)
-        logger.info(self, "Num virtual bands to compute = %d", self.nv)
-        logger.info(self, "Num extra v-bands included to help convergence = %d",
+        logger.info(self, "Num virtual bands to compute = %s", self.nv)
+        logger.info(self, "Num extra v-bands included to help convergence = %s",
                     self.nv_extra)
         logger.info(self, "Band energy conv_tol = %s", self.conv_tol_band)
         logger.info(self, "Davidson conv_tol = %s", self.conv_tol_davidson)
@@ -1154,6 +1168,9 @@ class PWKRHF(mol_hf.SCF):
         write_time("all other", t_other, t_tot)
         write_time("full SCF", t_tot, t_tot)
 
+    def get_mo_occ(mf, moe_ks=None, C_ks=None, no=None):
+        return get_mo_occ(mf.cell, moe_ks, C_ks, no)
+
     def get_init_guess(self, cell=None, kpts=None, basis=None, pseudo=None,
                        nv=None, key="hcore", fC_ks=None):
         if cell is None: cell = self.cell
@@ -1203,8 +1220,11 @@ class PWKRHF(mol_hf.SCF):
     kernel = lib.alias(scf, alias_name='kernel')
 
     kernel_charge = kernel_charge
+    remove_extra_virbands = remove_extra_virbands
+    get_nband = get_nband
+    get_band_err = get_band_err
+    copy_C_ks = copy_C_ks
     dump_moe = dump_moe
-    get_init_guess = get_init_guess
     initialize_ACE = initialize_ACE
     get_mo_energy = get_mo_energy
     apply_h1e_kpt = apply_h1e_kpt
