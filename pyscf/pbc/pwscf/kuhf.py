@@ -208,27 +208,19 @@ def init_guess_by_chkfile(cell, chkfile_name, nv, project=None):
 
     if isinstance(nv, int): nv = [nv] * 2
 
-    mocc_ks = [None] * 2
+    from pyscf.pbc.scf import chkfile
+    scf_dict = chkfile.load_scf(chkfile_name)[1]
+    mocc_ks = scf_dict["mo_occ"]
+    nkpts = len(mocc_ks[0])
     for s in [0,1]:
-        no = cell.nelec[s]
-        ntot = no + nv[s]
-        C_ks_s = get_spin_component(C_ks, s)
-        nkpts = len(C_ks_s)
-
-        # discarded high-energy orbitals if chkfile has more than requested
+        ntot_ks = [None] * nkpts
+        C_ks_s = C_ks["%d"%s]
         for k in range(nkpts):
-            key = "%d"%k
-            if C_ks_s[key].shape[0] > ntot:
-                C = C_ks_s[key][:ntot]
-                del C_ks_s[key]
-                C_ks_s[key] = C
-        mocc_ks_s = khf.get_mo_occ(cell, C_ks=C_ks_s, no=no)
+            no = np.sum(mocc_ks[s][k]>khf.THR_OCC)
+            ntot_ks[k] = max(no+nv[s], len(mocc_ks[s][k]))
 
-        C_ks_s = khf.orth_mo(cell, C_ks_s, mocc_ks_s)
-
-        C_ks_s, mocc_ks_s = khf.add_random_mo(cell, [ntot]*nkpts, C_ks_s,
-                                               mocc_ks_s)
-        mocc_ks[s] = mocc_ks_s
+        C_ks_s, mocc_ks[s] = khf.init_guess_from_C0(cell, C_ks_s, ntot_ks,
+                                                    C_ks_s, mocc_ks[s])
 
     return fchk, C_ks, mocc_ks
 
@@ -369,8 +361,8 @@ class PWKUHF(khf.PWKRHF):
         self.nv = [0,0]
         self.nv_extra = [1,1]
 
-    def get_init_guess(self, cell=None, kpts=None, basis=None, pseudo=None,
-                       nv=None, key="hcore", fC_ks=None):
+    def get_init_guess_key(self, cell=None, kpts=None, basis=None, pseudo=None,
+                           nv=None, key="hcore", fC_ks=None):
         if cell is None: cell = self.cell
         if kpts is None: kpts = self.kpts
         if nv is None: nv = self.nv
@@ -382,6 +374,38 @@ class PWKUHF(khf.PWKRHF):
         else:
             logger.warn(self, "Unknown init guess %s", key)
             raise RuntimeError
+
+        return C_ks, mocc_ks
+
+    def get_init_guess_C0(self, C0, nv=None, fC_ks=None):
+        if nv is None: nv = self.nv
+        if isinstance(nv, int): nv = [nv,nv]
+        no = self.cell.nelec
+        nkpts = len(self.kpts)
+        incore0 = isinstance(C0, list)
+        incore = fC_ks is None
+        C_ks = [None] * 2 if incore else fC_ks
+        mocc_ks = [None] * 2
+        for s in [0,1]:
+            ntot_ks = [no[s]+nv[s]] * len(self.kpts)
+            if incore:
+                C_ks_s = None
+            else:
+                key = "%d" % s
+                if key in C_ks: del C_ks[key]
+                C_ks_s = C_ks.create_group(key)
+            if incore0:
+                C0_s = C0[s]
+                n0_ks = [C0_s[k].shape[0] for k in range(nkpts)]
+            else:
+                C0_s = C0["%d"%s]
+                n0_ks = [C0_s["%d"%k].shape[0] for k in range(nkpts)]
+            mocc_ks[s] = [np.asarray([1 if i < no[s] else 0
+                          for i in range(n0_ks[k])]) for k in range(nkpts)]
+            C_ks_s, mocc_ks[s] = khf.init_guess_from_C0(self.cell, C0_s,
+                                                        ntot_ks, C_ks_s,
+                                                        mocc_ks[s])
+            if incore: C_ks[s] = C_ks_s
 
         return C_ks, mocc_ks
 

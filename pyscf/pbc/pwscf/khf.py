@@ -29,7 +29,7 @@ import pyscf.lib.parameters as param
 THR_OCC = 1E-3
 
 
-def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
+def kernel_doubleloop(mf, kpts, C0=None, facexi=None,
             nbandv=0, nbandv_extra=1,
             conv_tol=1.E-6, conv_tol_davidson=1.E-6, conv_tol_band=1e-4,
             max_cycle=100, max_cycle_davidson=10, verbose_davidson=0,
@@ -40,7 +40,7 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
             This double-loop implementation follows closely the implementation in Quantum ESPRESSO.
 
         Args:
-            C0_ks (list of numpy arrays):
+            C0 (list of numpy arrays):
                 A list of nkpts numpy arrays, each of size nocc(k) * Npw.
             facexi (None, str or h5py file):
                 Specify where to store the ACE xi vectors.
@@ -64,29 +64,8 @@ def kernel_doubleloop(mf, kpts, C0_ks=None, facexi=None,
 
     # init guess and SCF chkfile
     tick = np.asarray([time.clock(), time.time()])
-    if mf.init_guess[:3] == "chk":
-        fchk, C_ks, mocc_ks = mf.init_guess_by_chkfile(nv=nbandv_tot)
-        dump_chk = True
-    else:
-        if isinstance(mf.chkfile, str):
-            fchk = h5py.File(mf.chkfile, "w")
-            dump_chk = True
-        else:
-            # tempfile (discarded after SCF)
-            swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
-            fchk = lib.H5TmpFile(swapfile.name)
-            swapfile = None
-            dump_chk = False
-        C_ks = fchk.create_group("mo_coeff")
+    C_ks, mocc_ks, fchk, dump_chk = mf.get_init_guess(nv=nbandv_tot, C0=C0)
 
-        if C0_ks is None:
-            C_ks, mocc_ks = mf.get_init_guess(nv=nbandv_tot, key=mf.init_guess,
-                                              fC_ks=C_ks)
-        else:
-            C_ks = C0_ks
-            mocc_ks = mf.get_mo_occ(C_ks=C_ks)
-            C_ks, mocc_ks = add_random_mo(mf.cell, [nband_tot]*nkpts, C_ks,
-                                          mocc_ks)
     tock = np.asarray([time.clock(), time.time()])
     mf.scf_summary["t-init"] = tock - tick
 
@@ -652,27 +631,54 @@ def add_random_mo1(cell, n, C0):
 
 
 def init_guess_by_chkfile(cell, chkfile_name, nv, project=None):
+    from pyscf.pbc.scf import chkfile
+    scf_dict = chkfile.load_scf(chkfile_name)[1]
+    mocc_ks = scf_dict["mo_occ"]
+    nkpts = len(mocc_ks)
+    ntot_ks = [None] * nkpts
+    for k in range(nkpts):
+        no = np.sum(mocc_ks[k]>THR_OCC)
+        ntot_ks[k] = max(no+nv, len(mocc_ks[k]))
+
     fchk = h5py.File(chkfile_name, "a")
     C_ks = fchk["mo_coeff"]
 
-    no = cell.nelectron // 2
-    ntot = no + nv
-    nkpts = len(C_ks)
+    C_ks, mocc_ks = init_guess_from_C0(cell, C_ks, ntot_ks, C_ks, mocc_ks)
+
+    return fchk, C_ks, mocc_ks
+
+
+def init_guess_from_C0(cell, C0_ks, ntot_ks, C_ks=None, mocc_ks=None):
+    nkpts = len(C0_ks)
+    if C_ks is None: C_ks = [None] * nkpts
+    incore0 = isinstance(C0_ks, list)
+    incore = isinstance(C_ks, list)
 
     # discarded high-energy orbitals if chkfile has more than requested
     for k in range(nkpts):
         key = "%d"%k
-        if C_ks[key].shape[0] > ntot:
-            C = C_ks[key][:ntot]
-            del C_ks[key]
+        ntot = ntot_ks[k]
+        C0_k = C0_ks[k] if incore0 else C0_ks[key][()]
+        if C0_k.shape[0] > ntot:
+            C = C0_k[:ntot]
+            if not mocc_ks is None:
+                mocc_ks[k] = mocc_ks[k][:ntot]
+        else:
+            C = C0_k
+        if incore:
+            C_ks[k] = C
+        else:
+            if key in C_ks: del C_ks[key]
             C_ks[key] = C
-    mocc_ks = get_mo_occ(cell, C_ks=C_ks)
+
+    if mocc_ks is None:
+        mocc_ks = get_mo_occ(cell, C_ks=C_ks)
 
     C_ks = orth_mo(cell, C_ks, mocc_ks)
 
-    C_ks, mocc_ks = add_random_mo(cell, [ntot]*nkpts, C_ks, mocc_ks)
+    C_ks, mocc_ks = add_random_mo(cell, ntot_ks, C_ks, mocc_ks)
 
-    return fchk, C_ks, mocc_ks
+    return C_ks, mocc_ks
 
 
 def initialize_ACE(mf, C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks, Ct_ks=None):
@@ -1176,8 +1182,8 @@ class PWKRHF(mol_hf.SCF):
     def get_mo_occ(mf, moe_ks=None, C_ks=None, no=None):
         return get_mo_occ(mf.cell, moe_ks, C_ks, no)
 
-    def get_init_guess(self, cell=None, kpts=None, basis=None, pseudo=None,
-                       nv=None, key="hcore", fC_ks=None):
+    def get_init_guess_key(self, cell=None, kpts=None, basis=None, pseudo=None,
+                           nv=None, key="hcore", fC_ks=None):
         if cell is None: cell = self.cell
         if kpts is None: kpts = self.kpts
         if nv is None: nv = self.nv
@@ -1192,13 +1198,51 @@ class PWKRHF(mol_hf.SCF):
 
         return C_ks, mocc_ks
 
+    def get_init_guess(self, init_guess=None, nv=None, chkfile=None, C0=None):
+        if init_guess is None: init_guess = self.init_guess
+        if nv is None: nv = self.nv
+        if chkfile is None: chkfile = self.chkfile
+        if init_guess[:3] == "chk" and C0 is None:
+            fchk, C_ks, mocc_ks = self.init_guess_by_chkfile(chk=chkfile, nv=nv)
+            dump_chk = True
+        else:
+            if isinstance(chkfile, str):
+                fchk = h5py.File(chkfile, "w")
+                dump_chk = True
+            else:
+                # tempfile (discarded after SCF)
+                swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+                fchk = lib.H5TmpFile(swapfile.name)
+                swapfile = None
+                dump_chk = False
+
+            C_ks = fchk.create_group("mo_coeff")
+
+            if C0 is None:
+                C_ks, mocc_ks = self.get_init_guess_key(nv=nv,
+                                                        key=init_guess,
+                                                        fC_ks=C_ks)
+            else:
+                C_ks, mocc_ks = self.get_init_guess_C0(C0, nv=nv, fC_ks=C_ks)
+
+        return C_ks, mocc_ks, fchk, dump_chk
+
+    def get_init_guess_C0(self, C0, nv=None, fC_ks=None):
+        if nv is None: nv = self.nv
+        no = self.cell.nelectron // 2
+        ntot_ks = [no+nv] * len(self.kpts)
+        return init_guess_from_C0(self.cell, C0, ntot_ks, fC_ks)
+
+    def add_random_mo(self, ngoal_ks, C_ks, mocc_ks):
+        return add_random_mo(self.cell, ngoal_ks, C_ks, mocc_ks)
+
     def get_vpplocR(self, mesh=None, Gv=None):
         return pw_helper.get_vpplocR(self.cell, mesh=mesh, Gv=Gv)
 
     def get_vj_R(self, C_ks, mocc_ks, mesh=None, Gv=None):
         return pw_helper.get_vj_R(self.cell, C_ks, mocc_ks, mesh=mesh, Gv=Gv)
 
-    def scf(self, C0_ks=None, **kwargs):
+    def scf(self, C0=None, **kwargs):
         self.dump_flags()
 
         if isinstance(self._acexi_to_save, tempfile._TemporaryFileWrapper):
@@ -1207,7 +1251,7 @@ class PWKRHF(mol_hf.SCF):
             facexi = self._acexi_to_save
         self.converged, self.e_tot, self.mo_energy, self.mo_coeff, \
                 self.mo_occ = kernel_doubleloop(self, self.kpts,
-                           C0_ks=C0_ks, facexi=facexi,
+                           C0=C0, facexi=facexi,
                            nbandv=self.nv, nbandv_extra=self.nv_extra,
                            conv_tol=self.conv_tol, max_cycle=self.max_cycle,
                            conv_tol_band=self.conv_tol_band,

@@ -7,7 +7,7 @@ import tempfile
 import numpy as np
 
 from pyscf.pbc import gto, scf, pwscf, mp
-from pyscf.pbc.pwscf import krhf, pw_helper
+from pyscf.pbc.pwscf import khf, pw_helper
 from pyscf import lib
 import pyscf.lib.parameters as param
 
@@ -48,7 +48,7 @@ if __name__ == "__main__":
     pmf.exxdiv = exxdiv
     n_ks = [gmf.mo_coeff[0].shape[1]] * nkpts
     C_ks = pw_helper.get_C_ks_G(cell, kpts, gmf.mo_coeff, n_ks)
-    mocc_ks = krhf.get_mo_occ(cell, C_ks=C_ks)
+    mocc_ks = khf.get_mo_occ(cell, C_ks=C_ks)
     pmf.nv = np.sum(mocc_ks[0]<1e-3)
     mesh = cell.mesh
     Gv = cell.get_Gv(mesh)
@@ -59,10 +59,13 @@ if __name__ == "__main__":
     swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
     facexi = lib.H5TmpFile(swapfile.name)
     swapfile = None
-    pmf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, facexi=facexi, Ct_ks=C_ks)
+    ace_xi_ks = facexi.create_group("ace_xi_ks")
+    pmf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks=ace_xi_ks,
+                       Ct_ks=C_ks)
 
     moe_ks = pmf.get_mo_energy(C_ks, mocc_ks, mesh, Gv, C_ks_exx=C_ks,
-                               facexi=facexi, vpplocR=vpplocR, vj_R=vj_R)
+                               ace_xi_ks=ace_xi_ks,
+                               vpplocR=vpplocR, vj_R=vj_R)[0]
 
     # fake a scf chkfile
     swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)

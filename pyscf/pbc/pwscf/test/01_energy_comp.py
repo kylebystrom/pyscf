@@ -7,7 +7,7 @@ import tempfile
 import numpy as np
 
 from pyscf.pbc import gto, df, scf, pwscf
-from pyscf.pbc.pwscf import krhf, pw_helper
+from pyscf.pbc.pwscf import khf, pw_helper
 from pyscf import lib
 import pyscf.lib.parameters as param
 
@@ -60,7 +60,7 @@ if __name__ == "__main__":
     pmf.exxdiv = exxdiv
     no_ks = pw_helper.get_no_ks_from_mocc(gmf.mo_occ)
     C_ks = pw_helper.get_C_ks_G(cell, kpts, gmf.mo_coeff, no_ks)
-    mocc_ks = krhf.get_mo_occ(cell, C_ks=C_ks)
+    mocc_ks = khf.get_mo_occ(cell, C_ks=C_ks)
     mesh = cell.mesh
     Gv = cell.get_Gv(mesh)
     vpplocR = pmf.get_vpplocR()
@@ -69,7 +69,8 @@ if __name__ == "__main__":
     swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
     facexi = lib.H5TmpFile(swapfile.name)
     swapfile = None
-    pmf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, facexi=facexi)
+    ace_xi_ks = facexi.create_group("ace_xi_ks")
+    pmf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks=ace_xi_ks)
 
     moe_comp_ks_pw = np.zeros((4, nkpts), dtype=np.complex128)
     ace_moe_comp_ks_pw = np.zeros((4, nkpts), dtype=np.complex128)
@@ -83,7 +84,7 @@ if __name__ == "__main__":
         moe_comp_ks_pw[1,k] = moe[1] + moe[2]
         moe_comp_ks_pw[2:,k] = moe[3:]
 
-        ace_xi_k = facexi["ace_xi/%d"%k][()]
+        ace_xi_k = ace_xi_ks["%d"%k][()]
         moe = pmf.apply_Fock_kpt(C_k, kpt, mocc_ks, mesh, Gv,
                                  vpplocR, vj_R, exxdiv,
                                  C_ks_exx=None, ace_xi_k=ace_xi_k,

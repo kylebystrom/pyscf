@@ -2,6 +2,7 @@
 """
 
 
+import h5py
 import tempfile
 import numpy as np
 
@@ -33,6 +34,7 @@ if __name__ == "__main__":
 # kpts
     kmesh = [nk]*3
     kpts = cell.make_kpts(kmesh)
+    nkpts = len(kpts)
 
 # tempfile
     swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
@@ -50,6 +52,11 @@ if __name__ == "__main__":
 # krhf init from chkfile
     pwmf.init_guess = "chkfile"
     pwmf.kernel()
+
+# input C0
+    with h5py.File(pwmf.chkfile, "r") as f:
+        C0 = [f["mo_coeff/%d"%k][()] for k in range(nkpts)]
+    pwmf.kernel(C0=C0)
 
 # krmp2
     pwmp = pwscf.KMP2(pwmf)
