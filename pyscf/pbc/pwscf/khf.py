@@ -294,6 +294,8 @@ def get_nband(mf, nbandv, nbandv_extra):
 
 
 def get_band_err(mf, moe_ks, last_hf_moe, nband):
+    if nband == 0: return 0.
+
     nkpts = len(mf.kpts)
     return np.max([np.max(abs(moe_ks[k] - last_hf_moe[k])[:nband])
                   for k in range(nkpts)])
@@ -447,15 +449,14 @@ def dump_moe(mf, moe_ks_, mocc_ks_, nband=None, trigger_level=logger.DEBUG):
 
         has_occ = np.where([(mocc_ks[k] > THR_OCC).any()
                            for k in range(nkpts)])[0]
-        if len(has_occ) == 0:
-            raise RuntimeError("No occupied orbitals found in any k-point.")
-        ehomo_ks = np.asarray([np.max(moe_ks[k][mocc_ks[k]>THR_OCC])
-                              for k in has_occ])
-        ehomo = np.max(ehomo_ks)
-        khomos = has_occ[np.where(abs(ehomo_ks-ehomo) < 1e-4)[0]]
+        if len(has_occ) > 0:
+            ehomo_ks = np.asarray([np.max(moe_ks[k][mocc_ks[k]>THR_OCC])
+                                  for k in has_occ])
+            ehomo = np.max(ehomo_ks)
+            khomos = has_occ[np.where(abs(ehomo_ks-ehomo) < 1e-4)[0]]
 
-        logger.debug(mf, '  HOMO = %.15g  kpt'+' %d'*khomos.size,
-                     ehomo, *khomos)
+            logger.debug(mf, '  HOMO = %.15g  kpt'+' %d'*khomos.size,
+                         ehomo, *khomos)
 
         has_vir = np.where([(mocc_ks[k] < THR_OCC).any()
                            for k in range(nkpts)])[0]
@@ -467,6 +468,8 @@ def dump_moe(mf, moe_ks_, mocc_ks_, nband=None, trigger_level=logger.DEBUG):
 
             logger.debug(mf, '  LUMO = %.15g  kpt'+' %d'*klumos.size,
                          elumo, *klumos)
+
+        if len(has_occ) >0 and len(has_vir) > 0:
             logger.debug(mf, '  Egap = %.15g', elumo-ehomo)
 
         np.set_printoptions(threshold=len(moe_ks[0]))

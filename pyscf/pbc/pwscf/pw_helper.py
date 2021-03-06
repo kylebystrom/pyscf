@@ -483,12 +483,16 @@ def initialize_ACE_from_W(C_ks, W_ks, ace_xi_ks):
     for k in range(nkpts):
         C_k = C_ks[k] if C_incore else C_ks["%d"%k][()]
         W_k = W_ks[k] if incore else W_ks["%d"%k][()]
-        L_k = scipy.linalg.cholesky(lib.dot(C_k.conj(),W_k.T), lower=True)
+        B_k = lib.dot(C_k.conj(),W_k.T)
+        if np.sum(np.abs(B_k)) < 1e-10:
+            L_k = np.zeros_like(C_k)
+        else:
+            L_k = scipy.linalg.cholesky(B_k, lower=True)
+            L_k = scipy.linalg.solve_triangular(L_k.conj(), W_k, lower=True)
 
         key = "%d"%k
         if key in ace_xi_ks: del ace_xi_ks[key]
-        ace_xi_ks[key] = scipy.linalg.solve_triangular(L_k.conj(), W_k,
-                                                       lower=True)
+        ace_xi_ks[key] = L_k
 
         # debug
         # xi_k = ace_xi_ks["%d"%k][()]
