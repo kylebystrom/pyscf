@@ -16,7 +16,6 @@ from pyscf.scf import chkfile as mol_chkfile
 from pyscf.pbc.pwscf import chkfile
 from pyscf.pbc import gto, scf, tools
 from pyscf.pbc.pwscf import pw_helper
-from pyscf.pbc.lib.kpts_helper import member
 from pyscf.lib import logger
 import pyscf.lib.parameters as param
 

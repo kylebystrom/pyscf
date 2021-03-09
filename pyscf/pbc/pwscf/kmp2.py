@@ -48,8 +48,12 @@ def fill_oovv(oovv, v_ia, Co_kj_R, Cv_kb_R, fac=None):
     return oovv
 
 
-def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None):
+def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
     """ Compute both direct (d) and exchange (x) contributions together.
+
+    Args:
+        nv_lst (array-like of int):
+            If given, the MP2 correlation energies using the number of virtual orbitals specified by the list will be returned.
     """
 
     cput0 = (time.clock(), time.time())
@@ -79,6 +83,11 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None):
         n_ks = [no_ks[k] + nv_ks[k] for k in range(nkpts)]
     no_max = np.max(no_ks)
     nv_max = np.max(nv_ks)
+    if nv_lst is None:
+        nv_lst = [nv_max]
+    nv_lst = np.asarray(nv_lst)
+    nnv = len(nv_lst)
+    logger.info(cell, "Compute emp2 for these nv's: %s", nv_lst)
 
     # estimate memory requirement
     est_mem = no_max*nv_max*ngrids      # for caching v_ia_R
@@ -119,8 +128,10 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None):
                                   "energy", "tot"]
     tspans[0] = np.asarray(cput1) - np.asarray(cput0)
 
-    emp2_d = emp2_x = 0.
-    emp2_ss = emp2_os = 0.
+    emp2_d = np.zeros(nnv)
+    emp2_x = np.zeros(nnv)
+    emp2_ss = np.zeros(nnv)
+    emp2_os = np.zeros(nnv)
     for ki in range(nkpts):
         kpti = kpts[ki]
         no_i = no_ks[ki]
@@ -236,15 +247,23 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None):
 
                 eijab = lib.direct_sum('ia,jb->ijab',eia,ejb)
                 t2_ijab = np.conj(oovv_ka/eijab)
-                eijab_d = 2 * np.einsum('ijab,ijab->', t2_ijab, oovv_ka).real
-                eijab_x = - np.einsum('ijab,ijba->', t2_ijab, oovv_kb).real
-                if ka != kb:
-                    eijab_d *= 2
-                    eijab_x *= 2
-                emp2_d += eijab_d
-                emp2_x += eijab_x
-                emp2_ss += eijab_d * 0.5 + eijab_x
-                emp2_os += eijab_d * 0.5
+
+                for inv_,nv_ in enumerate(nv_lst):
+                    eijab_d = 2 * np.einsum('ijab,ijab->',
+                                            t2_ijab[:,:,:nv_,:nv_],
+                                            oovv_ka[:,:,:nv_,:nv_]).real
+                    eijab_x = - np.einsum('ijab,ijba->',
+                                          t2_ijab[:,:,:nv_,:nv_],
+                                          oovv_kb[:,:,:nv_,:nv_]).real
+                    if ka != kb:
+                        eijab_d *= 2
+                        eijab_x *= 2
+
+                    emp2_d[inv_] += eijab_d
+                    emp2_x[inv_] += eijab_x
+                    emp2_ss[inv_] += eijab_d * 0.5 + eijab_x
+                    emp2_os[inv_] += eijab_d * 0.5
+
                 tock[:] = time.clock(), time.time()
                 tspans[5] += tock - tick
 
@@ -260,18 +279,24 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None):
     emp2_ss /= nkpts
     emp2_os /= nkpts
     emp2 = emp2_d + emp2_x
-    summary["e_corr_d"] = emp2_d
-    summary["e_corr_x"] = emp2_x
-    summary["e_corr_ss"] = emp2_ss
-    summary["e_corr_os"] = emp2_os
-    summary["e_corr"] = emp2
+    summary["e_corr_d"] = emp2_d[-1]
+    summary["e_corr_x"] = emp2_x[-1]
+    summary["e_corr_ss"] = emp2_ss[-1]
+    summary["e_corr_os"] = emp2_os[-1]
+    summary["e_corr"] = emp2[-1]
+    summary["nv_lst"] = nv_lst
+    summary["e_corr_d_lst"] = emp2_d
+    summary["e_corr_x_lst"] = emp2_x
+    summary["e_corr_ss_lst"] = emp2_ss
+    summary["e_corr_os_lst"] = emp2_os
+    summary["e_corr_lst"] = emp2
 
     cput1 = logger.timer(cell, 'pwmp2', *cput0)
     tspans[6] = np.asarray(cput1) - np.asarray(cput0)
     for tspan, tcomp in zip(tspans,tcomps):
         summary["t-%s"%tcomp] = tspan
 
-    return emp2
+    return emp2[-1]
 
 
 class PWKRMP2:
@@ -309,12 +334,21 @@ class PWKRMP2:
             if key in summary:
                 log.info(fmt, summary[key])
         log.info('**** MP2 Summaries ****')
+        log.info('Number of virtuals =              %d', summary["nv_lst"][-1])
         log.info('Total Energy (HF+MP2) =           %24.15f', self.e_tot)
         log.info('Correlation Energy =              %24.15f', self.e_corr)
         write('Direct Energy =                   %24.15f', 'e_corr_d')
         write('Exchange Energy =                 %24.15f', 'e_corr_x')
         write('Same-spin Energy =                %24.15f', 'e_corr_ss')
         write('Opposite-spin Energy =            %24.15f', 'e_corr_os')
+
+        nv_lst = summary["nv_lst"]
+        if len(nv_lst) > 1:
+            log.info('%sNvirt  Ecorr', "\n")
+            ecorr_lst = summary["e_corr_lst"]
+            for nv,ecorr in zip(nv_lst,ecorr_lst):
+                log.info("%5d  %24.15f", nv, ecorr)
+            log.info("%s", "")
 
         def write_time(comp, t_comp, t_tot):
             tc, tw = t_comp
@@ -327,14 +361,15 @@ class PWKRMP2:
         for icomp,comp in enumerate(summary["tcomps"]):
             write_time(comp, summary["t-%s"%comp], t_tot)
 
-    def kernel(self, nv=None):
+    def kernel(self, nv=None, nv_lst=None):
         cell = self.cell
         kpts = self.kpts
         chkfile = self._scf.chkfile
         summary = self.mp2_summary
         if nv is None: nv = self.nv
 
-        self.e_corr = kernel_dx_(cell, kpts, chkfile, summary, nv=nv)
+        self.e_corr = kernel_dx_(cell, kpts, chkfile, summary, nv=nv,
+                                 nv_lst=nv_lst)
 
         self._finalize()
 
@@ -371,9 +406,11 @@ if __name__ == "__main__":
     es = {"5": -0.01363871, "10": -0.01873622, "20": -0.02461560}
 
     pwmp = PWKRMP2(pwmf)
-    for nv in [5, 10, 20]:
-        e_corr = pwmp.kernel(nv=nv)
-        pwmp.dump_mp2_summary()
-        err = abs(e_corr - es["%d"%nv])
+    pwmp.kernel(nv_lst=[5,10,20])
+    pwmp.dump_mp2_summary()
+    nv_lst = pwmp.mp2_summary["nv_lst"]
+    ecorr_lst = pwmp.mp2_summary["e_corr_lst"]
+    for nv,ecorr in zip(nv_lst,ecorr_lst):
+        err = abs(ecorr - es["%d"%nv])
         print(err)
         assert(err < 1e-6)
