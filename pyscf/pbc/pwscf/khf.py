@@ -433,7 +433,7 @@ def dump_moe(mf, moe_ks_, mocc_ks_, nband=None, trigger_level=logger.DEBUG):
             ehomo = np.max(ehomo_ks)
             khomos = has_occ[np.where(abs(ehomo_ks-ehomo) < 1e-4)[0]]
 
-            logger.debug(mf, '  HOMO = %.15g  kpt'+' %d'*khomos.size,
+            logger.info(mf, '  HOMO = %.15g  kpt'+' %d'*khomos.size,
                          ehomo, *khomos)
 
         has_vir = np.where([(mocc_ks[k] < THR_OCC).any()
@@ -444,7 +444,7 @@ def dump_moe(mf, moe_ks_, mocc_ks_, nband=None, trigger_level=logger.DEBUG):
             elumo = np.min(elumo_ks)
             klumos = has_vir[np.where(abs(elumo_ks-elumo) < 1e-4)[0]]
 
-            logger.debug(mf, '  LUMO = %.15g  kpt'+' %d'*klumos.size,
+            logger.info(mf, '  LUMO = %.15g  kpt'+' %d'*klumos.size,
                          elumo, *klumos)
 
         if len(has_occ) >0 and len(has_vir) > 0:
@@ -1123,7 +1123,6 @@ class PWKRHF(mol_hf.SCF):
     def init_guess_by_chkfile(self, chk=None, nv=None, project=None):
         if chk is None: chk = self.chkfile
         if nv is None: nv = self.nv
-        # return init_guess_by_chkfile(self.cell, chk, project)
         return init_guess_by_chkfile(self.cell, chk, nv, project=project)
     def from_chk(self, chk=None, project=None, kpts=None):
         return self.init_guess_by_chkfile(chk, project, kpts)
