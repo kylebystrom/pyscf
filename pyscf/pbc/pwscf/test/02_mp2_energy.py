@@ -49,7 +49,7 @@ if __name__ == "__main__":
     n_ks = [gmf.mo_coeff[0].shape[1]] * nkpts
     C_ks = pw_helper.get_C_ks_G(cell, kpts, gmf.mo_coeff, n_ks)
     mocc_ks = khf.get_mo_occ(cell, C_ks=C_ks)
-    pmf.nv = np.sum(mocc_ks[0]<1e-3)
+    pmf.nvir = np.sum(mocc_ks[0]<1e-3)
     mesh = cell.mesh
     Gv = cell.get_Gv(mesh)
     vpplocR = pmf.get_vpplocR()

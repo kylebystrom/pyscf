@@ -41,7 +41,7 @@ if __name__ == "__main__":
 
 # krhf
     pwmf = pwscf.KUHF(cell, kpts)
-    pwmf.nv = 4 # request 4 virtual states
+    pwmf.nvir = 4 # request 4 virtual states
     pwmf.chkfile = chkfile
     pwmf.kernel()
 

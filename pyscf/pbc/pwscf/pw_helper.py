@@ -30,7 +30,37 @@ def timing_call(func, args, tdict, tname):
     return res
 
 
-def get_no_ks_from_mocc(mocc_ks):
+def orth(cell, C, thr_nonorth=1e-6, thr_lindep=1e-8, follow=True):
+    n = C.shape[0]
+    S = lib.dot(C.conj(), C.T)
+    nonorth_err = np.max(np.abs(S - np.eye(S.shape[0])))
+    if nonorth_err < thr_nonorth:
+        return C
+
+    e, u = scipy.linalg.eigh(S)
+    idx_keep = np.where(e > thr_lindep)[0]
+    nkeep = idx_keep.size
+    if n == nkeep:  # symm orth
+        if follow:
+            # reorder to maximally overlap original orbs
+            idx = []
+            for i in range(n):
+                order = np.argsort(np.abs(u[i]))[::-1]
+                for j in order:
+                    if not j in idx:
+                        break
+                idx.append(j)
+            U = lib.dot(u[:,idx]*e[idx]**-0.5, u[:,idx].conj()).T
+        else:
+            U = lib.dot(u*e**-0.5, u.conj()).T
+    else:   # cano orth
+        U = (u[:,idx_keep]*e[idx_keep]**-0.5).T
+    C = lib.dot(U, C)
+
+    return C
+
+
+def get_nocc_ks_from_mocc(mocc_ks):
     return np.asarray([np.sum(np.asarray(mocc) > 0) for mocc in mocc_ks])
 
 
@@ -221,7 +251,7 @@ def get_vj_R(cell, C_ks, mocc_ks, mesh=None, Gv=None):
     if Gv is None: Gv = cell.get_Gv(mesh)
     nkpts = len(C_ks)
     ngrids = np.prod(mesh)
-    no_ks = get_no_ks_from_mocc(mocc_ks)
+    no_ks = get_nocc_ks_from_mocc(mocc_ks)
 
     incore = isinstance(C_ks, list)
 
@@ -263,7 +293,7 @@ def apply_vk_kpt(cell, C_k, kpt1, C_ks, mocc_ks, kpts,
     if Gv is None: Gv = cell.get_Gv(mesh)
     ngrids = Gv.shape[0]
     nkpts = len(kpts)
-    no_ks = get_no_ks_from_mocc(mocc_ks)
+    no_ks = get_nocc_ks_from_mocc(mocc_ks)
     fac = ngrids**2./(cell.vol*nkpts)
 
     incore = isinstance(C_ks, list)

@@ -38,21 +38,21 @@ def fill_oovv(oovv, v_ia, Co_kj_R, Cv_kb_R, fac=None):
              = \sum_r V_ia^kika(r)*phase * rho_jb^kjkb(r)
              = \sum_r v_ia^kika(r) * rho_jb^kjkb(r)
     """
-    no_i, no_j = oovv.shape[:2]
-    for j in range(no_j):
+    nocc_i, nocc_j = oovv.shape[:2]
+    for j in range(nocc_j):
         rho_jb_R = Co_kj_R[j].conj() * Cv_kb_R
-        for i in range(no_i):
+        for i in range(nocc_i):
             oovv[i,j] = lib.dot(v_ia[i], rho_jb_R.T)
     if not fac is None: oovv *= fac
 
     return oovv
 
 
-def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
+def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
     """ Compute both direct (d) and exchange (x) contributions together.
 
     Args:
-        nv_lst (array-like of int):
+        nvir_lst (array-like of int):
             If given, the MP2 correlation energies using the number of virtual orbitals specified by the list will be returned.
     """
 
@@ -74,25 +74,25 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
     fac = ngrids**2. / cell.vol
     fac_oovv = fac * ngrids / nkpts
 
-    no_ks = pw_helper.get_no_ks_from_mocc(mocc_ks)
-    if nv is None:
+    nocc_ks = pw_helper.get_nocc_ks_from_mocc(mocc_ks)
+    if nvir is None:
         n_ks = [len(mocc_ks[k]) for k in range(nkpts)]
-        nv_ks = [n_ks[k] - no_ks[k] for k in range(nkpts)]
+        nvir_ks = [n_ks[k] - nocc_ks[k] for k in range(nkpts)]
     else:
-        nv_ks = [nv] * nkpts
-        n_ks = [no_ks[k] + nv_ks[k] for k in range(nkpts)]
-    no_max = np.max(no_ks)
-    nv_max = np.max(nv_ks)
-    if nv_lst is None:
-        nv_lst = [nv_max]
-    nv_lst = np.asarray(nv_lst)
-    nnv = len(nv_lst)
-    logger.info(cell, "Compute emp2 for these nv's: %s", nv_lst)
+        nvir_ks = [nvir] * nkpts
+        n_ks = [nocc_ks[k] + nvir_ks[k] for k in range(nkpts)]
+    nocc_max = np.max(nocc_ks)
+    nvir_max = np.max(nvir_ks)
+    if nvir_lst is None:
+        nvir_lst = [nvir_max]
+    nvir_lst = np.asarray(nvir_lst)
+    nnvir = len(nvir_lst)
+    logger.info(cell, "Compute emp2 for these nvir's: %s", nvir_lst)
 
     # estimate memory requirement
-    est_mem = no_max*nv_max*ngrids      # for caching v_ia_R
-    est_mem += (no_max*nv_max)**2*4     # for caching oovv_ka/kb, eijab, wijab
-    est_mem += (no_max+nv_max)*ngrids*2 # for caching MOs
+    est_mem = nocc_max*nvir_max*ngrids      # for caching v_ia_R
+    est_mem += (nocc_max*nvir_max)**2*4     # for caching oovv_ka/kb, eijab, wijab
+    est_mem += (nocc_max+nvir_max)*ngrids*2 # for caching MOs
     est_mem *= dsize / 1e6
     frac = 0.6
     cur_mem = cell.max_memory - lib.current_memory()[0]
@@ -104,9 +104,9 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
         rec_mem = est_mem / frac + lib.current_memory()[0]
         logger.warn(cell, "Estimate memory requirement (%.2f MB) exceeds %.0f%% of currently available memory (%.2f MB). Calculations may fail and `cell.max_memory = %.2f` is recommended.", est_mem, frac*100, safe_mem, rec_mem)
 
-    buf1 = np.empty(no_max*nv_max*ngrids, dtype=dtype)
-    buf2 = np.empty(no_max*no_max*nv_max*nv_max, dtype=dtype)
-    buf3 = np.empty(no_max*no_max*nv_max*nv_max, dtype=dtype)
+    buf1 = np.empty(nocc_max*nvir_max*ngrids, dtype=dtype)
+    buf2 = np.empty(nocc_max*nocc_max*nvir_max*nvir_max, dtype=dtype)
+    buf3 = np.empty(nocc_max*nocc_max*nvir_max*nvir_max, dtype=dtype)
 
     swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
     fswap = lib.H5TmpFile(swapfile.name)
@@ -128,28 +128,28 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
                                   "energy", "tot"]
     tspans[0] = np.asarray(cput1) - np.asarray(cput0)
 
-    emp2_d = np.zeros(nnv)
-    emp2_x = np.zeros(nnv)
-    emp2_ss = np.zeros(nnv)
-    emp2_os = np.zeros(nnv)
+    emp2_d = np.zeros(nnvir)
+    emp2_x = np.zeros(nnvir)
+    emp2_ss = np.zeros(nnvir)
+    emp2_os = np.zeros(nnvir)
     for ki in range(nkpts):
         kpti = kpts[ki]
-        no_i = no_ks[ki]
+        nocc_i = nocc_ks[ki]
 
         tick[:] = time.clock(), time.time()
 
-        Co_ki_R = C_ks_R["%d"%ki][:no_i]
+        Co_ki_R = C_ks_R["%d"%ki][:nocc_i]
 
         for ka in range(nkpts):
             kpta = kpts[ka]
-            no_a = no_ks[ka]
-            nv_a = nv_ks[ka]
+            nocc_a = nocc_ks[ka]
+            nvir_a = nvir_ks[ka]
             coulG = tools.get_coulG(cell, kpta-kpti, exx=False, mesh=mesh)
 
-            Cv_ka_R = C_ks_R["%d"%ka][no_a:no_a+nv_a]
-            v_ia_R = np.ndarray((no_i,nv_a,ngrids), dtype=dtype, buffer=buf1)
+            Cv_ka_R = C_ks_R["%d"%ka][nocc_a:nocc_a+nvir_a]
+            v_ia_R = np.ndarray((nocc_i,nvir_a,ngrids), dtype=dtype, buffer=buf1)
 
-            for i in range(no_i):
+            for i in range(nocc_i):
                 v_ia = tools.fft(Co_ki_R[i].conj() * Cv_ka_R, mesh) * coulG
                 v_ia_R[i] = tools.ifft(v_ia, mesh)
 
@@ -164,12 +164,12 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
         tspans[1] += tock - tick
 
         for kj in range(nkpts):
-            no_j = no_ks[kj]
+            nocc_j = nocc_ks[kj]
             kptij = kpti + kpts[kj]
 
             tick[:] = time.clock(), time.time()
 
-            Co_kj_R = C_ks_R["%d"%kj][:no_j]
+            Co_kj_R = C_ks_R["%d"%kj][:nocc_j]
 
             tock[:] = time.clock(), time.time()
             tspans[3] += tock - tick
@@ -193,13 +193,13 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
                 ka,kb = kab_lst[ikab]
                 kptijab = kptijab_lst[ikab]
 
-                no_a = no_ks[ka]
-                nv_a = nv_ks[ka]
-                no_b = no_ks[kb]
-                nv_b = nv_ks[kb]
+                nocc_a = nocc_ks[ka]
+                nvir_a = nvir_ks[ka]
+                nocc_b = nocc_ks[kb]
+                nvir_b = nvir_ks[kb]
 
                 tick[:] = time.clock(), time.time()
-                Cv_kb_R = C_ks_R["%d"%kb][no_b:no_b+nv_b]
+                Cv_kb_R = C_ks_R["%d"%kb][nocc_b:nocc_b+nvir_b]
                 v_ia = v_ia_ks_R["%d"%ka][:]
                 tock[:] = time.clock(), time.time()
                 tspans[3] += tock - tick
@@ -207,7 +207,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
                 phase = np.exp(-1j*lib.dot(coords,
                                            kptijab.reshape(-1,1))).reshape(-1)
                 v_ia *= phase
-                oovv_ka = np.ndarray((no_i,no_j,nv_a,nv_b), dtype=dtype,
+                oovv_ka = np.ndarray((nocc_i,nocc_j,nvir_a,nvir_b), dtype=dtype,
                                      buffer=buf2)
                 fill_oovv(oovv_ka, v_ia, Co_kj_R, Cv_kb_R, fac_oovv)
                 tick[:] = time.clock(), time.time()
@@ -216,13 +216,13 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
                 Cv_kb_R = v_ia = None
 
                 if ka != kb:
-                    Cv_ka_R = C_ks_R["%d"%ka][no_a:no_a+nv_a]
+                    Cv_ka_R = C_ks_R["%d"%ka][nocc_a:nocc_a+nvir_a]
                     v_ib = v_ia_ks_R["%d"%kb][:]
                     tock[:] = time.clock(), time.time()
                     tspans[3] += tock - tick
 
                     v_ib *= phase
-                    oovv_kb = np.ndarray((no_i,no_j,nv_b,nv_a), dtype=dtype,
+                    oovv_kb = np.ndarray((nocc_i,nocc_j,nvir_b,nvir_a), dtype=dtype,
                                          buffer=buf3)
                     fill_oovv(oovv_kb, v_ib, Co_kj_R, Cv_ka_R, fac_oovv)
                     tick[:] = time.clock(), time.time()
@@ -234,13 +234,13 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
 
 # KMP2 energy evaluation starts here
                 tick[:] = time.clock(), time.time()
-                mo_e_o = moe_ks[ki][:no_i]
-                mo_e_v = moe_ks[ka][no_a:no_a+nv_a]
+                mo_e_o = moe_ks[ki][:nocc_i]
+                mo_e_v = moe_ks[ka][nocc_a:nocc_a+nvir_a]
                 eia = mo_e_o[:,None] - mo_e_v
 
                 if ka != kb:
-                    mo_e_o = moe_ks[kj][:no_j]
-                    mo_e_v = moe_ks[kb][no_b:no_b+nv_b]
+                    mo_e_o = moe_ks[kj][:nocc_j]
+                    mo_e_v = moe_ks[kb][nocc_b:nocc_b+nvir_b]
                     ejb = mo_e_o[:,None] - mo_e_v
                 else:
                     ejb = eia
@@ -248,21 +248,21 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
                 eijab = lib.direct_sum('ia,jb->ijab',eia,ejb)
                 t2_ijab = np.conj(oovv_ka/eijab)
 
-                for inv_,nv_ in enumerate(nv_lst):
+                for invir_,nvir_ in enumerate(nvir_lst):
                     eijab_d = 2 * np.einsum('ijab,ijab->',
-                                            t2_ijab[:,:,:nv_,:nv_],
-                                            oovv_ka[:,:,:nv_,:nv_]).real
+                                            t2_ijab[:,:,:nvir_,:nvir_],
+                                            oovv_ka[:,:,:nvir_,:nvir_]).real
                     eijab_x = - np.einsum('ijab,ijba->',
-                                          t2_ijab[:,:,:nv_,:nv_],
-                                          oovv_kb[:,:,:nv_,:nv_]).real
+                                          t2_ijab[:,:,:nvir_,:nvir_],
+                                          oovv_kb[:,:,:nvir_,:nvir_]).real
                     if ka != kb:
                         eijab_d *= 2
                         eijab_x *= 2
 
-                    emp2_d[inv_] += eijab_d
-                    emp2_x[inv_] += eijab_x
-                    emp2_ss[inv_] += eijab_d * 0.5 + eijab_x
-                    emp2_os[inv_] += eijab_d * 0.5
+                    emp2_d[invir_] += eijab_d
+                    emp2_x[invir_] += eijab_x
+                    emp2_ss[invir_] += eijab_d * 0.5 + eijab_x
+                    emp2_os[invir_] += eijab_d * 0.5
 
                 tock[:] = time.clock(), time.time()
                 tspans[5] += tock - tick
@@ -284,7 +284,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
     summary["e_corr_ss"] = emp2_ss[-1]
     summary["e_corr_os"] = emp2_os[-1]
     summary["e_corr"] = emp2[-1]
-    summary["nv_lst"] = nv_lst
+    summary["nvir_lst"] = nvir_lst
     summary["e_corr_d_lst"] = emp2_d
     summary["e_corr_x_lst"] = emp2_x
     summary["e_corr_ss_lst"] = emp2_ss
@@ -300,7 +300,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
 
 
 class PWKRMP2:
-    def __init__(self, mf, nv=None):
+    def __init__(self, mf, nvir=None):
         self.cell = self.mol = mf.cell
         self._scf = mf
 
@@ -308,7 +308,7 @@ class PWKRMP2:
         self.stdout = self.mol.stdout
         self.max_memory = mf.max_memory
 
-        self.nv = nv
+        self.nvir = nvir
 
 ##################################################
 # don't modify the following attributes, they are not input options
@@ -334,7 +334,7 @@ class PWKRMP2:
             if key in summary:
                 log.info(fmt, summary[key])
         log.info('**** MP2 Summaries ****')
-        log.info('Number of virtuals =              %d', summary["nv_lst"][-1])
+        log.info('Number of virtuals =              %d', summary["nvir_lst"][-1])
         log.info('Total Energy (HF+MP2) =           %24.15f', self.e_tot)
         log.info('Correlation Energy =              %24.15f', self.e_corr)
         write('Direct Energy =                   %24.15f', 'e_corr_d')
@@ -342,12 +342,12 @@ class PWKRMP2:
         write('Same-spin Energy =                %24.15f', 'e_corr_ss')
         write('Opposite-spin Energy =            %24.15f', 'e_corr_os')
 
-        nv_lst = summary["nv_lst"]
-        if len(nv_lst) > 1:
+        nvir_lst = summary["nvir_lst"]
+        if len(nvir_lst) > 1:
             log.info('%sNvirt  Ecorr', "\n")
             ecorr_lst = summary["e_corr_lst"]
-            for nv,ecorr in zip(nv_lst,ecorr_lst):
-                log.info("%5d  %24.15f", nv, ecorr)
+            for nvir,ecorr in zip(nvir_lst,ecorr_lst):
+                log.info("%5d  %24.15f", nvir, ecorr)
             log.info("%s", "")
 
         def write_time(comp, t_comp, t_tot):
@@ -361,15 +361,15 @@ class PWKRMP2:
         for icomp,comp in enumerate(summary["tcomps"]):
             write_time(comp, summary["t-%s"%comp], t_tot)
 
-    def kernel(self, nv=None, nv_lst=None):
+    def kernel(self, nvir=None, nvir_lst=None):
         cell = self.cell
         kpts = self.kpts
         chkfile = self._scf.chkfile
         summary = self.mp2_summary
-        if nv is None: nv = self.nv
+        if nvir is None: nvir = self.nvir
 
-        self.e_corr = kernel_dx_(cell, kpts, chkfile, summary, nv=nv,
-                                 nv_lst=nv_lst)
+        self.e_corr = kernel_dx_(cell, kpts, chkfile, summary, nvir=nvir,
+                                 nvir_lst=nvir_lst)
 
         self._finalize()
 
@@ -400,17 +400,17 @@ if __name__ == "__main__":
     nkpts = len(kpts)
 
     pwmf = pwscf.PWKRHF(cell, kpts)
-    pwmf.nv = 20
+    pwmf.nvir = 20
     pwmf.kernel()
 
     es = {"5": -0.01363871, "10": -0.01873622, "20": -0.02461560}
 
     pwmp = PWKRMP2(pwmf)
-    pwmp.kernel(nv_lst=[5,10,20])
+    pwmp.kernel(nvir_lst=[5,10,20])
     pwmp.dump_mp2_summary()
-    nv_lst = pwmp.mp2_summary["nv_lst"]
+    nvir_lst = pwmp.mp2_summary["nvir_lst"]
     ecorr_lst = pwmp.mp2_summary["e_corr_lst"]
-    for nv,ecorr in zip(nv_lst,ecorr_lst):
-        err = abs(ecorr - es["%d"%nv])
+    for nvir,ecorr in zip(nvir_lst,ecorr_lst):
+        err = abs(ecorr - es["%d"%nvir])
         print(err)
         assert(err < 1e-6)

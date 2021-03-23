@@ -26,17 +26,17 @@ def fill_oovv(oovv, v_ia, Co_kj_R, Cv_kb_R, fac=None):
              = \sum_r V_ia^kika(r)*phase * rho_jb^kjkb(r)
              = \sum_r v_ia^kika(r) * rho_jb^kjkb(r)
     """
-    no_i, no_j = oovv.shape[:2]
-    for j in range(no_j):
+    nocc_i, nocc_j = oovv.shape[:2]
+    for j in range(nocc_j):
         rho_jb_R = Co_kj_R[j].conj() * Cv_kb_R
-        for i in range(no_i):
+        for i in range(nocc_i):
             oovv[i,j] = lib.dot(v_ia[i], rho_jb_R.T)
     if not fac is None: oovv *= fac
 
     return oovv
 
 
-def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
+def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
     """ Compute both direct (d) and exchange (x) contributions together.
     """
 
@@ -58,31 +58,31 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
     fac = ngrids**2. / cell.vol
     fac_oovv = fac * ngrids / nkpts
 
-    no_ks = np.asarray([pw_helper.get_no_ks_from_mocc(mocc_ks[s])
+    nocc_ks = np.asarray([pw_helper.get_nocc_ks_from_mocc(mocc_ks[s])
                        for s in [0,1]])
-    if nv is None:
+    if nvir is None:
         n_ks = np.asarray([[len(mocc_ks[s][k]) for k in range(nkpts)]
                           for s in [0,1]])
-        nv_ks = n_ks - no_ks
+        nvir_ks = n_ks - nocc_ks
     else:
-        if isinstance(nv,int): nv = [nv] * 2
-        nv_ks = np.asarray([[nv[s]] * nkpts for s in [0,1]])
-        n_ks = no_ks + nv_ks
-    no_max = np.max(no_ks)
-    nv_max = np.max(nv_ks)
-    no_sps = np.asarray([[no_ks[0][k],no_ks[1][k]] for k in range(nkpts)])
-    nv_sps = np.asarray([[nv_ks[0][k],nv_ks[1][k]] for k in range(nkpts)])
+        if isinstance(nvir,int): nvir = [nvir] * 2
+        nvir_ks = np.asarray([[nvir[s]] * nkpts for s in [0,1]])
+        n_ks = nocc_ks + nvir_ks
+    nocc_max = np.max(nocc_ks)
+    nvir_max = np.max(nvir_ks)
+    nocc_sps = np.asarray([[nocc_ks[0][k],nocc_ks[1][k]] for k in range(nkpts)])
+    nvir_sps = np.asarray([[nvir_ks[0][k],nvir_ks[1][k]] for k in range(nkpts)])
     n_sps = np.asarray([[n_ks[0][k],n_ks[1][k]] for k in range(nkpts)])
-    if nv_lst is None:
-        nv_lst = [nv_max]
-    nv_lst = np.asarray(nv_lst)
-    nnv = len(nv_lst)
-    logger.info(cell, "Compute emp2 for these nv's: %s", nv_lst)
+    if nvir_lst is None:
+        nvir_lst = [nvir_max]
+    nvir_lst = np.asarray(nvir_lst)
+    nnvir = len(nvir_lst)
+    logger.info(cell, "Compute emp2 for these nvir's: %s", nvir_lst)
 
     # estimate memory requirement
-    est_mem = no_max*nv_max*ngrids      # for caching v_ia_R
-    est_mem += (no_max*nv_max)**2*4     # for caching oovv_ka/kb, eijab, wijab
-    est_mem += (no_max+nv_max)*ngrids*2 # for caching MOs
+    est_mem = nocc_max*nvir_max*ngrids      # for caching v_ia_R
+    est_mem += (nocc_max*nvir_max)**2*4     # for caching oovv_ka/kb, eijab, wijab
+    est_mem += (nocc_max+nvir_max)*ngrids*2 # for caching MOs
     est_mem *= dsize / 1e6
     frac = 0.6
     cur_mem = cell.max_memory - lib.current_memory()[0]
@@ -94,9 +94,9 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
         rec_mem = est_mem / frac + lib.current_memory()[0]
         logger.warn(cell, "Estimate memory requirement (%.2f MB) exceeds %.0f%% of currently available memory (%.2f MB). Calculations may fail and `cell.max_memory = %.2f` is recommended.", est_mem, frac*100, safe_mem, rec_mem)
 
-    buf1 = np.empty(no_max*nv_max*ngrids, dtype=dtype)
-    buf2 = np.empty(no_max*no_max*nv_max*nv_max, dtype=dtype)
-    buf3 = np.empty(no_max*no_max*nv_max*nv_max, dtype=dtype)
+    buf1 = np.empty(nocc_max*nvir_max*ngrids, dtype=dtype)
+    buf2 = np.empty(nocc_max*nocc_max*nvir_max*nvir_max, dtype=dtype)
+    buf3 = np.empty(nocc_max*nocc_max*nvir_max*nvir_max, dtype=dtype)
 
     swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
     fswap = lib.H5TmpFile(swapfile.name)
@@ -122,33 +122,33 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
                                   "energy", "tot"]
     tspans[0] = np.asarray(cput1) - np.asarray(cput0)
 
-    emp2_d = np.zeros(nnv)
-    emp2_x = np.zeros(nnv)
-    emp2_ss = np.zeros(nnv)
-    emp2_os = np.zeros(nnv)
+    emp2_d = np.zeros(nnvir)
+    emp2_x = np.zeros(nnvir)
+    emp2_ss = np.zeros(nnvir)
+    emp2_os = np.zeros(nnvir)
     for ki in range(nkpts):
         kpti = kpts[ki]
-        no_i = no_sps[ki]
+        nocc_i = nocc_sps[ki]
 
         tick[:] = time.clock(), time.time()
 
-        Co_ki_R = [C_ks_R["%d/%d"%(ki,s)][:no_i[s]] for s in [0,1]]
+        Co_ki_R = [C_ks_R["%d/%d"%(ki,s)][:nocc_i[s]] for s in [0,1]]
 
         for ka in range(nkpts):
             kpta = kpts[ka]
-            no_a = no_sps[ka]
-            nv_a = nv_sps[ka]
+            nocc_a = nocc_sps[ka]
+            nvir_a = nvir_sps[ka]
             coulG = tools.get_coulG(cell, kpta-kpti, exx=False, mesh=mesh)
 
             key_ka = "%d"%ka
             if key_ka in v_ia_ks_R: del v_ia_ks_R[key_ka]
 
             for s in [0,1]:
-                Cv_ka_R = C_ks_R["%s/%d"%(key_ka,s)][no_a[s]:no_a[s]+nv_a[s]]
-                v_ia_R = np.ndarray((no_i[s],nv_a[s],ngrids), dtype=dtype,
+                Cv_ka_R = C_ks_R["%s/%d"%(key_ka,s)][nocc_a[s]:nocc_a[s]+nvir_a[s]]
+                v_ia_R = np.ndarray((nocc_i[s],nvir_a[s],ngrids), dtype=dtype,
                                     buffer=buf1)
 
-                for i in range(no_i[s]):
+                for i in range(nocc_i[s]):
                     v_ia = tools.fft(Co_ki_R[s][i].conj() *
                                      Cv_ka_R, mesh) * coulG
                     v_ia_R[i] = tools.ifft(v_ia, mesh)
@@ -162,12 +162,12 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
         tspans[1] += tock - tick
 
         for kj in range(nkpts):
-            no_j = no_sps[kj]
+            nocc_j = nocc_sps[kj]
             kptij = kpti + kpts[kj]
 
             tick[:] = time.clock(), time.time()
 
-            Co_kj_R = [C_ks_R["%d/%d"%(kj,s)][:no_j[s]] for s in [0,1]]
+            Co_kj_R = [C_ks_R["%d/%d"%(kj,s)][:nocc_j[s]] for s in [0,1]]
 
             tock[:] = time.clock(), time.time()
             tspans[3] += tock - tick
@@ -191,10 +191,10 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
                 ka,kb = kab_lst[ikab]
                 kptijab = kptijab_lst[ikab]
 
-                no_a = no_sps[ka]
-                nv_a = nv_sps[ka]
-                no_b = no_sps[kb]
-                nv_b = nv_sps[kb]
+                nocc_a = nocc_sps[ka]
+                nvir_a = nvir_sps[ka]
+                nocc_b = nocc_sps[kb]
+                nvir_b = nvir_sps[kb]
 
                 tick[:] = time.clock(), time.time()
                 phase = np.exp(-1j*lib.dot(coords,
@@ -205,13 +205,13 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
                 for s in [0,1]:
 
                     tick[:] = time.clock(), time.time()
-                    Cv_kb_R = C_ks_R["%d/%d"%(kb,s)][no_b[s]:no_b[s]+nv_b[s]]
+                    Cv_kb_R = C_ks_R["%d/%d"%(kb,s)][nocc_b[s]:nocc_b[s]+nvir_b[s]]
                     v_ia = v_ia_ks_R["%d/%d"%(ka,s)][:]
                     tock[:] = time.clock(), time.time()
                     tspans[3] += tock - tick
 
                     v_ia *= phase
-                    oovv_ka = np.ndarray((no_i[s],no_j[s],nv_a[s],nv_b[s]),
+                    oovv_ka = np.ndarray((nocc_i[s],nocc_j[s],nvir_a[s],nvir_b[s]),
                                          dtype=dtype, buffer=buf2)
                     fill_oovv(oovv_ka, v_ia, Co_kj_R[s], Cv_kb_R, fac_oovv)
                     tick[:] = time.clock(), time.time()
@@ -220,14 +220,14 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
                     Cv_kb_R = None
 
                     if ka != kb:
-                        Cv_ka_R = C_ks_R["%d/%d"%(ka,s)][no_a[s]:
-                                                         no_a[s]+nv_a[s]]
+                        Cv_ka_R = C_ks_R["%d/%d"%(ka,s)][nocc_a[s]:
+                                                         nocc_a[s]+nvir_a[s]]
                         v_ib = v_ia_ks_R["%d/%s"%(kb,s)][:]
                         tock[:] = time.clock(), time.time()
                         tspans[3] += tock - tick
 
                         v_ib *= phase
-                        oovv_kb = np.ndarray((no_i[s],no_j[s],nv_b[s],nv_a[s]),
+                        oovv_kb = np.ndarray((nocc_i[s],nocc_j[s],nvir_b[s],nvir_a[s]),
                                              dtype=dtype, buffer=buf3)
                         fill_oovv(oovv_kb, v_ib, Co_kj_R[s], Cv_ka_R, fac_oovv)
                         tick[:] = time.clock(), time.time()
@@ -239,32 +239,32 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
 
 # Same-spin contribution to KUMP2 energy
                     tick[:] = time.clock(), time.time()
-                    mo_e_o = moe_ks[s][ki][:no_i[s]]
-                    mo_e_v = moe_ks[s][ka][no_a[s]:no_a[s]+nv_a[s]]
+                    mo_e_o = moe_ks[s][ki][:nocc_i[s]]
+                    mo_e_v = moe_ks[s][ka][nocc_a[s]:nocc_a[s]+nvir_a[s]]
                     eia = mo_e_o[:,None] - mo_e_v
 
                     if ka != kb:
-                        mo_e_o = moe_ks[s][kj][:no_j[s]]
-                        mo_e_v = moe_ks[s][kb][no_b[s]:no_b[s]+nv_b[s]]
+                        mo_e_o = moe_ks[s][kj][:nocc_j[s]]
+                        mo_e_v = moe_ks[s][kb][nocc_b[s]:nocc_b[s]+nvir_b[s]]
                         ejb = mo_e_o[:,None] - mo_e_v
                     else:
                         ejb = eia
 
                     eijab = lib.direct_sum('ia,jb->ijab',eia,ejb)
                     t2_ijab = np.conj(oovv_ka/eijab)
-                    for inv_,nv_ in enumerate(nv_lst):
+                    for invir_,nvir_ in enumerate(nvir_lst):
                         eijab_d = np.einsum('ijab,ijab->',
-                                            t2_ijab[:,:,:nv_,:nv_],
-                                            oovv_ka[:,:,:nv_,:nv_]).real
+                                            t2_ijab[:,:,:nvir_,:nvir_],
+                                            oovv_ka[:,:,:nvir_,:nvir_]).real
                         eijab_x = - np.einsum('ijab,ijba->',
-                                              t2_ijab[:,:,:nv_,:nv_],
-                                              oovv_kb[:,:,:nv_,:nv_]).real
+                                              t2_ijab[:,:,:nvir_,:nvir_],
+                                              oovv_kb[:,:,:nvir_,:nvir_]).real
                         if ka != kb:
                             eijab_d *= 2
                             eijab_x *= 2
-                        emp2_d[inv_] += eijab_d
-                        emp2_x[inv_] += eijab_x
-                        emp2_ss[inv_] += eijab_d + eijab_x
+                        emp2_d[invir_] += eijab_d
+                        emp2_x[invir_] += eijab_x
+                        emp2_ss[invir_] += eijab_d + eijab_x
                     tock[:] = time.clock(), time.time()
                     tspans[5] += tock - tick
 
@@ -274,12 +274,12 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
                     if s == 0:
                         t = 1 - s
                         tick[:] = time.clock(), time.time()
-                        Cv_kb_R = C_ks_R["%d/%d"%(kb,t)][no_b[t]:
-                                                         no_b[t]+nv_b[t]]
+                        Cv_kb_R = C_ks_R["%d/%d"%(kb,t)][nocc_b[t]:
+                                                         nocc_b[t]+nvir_b[t]]
                         tock[:] = time.clock(), time.time()
                         tspans[3] += tock - tick
 
-                        oovv_ka = np.ndarray((no_i[s],no_j[t],nv_a[s],nv_b[t]),
+                        oovv_ka = np.ndarray((nocc_i[s],nocc_j[t],nvir_a[s],nvir_b[t]),
                                              dtype=dtype, buffer=buf2)
                         fill_oovv(oovv_ka, v_ia, Co_kj_R[t], Cv_kb_R, fac_oovv)
                         tick[:] = time.clock(), time.time()
@@ -287,21 +287,21 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
 
                         Cv_kb_R = v_ia = None
 
-                        mo_e_o = moe_ks[t][kj][:no_j[t]]
-                        mo_e_v = moe_ks[t][kb][no_b[t]:no_b[t]+nv_b[t]]
+                        mo_e_o = moe_ks[t][kj][:nocc_j[t]]
+                        mo_e_v = moe_ks[t][kb][nocc_b[t]:nocc_b[t]+nvir_b[t]]
                         ejb = mo_e_o[:,None] - mo_e_v
 
                         eijab = lib.direct_sum('ia,jb->ijab',eia,ejb)
                         t2_ijab = np.conj(oovv_ka/eijab)
-                        for inv_,nv_ in enumerate(nv_lst):
+                        for invir_,nvir_ in enumerate(nvir_lst):
                             eijab_d = np.einsum('ijab,ijab->',
-                                                t2_ijab[:,:,:nv_,:nv_],
-                                                oovv_ka[:,:,:nv_,:nv_]).real
+                                                t2_ijab[:,:,:nvir_,:nvir_],
+                                                oovv_ka[:,:,:nvir_,:nvir_]).real
                             if ka != kb:
                                 eijab_d *= 2
                             eijab_d *= 2    # alpha,beta <-> beta,alpha
-                            emp2_d[inv_] += eijab_d
-                            emp2_os[inv_] += eijab_d
+                            emp2_d[invir_] += eijab_d
+                            emp2_os[invir_] += eijab_d
                         tock[:] = time.clock(), time.time()
                         tspans[5] += tock - tick
 
@@ -324,7 +324,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
     summary["e_corr_ss"] = emp2_ss[-1]
     summary["e_corr_os"] = emp2_os[-1]
     summary["e_corr"] = emp2[-1]
-    summary["nv_lst"] = nv_lst
+    summary["nvir_lst"] = nvir_lst
     summary["e_corr_d_lst"] = emp2_d
     summary["e_corr_x_lst"] = emp2_x
     summary["e_corr_ss_lst"] = emp2_ss
@@ -340,18 +340,18 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nv=None, nv_lst=None):
 
 
 class PWKUMP2(kmp2.PWKRMP2):
-    def __init__(self, mf, nv=None):
-        kmp2.PWKRMP2.__init__(self, mf, nv=nv)
+    def __init__(self, mf, nvir=None):
+        kmp2.PWKRMP2.__init__(self, mf, nvir=nvir)
 
-    def kernel(self, nv=None, nv_lst=None):
+    def kernel(self, nvir=None, nvir_lst=None):
         cell = self.cell
         kpts = self.kpts
         chkfile = self._scf.chkfile
         summary = self.mp2_summary
-        if nv is None: nv = self.nv
+        if nvir is None: nvir = self.nvir
 
-        self.e_corr = kernel_dx_(cell, kpts, chkfile, summary, nv=nv,
-                                 nv_lst=nv_lst)
+        self.e_corr = kernel_dx_(cell, kpts, chkfile, summary, nvir=nvir,
+                                 nvir_lst=nvir_lst)
 
         self._finalize()
 
@@ -379,17 +379,17 @@ if __name__ == "__main__":
     nkpts = len(kpts)
 
     pwmf = pwscf.PWKUHF(cell, kpts)
-    pwmf.nv = 5
+    pwmf.nvir = 5
     pwmf.kernel()
 
     es = {"5": -0.01363871}
 
     pwmp = PWKUMP2(pwmf)
-    pwmp.kernel(nv_lst=[5])
+    pwmp.kernel(nvir_lst=[5])
     pwmp.dump_mp2_summary()
-    nv_lst = pwmp.mp2_summary["nv_lst"]
+    nvir_lst = pwmp.mp2_summary["nvir_lst"]
     ecorr_lst = pwmp.mp2_summary["e_corr_lst"]
-    for nv,ecorr in zip(nv_lst,ecorr_lst):
-        err = abs(ecorr - es["%d"%nv])
+    for nvir,ecorr in zip(nvir_lst,ecorr_lst):
+        err = abs(ecorr - es["%d"%nvir])
         print(err)
         assert(err < 1e-6)

@@ -102,23 +102,23 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
 def get_mo_occ(cell, moe_ks=None, C_ks=None):
     mocc_ks = [None] * 2
     for s in [0,1]:
-        no = cell.nelec[s]
+        nocc = cell.nelec[s]
         if not moe_ks is None:
-            mocc_ks[s] = khf.get_mo_occ(cell, moe_ks[s], no=no)
+            mocc_ks[s] = khf.get_mo_occ(cell, moe_ks[s], nocc=nocc)
         elif not C_ks is None:
             C_ks_s = get_spin_component(C_ks, s)
-            mocc_ks[s] = khf.get_mo_occ(cell, C_ks=C_ks_s, no=no)
+            mocc_ks[s] = khf.get_mo_occ(cell, C_ks=C_ks_s, nocc=nocc)
         else:
             raise RuntimeError
 
     return mocc_ks
 
 
-def get_init_guess(cell0, kpts, basis=None, pseudo=None, nv=0,
+def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
                    key="hcore", fC_ks=None):
     """
         Args:
-            nv (int):
+            nvir (int):
                 Number of virtual bands to be evaluated. Default is zero.
             fC_ks (h5py group):
                 If provided, the orbitals are written to it.
@@ -168,15 +168,15 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nv=0,
 
     logger.debug1(cell0, "converting init MOs from GTO basis to PW basis")
 
-    # TODO: support specifying nv for each kpt (useful for e.g., metals)
-    if isinstance(nv, int): nv = [nv,nv]
+    # TODO: support specifying nvir for each kpt (useful for e.g., metals)
+    if isinstance(nvir, int): nvir = [nvir,nvir]
 
     if incore: C_ks_spin = [None] * 2
     mocc_ks_spin = [None] * 2
     for s in [0,1]:
-        no = cell.nelec[s]
+        nocc = cell.nelec[s]
         nmo_ks = [len(mo_occ[s][k]) for k in range(nkpts)]
-        ntot = no + nv[s]
+        ntot = nocc + nvir[s]
         ntot_ks = [min(ntot,nmo_ks[k]) for k in range(nkpts)]
 
         if incore:
@@ -202,11 +202,11 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nv=0,
     return C_ks_spin, mocc_ks_spin
 
 
-def init_guess_by_chkfile(cell, chkfile_name, nv, project=None):
+def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None):
     fchk = h5py.File(chkfile_name, "a")
     C_ks = fchk["mo_coeff"]
 
-    if isinstance(nv, int): nv = [nv] * 2
+    if isinstance(nvir, int): nvir = [nvir] * 2
 
     from pyscf.pbc.scf import chkfile
     scf_dict = chkfile.load_scf(chkfile_name)[1]
@@ -216,8 +216,8 @@ def init_guess_by_chkfile(cell, chkfile_name, nv, project=None):
         ntot_ks = [None] * nkpts
         C_ks_s = C_ks["%d"%s]
         for k in range(nkpts):
-            no = np.sum(mocc_ks[s][k]>khf.THR_OCC)
-            ntot_ks[k] = max(no+nv[s], len(mocc_ks[s][k]))
+            nocc = np.sum(mocc_ks[s][k]>khf.THR_OCC)
+            ntot_ks[k] = max(nocc+nvir[s], len(mocc_ks[s][k]))
 
         C_ks_s, mocc_ks[s] = khf.init_guess_from_C0(cell, C_ks_s, ntot_ks,
                                                     C_ks_s, mocc_ks[s])
@@ -259,7 +259,7 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
     kpts = mf.kpts
     nkpts = len(kpts)
 
-    no_ks = [[np.sum(mocc_ks[s][k] > 0) for k in range(nkpts)] for s in [0,1]]
+    nocc_ks = [[np.sum(mocc_ks[s][k] > 0) for k in range(nkpts)] for s in [0,1]]
 
     e_ks = np.zeros(nkpts)
     if moe_ks is None:
@@ -273,8 +273,8 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
                                                 get_spin_component(ace_xi_ks, s)
             for k in range(nkpts):
                 kpt = kpts[k]
-                no_k = no_ks[s][k]
-                Co_k = C_ks_s[k][:no_k] if C_incore else C_ks_s["%d"%k][:no_k]
+                nocc_k = nocc_ks[s][k]
+                Co_k = C_ks_s[k][:nocc_k] if C_incore else C_ks_s["%d"%k][:nocc_k]
                 ace_xi_k = None if ace_xi_ks_s is None else \
                                                         ace_xi_ks_s["%d"%k][()]
                 e_comp_k = mf.apply_Fock_kpt(Co_k, kpt, mocc_ks, mesh, Gv,
@@ -298,12 +298,12 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
             moe_ks_s = moe_ks[s]
             for k in range(nkpts):
                 kpt = kpts[k]
-                no_k = no_ks[s][k]
-                Co_k = C_ks_s[k][:no_k] if C_incore else C_ks_s["%d"%k][:no_k]
+                nocc_k = nocc_ks[s][k]
+                Co_k = C_ks_s[k][:nocc_k] if C_incore else C_ks_s["%d"%k][:nocc_k]
                 e1_comp = mf.apply_h1e_kpt(Co_k, kpt, mesh, Gv,
                                            vpplocR, ret_E=True)[1]
                 e1_comp *= 0.5
-                e_ks[k] += np.sum(e1_comp) * 0.5 + np.sum(moe_ks_s[k][:no_k]) * 0.5
+                e_ks[k] += np.sum(e1_comp) * 0.5 + np.sum(moe_ks_s[k][:nocc_k]) * 0.5
     e_scf = np.sum(e_ks) / nkpts
 
     if moe_ks is None and exxdiv == "ewald":
@@ -358,36 +358,36 @@ class PWKUHF(khf.PWKRHF):
 
         khf.PWKRHF.__init__(self, cell, kpts=kpts, exxdiv=exxdiv)
 
-        self.nv = [0,0]
-        self.nv_extra = [1,1]
+        self.nvir = [0,0]
+        self.nvir_extra = [1,1]
 
     def get_init_guess_key(self, cell=None, kpts=None, basis=None, pseudo=None,
-                           nv=None, key="hcore", fC_ks=None):
+                           nvir=None, key="hcore", fC_ks=None):
         if cell is None: cell = self.cell
         if kpts is None: kpts = self.kpts
-        if nv is None: nv = self.nv
+        if nvir is None: nvir = self.nvir
 
         if key in ["h1e","hcore","cycle1","scf"]:
             C_ks, mocc_ks = get_init_guess(cell, kpts,
                                            basis=basis, pseudo=pseudo,
-                                           nv=nv, key=key, fC_ks=fC_ks)
+                                           nvir=nvir, key=key, fC_ks=fC_ks)
         else:
             logger.warn(self, "Unknown init guess %s", key)
             raise RuntimeError
 
         return C_ks, mocc_ks
 
-    def get_init_guess_C0(self, C0, nv=None, fC_ks=None):
-        if nv is None: nv = self.nv
-        if isinstance(nv, int): nv = [nv,nv]
-        no = self.cell.nelec
+    def get_init_guess_C0(self, C0, nvir=None, fC_ks=None):
+        if nvir is None: nvir = self.nvir
+        if isinstance(nvir, int): nvir = [nvir,nvir]
+        nocc = self.cell.nelec
         nkpts = len(self.kpts)
         incore0 = isinstance(C0, list)
         incore = fC_ks is None
         C_ks = [None] * 2 if incore else fC_ks
         mocc_ks = [None] * 2
         for s in [0,1]:
-            ntot_ks = [no[s]+nv[s]] * len(self.kpts)
+            ntot_ks = [nocc[s]+nvir[s]] * len(self.kpts)
             if incore:
                 C_ks_s = None
             else:
@@ -400,7 +400,7 @@ class PWKUHF(khf.PWKRHF):
             else:
                 C0_s = C0["%d"%s]
                 n0_ks = [C0_s["%d"%k].shape[0] for k in range(nkpts)]
-            mocc_ks[s] = [np.asarray([1 if i < no[s] else 0
+            mocc_ks[s] = [np.asarray([1 if i < nocc[s] else 0
                           for i in range(n0_ks[k])]) for k in range(nkpts)]
             C_ks_s, mocc_ks[s] = khf.init_guess_from_C0(self.cell, C0_s,
                                                         ntot_ks, C_ks_s,
@@ -409,11 +409,11 @@ class PWKUHF(khf.PWKRHF):
 
         return C_ks, mocc_ks
 
-    def init_guess_by_chkfile(self, chk=None, nv=None, project=None):
+    def init_guess_by_chkfile(self, chk=None, nvir=None, project=None):
         if chk is None: chk = self.chkfile
-        if nv is None: nv = self.nv
+        if nvir is None: nvir = self.nvir
         # return init_guess_by_chkfile(self.cell, chk, project)
-        return init_guess_by_chkfile(self.cell, chk, nv, project=project)
+        return init_guess_by_chkfile(self.cell, chk, nvir, project=project)
     def from_chk(self, chk=None, project=None, kpts=None):
         return self.init_guess_by_chkfile(chk, project, kpts)
 
@@ -457,9 +457,8 @@ if __name__ == "__main__":
     kpts = cell.make_kpts(kmesh)
 
     umf = PWKUHF(cell, kpts)
-    umf.nv = [0,2]
+    umf.nvir = [0,2]
     umf.chkfile = "mf.chk"
-    umf.init_guess = "chk"
     umf.kernel()
 
     umf.dump_scf_summary()

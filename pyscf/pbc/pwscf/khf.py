@@ -63,10 +63,18 @@ def kernel_doubleloop(mf, kpts, C0=None, facexi=None,
 
     # init guess and SCF chkfile
     tick = np.asarray([time.clock(), time.time()])
-    C_ks, mocc_ks, fchk, dump_chk = mf.get_init_guess(nv=nbandv_tot, C0=C0)
+    C_ks, mocc_ks, fchk, dump_chk = mf.get_init_guess(nvir=nbandv_tot, C0=C0)
 
     tock = np.asarray([time.clock(), time.time()])
     mf.scf_summary["t-init"] = tock - tick
+
+    """
+    In swap:
+        ace_xi
+        C_ks_exx
+    In fchk:
+        C_ks
+    """
 
     if facexi is None:
         swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
@@ -245,9 +253,9 @@ def kernel_doubleloop(mf, kpts, C0=None, facexi=None,
 #     nkpts = len(mocc_ks)
 #     for k in range(nkpts):
 #         mocc = mocc_ks[k]
-#         no = np.sum(mocc>THR_OCC)
-#         if np.sum(mocc[:no]>THR_OCC) < no:
-#             mocc_ks[k] = np.asarray([2 if i < no else 0
+#         nocc = np.sum(mocc>THR_OCC)
+#         if np.sum(mocc[:nocc]>THR_OCC) < nocc:
+#             mocc_ks[k] = np.asarray([2 if i < nocc else 0
 #                                     for i in range(mocc.size)])
 #             moe = moe_ks[k]
 #             order = np.argsort(moe)[::-1]
@@ -385,12 +393,12 @@ def copy_C_ks(mf, C_ks, C_ks_exx):
         return C_ks_exx
 
 
-def get_mo_occ(cell, moe_ks=None, C_ks=None, no=None):
-    if no is None: no = cell.nelectron // 2
+def get_mo_occ(cell, moe_ks=None, C_ks=None, nocc=None):
+    if nocc is None: nocc = cell.nelectron // 2
     if not moe_ks is None:
         nkpts = len(moe_ks)
-        no_tot = no * nkpts
-        e_fermi = np.sort(np.concatenate(moe_ks))[no_tot-1]
+        nocc_tot = nocc * nkpts
+        e_fermi = np.sort(np.concatenate(moe_ks))[nocc_tot-1]
         EPSILON = 1e-10
         mocc_ks = [None] * nkpts
         for k in range(nkpts):
@@ -399,11 +407,11 @@ def get_mo_occ(cell, moe_ks=None, C_ks=None, no=None):
             mocc_ks[k] = mocc_k
     elif not C_ks is None:
         if isinstance(C_ks, list):
-            mocc_ks = [np.asarray([2 if i < no else 0
+            mocc_ks = [np.asarray([2 if i < nocc else 0
                        for i in range(C_k.shape[0])]) for C_k in C_ks]
         elif isinstance(C_ks, h5py.Group):
             nkpts = len(C_ks)
-            mocc_ks = [np.asarray([2 if i < no else 0
+            mocc_ks = [np.asarray([2 if i < nocc else 0
                        for i in range(C_ks["%d"%k].shape[0])])
                        for k in range(nkpts)]
         else:
@@ -464,44 +472,19 @@ def dump_moe(mf, moe_ks_, mocc_ks_, nband=None, trigger_level=logger.DEBUG):
         np.set_printoptions(threshold=1000)
 
 
-def orth(cell, C, thr, thr_lindep=1e-8, follow=True):
-    n = C.shape[0]
-    S = lib.dot(C.conj(), C.T)
-    nonorth_err = np.max(np.abs(S - np.eye(S.shape[0])))
-    if nonorth_err > thr:
-        logger.warn(cell, "non-orthogonality detected in the initial MOs (max |off-diag ovlp|= %s). Symm-orth them now.", nonorth_err)
-        e, u = scipy.linalg.eigh(S)
-        idx_keep = np.where(e > thr_lindep)[0]
-        nkeep = idx_keep.size
-        if follow and n == nkeep:
-            # reorder to maximally overlap original orbs
-            idx = []
-            for i in range(n):
-                order = np.argsort(np.abs(u[i]))[::-1]
-                for j in order:
-                    if not j in idx:
-                        break
-                idx.append(j)
-            U = (u[:,idx]*e[idx]**-0.5).T
-        else:
-            U = (u[:,idx_keep]*e[idx_keep]**-0.5).T
-        C = lib.dot(U, C)
-
-    return C
-
-
-def orth_mo1(cell, C, mocc, thr=1e-3, thr_lindep=1e-8, follow=True):
+def orth_mo1(cell, C, mocc, thr_nonorth=1e-6, thr_lindep=1e-8, follow=True):
     """ orth occupieds and virtuals separately
     """
+    orth = pw_helper.orth
     Co = C[mocc>THR_OCC]
     Cv = C[mocc<THR_OCC]
     # orth occ
     if Co.shape[0] > 0:
-        Co = orth(cell, Co, thr, thr_lindep, follow)
+        Co = orth(cell, Co, thr_nonorth, thr_lindep, follow)
     # project out occ from vir and orth vir
     if Cv.shape[0] > 0:
         Cv -= lib.dot(lib.dot(Cv, Co.conj().T), Co)
-        Cv = orth(cell, Cv, thr, thr_lindep, follow)
+        Cv = orth(cell, Cv, thr_nonorth, thr_lindep, follow)
 
     C = np.vstack([Co,Cv])
 
@@ -525,11 +508,11 @@ def orth_mo(cell, C_ks, mocc_ks, thr=1e-3):
     return C_ks
 
 
-def get_init_guess(cell0, kpts, basis=None, pseudo=None, nv=0,
+def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
                    key="hcore", fC_ks=None):
     """
         Args:
-            nv (int):
+            nvir (int):
                 Number of virtual bands to be evaluated. Default is zero.
             fC_ks (h5py group):
                 If provided, the orbitals are written to it.
@@ -573,11 +556,11 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nv=0,
     else:
         raise NotImplementedError("Init guess %s not implemented" % key)
 
-    # TODO: support specifying nv for each kpt (useful for e.g., metals)
-    assert(isinstance(nv, int) and nv >= 0)
-    no = cell.nelectron // 2
+    # TODO: support specifying nvir for each kpt (useful for e.g., metals)
+    assert(isinstance(nvir, int) and nvir >= 0)
+    nocc = cell.nelectron // 2
     nmo_ks = [len(mo_occ[k]) for k in range(nkpts)]
-    ntot = no + nv
+    ntot = nocc + nvir
     ntot_ks = [min(ntot,nmo_ks[k]) for k in range(nkpts)]
 
     logger.debug1(cell0, "converting init MOs from GTO basis to PW basis")
@@ -624,20 +607,20 @@ def add_random_mo1(cell, n, C0):
 
     C1 = np.random.rand(n-n0, ngrids) + 0j
     C1 -= lib.dot(lib.dot(C1, C0.conj().T), C0)
-    C1 = orth(cell, C1, 1e-3, follow=False)
+    C1 = pw_helper.orth(cell, C1, 1e-3, follow=False)
 
     return np.vstack([C0,C1])
 
 
-def init_guess_by_chkfile(cell, chkfile_name, nv, project=None):
+def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None):
     from pyscf.pbc.scf import chkfile
     scf_dict = chkfile.load_scf(chkfile_name)[1]
     mocc_ks = scf_dict["mo_occ"]
     nkpts = len(mocc_ks)
     ntot_ks = [None] * nkpts
     for k in range(nkpts):
-        no = np.sum(mocc_ks[k]>THR_OCC)
-        ntot_ks[k] = max(no+nv, len(mocc_ks[k]))
+        nocc = np.sum(mocc_ks[k]>THR_OCC)
+        ntot_ks[k] = max(nocc+nvir, len(mocc_ks[k]))
 
     fchk = h5py.File(chkfile_name, "a")
     C_ks = fchk["mo_coeff"]
@@ -884,7 +867,7 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
     kpts = mf.kpts
     nkpts = len(kpts)
 
-    no_ks = [np.sum(mocc_ks[k] > 0) for k in range(nkpts)]
+    nocc_ks = [np.sum(mocc_ks[k] > 0) for k in range(nkpts)]
 
     e_ks = np.zeros(nkpts)
     if moe_ks is None:
@@ -892,8 +875,8 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
         e_comp = np.zeros(5)
         for k in range(nkpts):
             kpt = kpts[k]
-            no_k = no_ks[k]
-            Co_k = C_ks[k][:no_k] if C_incore else C_ks["%d"%k][:no_k]
+            nocc_k = nocc_ks[k]
+            Co_k = C_ks[k][:nocc_k] if C_incore else C_ks["%d"%k][:nocc_k]
             ace_xi_k = None if ace_xi_ks is None else ace_xi_ks["%d"%k][()]
             e_comp_k = mf.apply_Fock_kpt(Co_k, kpt, mocc_ks, mesh, Gv,
                                          vpplocR, vj_R, exxdiv,
@@ -912,11 +895,11 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
     else:
         for k in range(nkpts):
             kpt = kpts[k]
-            no_k = no_ks[k]
-            Co_k = C_ks[k][:no_k] if C_incore else C_ks["%d"%k][:no_k]
+            nocc_k = nocc_ks[k]
+            Co_k = C_ks[k][:nocc_k] if C_incore else C_ks["%d"%k][:nocc_k]
             e1_comp = mf.apply_h1e_kpt(Co_k, kpt, mesh, Gv,
                                        vpplocR, ret_E=True)[1]
-            e_ks[k] = np.sum(e1_comp) * 0.5 + np.sum(moe_ks[k][:no_k])
+            e_ks[k] = np.sum(e1_comp) * 0.5 + np.sum(moe_ks[k][:nocc_k])
     e_scf = np.sum(e_ks) / nkpts
 
     if moe_ks is None and exxdiv == "ewald":
@@ -1067,8 +1050,8 @@ class PWKRHF(mol_hf.SCF):
         self.scf_summary["nuc"] = self.cell.energy_nuc()
         self.scf_summary["e_comp_name_lst"] = ["kin", "ppl", "ppnl", "coul", "ex"]
 
-        self.nv = 0 # number of virtual bands to compute
-        self.nv_extra = 1    # to facilitate converging the highest virtual
+        self.nvir = 0 # number of virtual bands to compute
+        self.nvir_extra = 1 # to facilitate converging the highest virtual
         self.init_guess = "hcore"
 
 # If _acexi_to_save is specified (as a str), the ACE xi vectors will be saved in this file. Otherwise, a tempfile is used and discarded after the calculation.
@@ -1086,9 +1069,9 @@ class PWKRHF(mol_hf.SCF):
         logger.info(self, "SCF init guess = %s", self.init_guess)
         logger.info(self, "SCF conv_tol = %s", self.conv_tol)
         logger.info(self, "SCF max_cycle = %d", self.max_cycle)
-        logger.info(self, "Num virtual bands to compute = %s", self.nv)
+        logger.info(self, "Num virtual bands to compute = %s", self.nvir)
         logger.info(self, "Num extra v-bands included to help convergence = %s",
-                    self.nv_extra)
+                    self.nvir_extra)
         logger.info(self, "Band energy conv_tol = %s", self.conv_tol_band)
         logger.info(self, "Davidson conv_tol = %s", self.conv_tol_davidson)
         logger.info(self, "Davidson max_cycle = %d", self.max_cycle_davidson)
@@ -1120,10 +1103,10 @@ class PWKRHF(mol_hf.SCF):
                         ' = -1/2 * Nelec*madelung = %.12g',
                         madelung*cell.nelectron * -.5)
 
-    def init_guess_by_chkfile(self, chk=None, nv=None, project=None):
+    def init_guess_by_chkfile(self, chk=None, nvir=None, project=None):
         if chk is None: chk = self.chkfile
-        if nv is None: nv = self.nv
-        return init_guess_by_chkfile(self.cell, chk, nv, project=project)
+        if nvir is None: nvir = self.nvir
+        return init_guess_by_chkfile(self.cell, chk, nvir, project=project)
     def from_chk(self, chk=None, project=None, kpts=None):
         return self.init_guess_by_chkfile(chk, project, kpts)
 
@@ -1177,31 +1160,31 @@ class PWKRHF(mol_hf.SCF):
         write_time("all other", t_other, t_tot)
         write_time("full SCF", t_tot, t_tot)
 
-    def get_mo_occ(mf, moe_ks=None, C_ks=None, no=None):
-        return get_mo_occ(mf.cell, moe_ks, C_ks, no)
+    def get_mo_occ(mf, moe_ks=None, C_ks=None, nocc=None):
+        return get_mo_occ(mf.cell, moe_ks, C_ks, nocc)
 
     def get_init_guess_key(self, cell=None, kpts=None, basis=None, pseudo=None,
-                           nv=None, key="hcore", fC_ks=None):
+                           nvir=None, key="hcore", fC_ks=None):
         if cell is None: cell = self.cell
         if kpts is None: kpts = self.kpts
-        if nv is None: nv = self.nv
+        if nvir is None: nvir = self.nvir
 
         if key in ["h1e","hcore","cycle1","scf"]:
             C_ks, mocc_ks = get_init_guess(cell, kpts,
                                            basis=basis, pseudo=pseudo,
-                                           nv=nv, key=key, fC_ks=fC_ks)
+                                           nvir=nvir, key=key, fC_ks=fC_ks)
         else:
             logger.warn(self, "Unknown init guess %s", key)
             raise RuntimeError
 
         return C_ks, mocc_ks
 
-    def get_init_guess(self, init_guess=None, nv=None, chkfile=None, C0=None):
+    def get_init_guess(self, init_guess=None, nvir=None, chkfile=None, C0=None):
         if init_guess is None: init_guess = self.init_guess
-        if nv is None: nv = self.nv
+        if nvir is None: nvir = self.nvir
         if chkfile is None: chkfile = self.chkfile
         if init_guess[:3] == "chk" and C0 is None:
-            fchk, C_ks, mocc_ks = self.init_guess_by_chkfile(chk=chkfile, nv=nv)
+            fchk, C_ks, mocc_ks = self.init_guess_by_chkfile(chk=chkfile, nvir=nvir)
             dump_chk = True
         else:
             if isinstance(chkfile, str):
@@ -1217,22 +1200,22 @@ class PWKRHF(mol_hf.SCF):
             C_ks = fchk.create_group("mo_coeff")
 
             if C0 is None:
-                C_ks, mocc_ks = self.get_init_guess_key(nv=nv,
+                C_ks, mocc_ks = self.get_init_guess_key(nvir=nvir,
                                                         key=init_guess,
                                                         fC_ks=C_ks)
             else:
-                C_ks, mocc_ks = self.get_init_guess_C0(C0, nv=nv, fC_ks=C_ks)
+                C_ks, mocc_ks = self.get_init_guess_C0(C0, nvir=nvir, fC_ks=C_ks)
 
         return C_ks, mocc_ks, fchk, dump_chk
 
-    def get_init_guess_C0(self, C0, nv=None, fC_ks=None):
-        if nv is None: nv = self.nv
-        no = self.cell.nelectron // 2
-        ntot_ks = [no+nv] * len(self.kpts)
+    def get_init_guess_C0(self, C0, nvir=None, fC_ks=None):
+        if nvir is None: nvir = self.nvir
+        nocc = self.cell.nelectron // 2
+        ntot_ks = [nocc+nvir] * len(self.kpts)
         return init_guess_from_C0(self.cell, C0, ntot_ks, fC_ks)
 
-    def add_random_mo(self, ngoal_ks, C_ks, mocc_ks):
-        return add_random_mo(self.cell, ngoal_ks, C_ks, mocc_ks)
+    # def add_random_mo(self, ngoal_ks, C_ks, mocc_ks):
+    #     return add_random_mo(self.cell, ngoal_ks, C_ks, mocc_ks)
 
     def get_vpplocR(self, mesh=None, Gv=None):
         return pw_helper.get_vpplocR(self.cell, mesh=mesh, Gv=Gv)
@@ -1250,7 +1233,7 @@ class PWKRHF(mol_hf.SCF):
         self.converged, self.e_tot, self.mo_energy, self.mo_coeff, \
                 self.mo_occ = kernel_doubleloop(self, self.kpts,
                            C0=C0, facexi=facexi,
-                           nbandv=self.nv, nbandv_extra=self.nv_extra,
+                           nbandv=self.nvir, nbandv_extra=self.nvir_extra,
                            conv_tol=self.conv_tol, max_cycle=self.max_cycle,
                            conv_tol_band=self.conv_tol_band,
                            conv_tol_davidson=self.conv_tol_davidson,
@@ -1301,6 +1284,9 @@ if __name__ == "__main__":
     kpts = cell.make_kpts(kmesh)
 
     mf = PWKRHF(cell, kpts)
+    mf.nvir = 4 # converge first 4 virtual bands
     mf.kernel()
+    print(mf.chkfile)
+    assert(abs(mf.e_tot - -11.0411939355984) < 1.e-5)
 
     mf.dump_scf_summary()

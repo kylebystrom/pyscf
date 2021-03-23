@@ -58,7 +58,7 @@ if __name__ == "__main__":
 # PW (both vanilla and ACE)
     pmf = pwscf.KRHF(cell, kpts)
     pmf.exxdiv = exxdiv
-    no_ks = pw_helper.get_no_ks_from_mocc(gmf.mo_occ)
+    no_ks = pw_helper.get_nocc_ks_from_mocc(gmf.mo_occ)
     C_ks = pw_helper.get_C_ks_G(cell, kpts, gmf.mo_coeff, no_ks)
     mocc_ks = khf.get_mo_occ(cell, C_ks=C_ks)
     mesh = cell.mesh
