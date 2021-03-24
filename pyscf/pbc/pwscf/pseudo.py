@@ -79,19 +79,17 @@ class PWPP:
         self.vpplocR = get_vpplocR(cell, self.mesh, self.Gv)
         if len(cell._ecp) > 0:
             lib.logger.debug(self, "Initializing ccECP non-local part")
+            dtype = np.complex128
             self._ecp = format_ccecp_param(cell)
             self.fppnloc = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
             self.fswap = lib.H5TmpFile(self.fppnloc.name)
             nkpts = len(self.kpts)
             ngrids = self.Gv.shape[0]
             self.vppnlocGG = self.fswap.create_dataset(
-                                        "vppnlocGG", shape=(nkpts,ngrids,ngrids),
-                                        dtype=np.complex128)
-            for k,kpt in enumerate(self.kpts):
-                lib.logger.debug(self, "k = %d  kpt = [%.6f %.6f %.6f]",
-                                 k, *kpt)
-                self.vppnlocGG[k] = get_vppnlocGG_kpt_ccecp(cell, kpt, self.Gv,
-                                                            _ecp=self._ecp)
+                                                "vppnlocGG", shape=(nkpts,ngrids,ngrids),
+                                                dtype=dtype)
+            fill_vppnlocGG_ccecp(cell, self.kpts, self.Gv, _ecp=self._ecp,
+                                 out=self.vppnlocGG)
         else:
             self.vppnlocGG = None
 
@@ -101,11 +99,19 @@ class PWPP:
             dataname = "vppnlocWks"
             if dataname in self.fswap: del self.fswap[dataname]
             self.vppnlocWks = self.fswap.create_group(dataname)
+            max_memory = (cell.max_memory - lib.current_memory()[0]) * 0.8
+            ngrids = self.Gv.shape[0]
+            Gblksize = min(int(np.floor(max_memory*1e6/16/ngrids)), ngrids)
+            lib.logger.debug1(cell, "update subspace vppnloc in %d segs",
+                              (ngrids-1)//Gblksize+1)
             nkpts = len(self.kpts)
             for k in range(nkpts):
                 key = "%d"%k if spin is None else "%d/%d" % (spin,k)
                 C_k = C_ks[k] if isinstance(C_ks, list) else C_ks[key][()]
-                W_k = lib.dot(C_k.conj(), self.vppnlocGG[k]).conj()
+                W_k = np.zeros_like(C_k)
+                for p0,p1 in lib.prange(0,ngrids,Gblksize):
+                    W_k += lib.dot(C_k[:,p0:p1].conj(),
+                                   self.vppnlocGG[k,p0:p1]).conj()
                 M_k = lib.dot(C_k.conj(), W_k.T)
                 e_k, u_k = scipy.linalg.eigh(M_k)
                 idx_keep = np.where(e_k > 1e-12)[0]
@@ -316,10 +322,16 @@ def get_vpplocG_ccecp(cell, Gv, _ecp=None):
     return vlocG
 
 
-def get_vppnlocGG_kpt_ccecp(cell, kpt, Gv, _ecp=None):
+def fill_vppnlocGG_ccecp(cell, kpts, Gv, out, _ecp=None):
     if _ecp is None: _ecp = format_ccecp_param(cell)
     SI = cell.get_SI()
     ngrids = Gv.shape[0]
+
+    dsize = 16
+    max_memory = (cell.max_memory - lib.current_memory()[0]) * 0.4
+    Gblksize = min(int(np.floor(max_memory*1e6/dsize / ngrids)), ngrids)
+    lib.logger.debug1(cell, "fill in vppnlocGG_ccecp in %d segs",
+                      (ngrids-1)//Gblksize+1)
 
     from pyscf import gto
     fakemol = gto.Mole()
@@ -331,38 +343,44 @@ def get_vppnlocGG_kpt_ccecp(cell, kpt, Gv, _ecp=None):
     fakemol._bas[0,gto.NCTR_OF  ] = 1
     fakemol._bas[0,gto.PTR_EXP  ] = ptr+3
     fakemol._bas[0,gto.PTR_COEFF] = ptr+4
-    buf = np.empty((48,ngrids), dtype=np.complex128)
 
-    Gk = Gv + kpt
-    G_rad = lib.norm(Gk, axis=1)
-    G0idx = np.where(G_rad==0)[0]
-    G_rad2 = G_rad[:,None] * G_rad
-    with np.errstate(divide="ignore"):
-        invG_rad = 1. / G_rad
-        if G0idx.size > 0:
-            invG_rad[G0idx] = 0
+    for k,kpt in enumerate(kpts):
+        for p0,p1 in lib.prange(0,ngrids,Gblksize):
+            out[k,p0:p1] = 0. + 0.j
 
-    vnlGG = np.zeros((ngrids,ngrids), dtype=np.complex128)
-    for iatm in range(cell.natm):
-        atm = cell.atom_symbol(iatm)
-        _ecpnl_lst = _ecp[atm][1]
-        for _ecpnl in _ecpnl_lst:
-            l = _ecpnl[0]
-            nl = (len(_ecpnl) - 1) // 2
-            for il in range(nl):
-                al, cl = _ecpnl[(1+il*2):(3+il*2)]
-                fakemol._bas[0,gto.ANG_OF] = l
-                fakemol._env[ptr+3] = 0.25 / al
-                fakemol._env[ptr+4] = 2.*np.pi**1.25 * cl**0.5 / al**0.75
-                # pYlm_part.shape = (ngrids, 2*l+1)
-                pYlm_part = fakemol.eval_gto('GTOval', Gk) * SI[iatm][:,None]
-                if l > 0:
-                    pYlm_part *= (invG_rad**l)[:,None]
-                vnlGG1 = lib.dot(pYlm_part, pYlm_part.conj().T)
-                vnlGG2 = spherical_in(l, G_rad2 * (0.5/al))
-                vnlGG += vnlGG1 * vnlGG2
+        Gk = Gv + kpt
+        G_rad = lib.norm(Gk, axis=1)
+        G0idx = np.where(G_rad==0)[0]
+        G_rad2 = G_rad[:,None] * G_rad
+        with np.errstate(divide="ignore"):
+            invG_rad = 1. / G_rad
+            if G0idx.size > 0:
+                invG_rad[G0idx] = 0
 
-    vnlGG /= cell.vol
+        for iatm in range(cell.natm):
+            atm = cell.atom_symbol(iatm)
+            _ecpnl_lst = _ecp[atm][1]
+            for _ecpnl in _ecpnl_lst:
+                l = _ecpnl[0]
+                nl = (len(_ecpnl) - 1) // 2
+                for il in range(nl):
+                    al, cl = _ecpnl[(1+il*2):(3+il*2)]
+                    fakemol._bas[0,gto.ANG_OF] = l
+                    fakemol._env[ptr+3] = 0.25 / al
+                    fakemol._env[ptr+4] = 2.*np.pi**1.25 * cl**0.5 / al**0.75
+                    # pYlm_part.shape = (ngrids, 2*l+1)
+                    pYlm_part = fakemol.eval_gto('GTOval', Gk) * SI[iatm][:,None]
+                    if l > 0:
+                        pYlm_part *= (invG_rad**l)[:,None]
+                    for p0,p1 in lib.prange(0,ngrids,Gblksize):
+                        vnlGG = lib.dot(pYlm_part[p0:p1], pYlm_part.conj().T)
+                        vnlGG *= spherical_in(l, G_rad2[p0:p1] * (0.5/al))
+                        out[k,p0:p1] += vnlGG
+                        vnlGG = None
+
+        for p0,p1 in lib.prange(0,ngrids,Gblksize):
+            out[k,p0:p1] /= cell.vol
+    # vnlGG /= cell.vol
 
     return vnlGG
 
