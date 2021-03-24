@@ -10,7 +10,6 @@ import numpy as np
 import scipy.linalg
 
 from pyscf.pbc import tools, df
-from pyscf.pbc.gto import pseudo
 from pyscf import lib
 from pyscf.lib import logger
 
@@ -147,101 +146,7 @@ def apply_kin_kpt(C_k, kpt, mesh, Gv):
 
 """ Pseudopotential
 """
-def get_vpplocR(cell, mesh=None, Gv=None):
-    if mesh is None: mesh = cell.mesh
-    if Gv is None: Gv = cell.get_Gv(mesh)
-    ngrids = Gv.shape[0]
-    fac = ngrids / cell.vol
-    SI = cell.get_SI()
-    if cell.pseudo is None:
-        Zs = cell.atom_charges()
-        coulG = tools.get_coulG(cell, Gv=Gv)
-        vpplocG = -np.einsum("a,ag,g->g", Zs, SI, coulG)
-        vpplocR = tools.ifft(vpplocG, mesh).real * fac
-    else:
-        vpplocG = pseudo.get_vlocG(cell, Gv)
-        vpplocG = -np.einsum('ij,ij->j', SI, vpplocG)
-        vpplocR = tools.ifft(vpplocG, mesh).real * fac
-
-    return vpplocR
-
-
-def apply_ppl_kpt(C_k, mesh, vpplocR):
-
-    Cbar_k = tools.fft(tools.ifft(C_k, mesh) * vpplocR, mesh)
-
-    return Cbar_k
-
-
-def apply_ppnl_kpt(cell, C_k, kpt, mesh, Gv):
-    if cell.pseudo is None:
-        return np.zeros_like(C_k)
-
-    SI = cell.get_SI()
-    no = C_k.shape[0]
-    ngrids = Gv.shape[0]
-
-    # non-local pp
-    from pyscf import gto
-    fakemol = gto.Mole()
-    fakemol._atm = np.zeros((1,gto.ATM_SLOTS), dtype=np.int32)
-    fakemol._bas = np.zeros((1,gto.BAS_SLOTS), dtype=np.int32)
-    ptr = gto.PTR_ENV_START
-    fakemol._env = np.zeros(ptr+10)
-    fakemol._bas[0,gto.NPRIM_OF ] = 1
-    fakemol._bas[0,gto.NCTR_OF  ] = 1
-    fakemol._bas[0,gto.PTR_EXP  ] = ptr+3
-    fakemol._bas[0,gto.PTR_COEFF] = ptr+4
-
-    buf = np.empty((48,ngrids), dtype=np.complex128)
-    def get_Cbar_k_nl(kpt, C_k_):
-        Cbar_k = np.zeros_like(C_k_)
-
-        Gk = Gv + kpt
-        G_rad = lib.norm(Gk, axis=1)
-        vppnl = 0
-        for ia in range(cell.natm):
-            symb = cell.atom_symbol(ia)
-            if symb not in cell._pseudo:
-                continue
-            pp = cell._pseudo[symb]
-            p1 = 0
-            for l, proj in enumerate(pp[5:]):
-                rl, nl, hl = proj
-                if nl > 0:
-                    fakemol._bas[0,gto.ANG_OF] = l
-                    fakemol._env[ptr+3] = .5*rl**2
-                    fakemol._env[ptr+4] = rl**(l+1.5)*np.pi**1.25
-                    pYlm_part = fakemol.eval_gto('GTOval', Gk)
-
-                    p0, p1 = p1, p1+nl*(l*2+1)
-                    # pYlm is real, SI[ia] is complex
-                    pYlm = np.ndarray((nl,l*2+1,ngrids), dtype=np.complex128, buffer=buf[p0:p1])
-                    for k in range(nl):
-                        qkl = pseudo.pp._qli(G_rad*rl, l, k)
-                        pYlm[k] = pYlm_part.T * qkl
-                    #:SPG_lmi = np.einsum('g,nmg->nmg', SI[ia].conj(), pYlm)
-                    #:SPG_lm_aoG = np.einsum('nmg,gp->nmp', SPG_lmi, aokG)
-                    #:tmp = np.einsum('ij,jmp->imp', hl, SPG_lm_aoG)
-                    #:vppnl += np.einsum('imp,imq->pq', SPG_lm_aoG.conj(), tmp)
-            if p1 > 0:
-                SPG_lmi = buf[:p1]
-                SPG_lmi *= SI[ia].conj()
-                p1 = 0
-                for l, proj in enumerate(pp[5:]):
-                    rl, nl, hl = proj
-                    if nl > 0:
-                        p0, p1 = p1, p1+nl*(l*2+1)
-                        hl = np.asarray(hl)
-                        SPG_lmi_ = SPG_lmi[p0:p1].reshape(nl,l*2+1,-1)
-                        tmp = np.einsum("imG,IG->Iim", SPG_lmi_, C_k_)
-                        tmp = np.einsum("ij,Iim->Ijm", hl, tmp)
-                        Cbar_k += np.einsum("Iim,imG->IG", tmp, SPG_lmi_.conj())
-        return Cbar_k / cell.vol
-
-    Cbar_k = get_Cbar_k_nl(kpt, C_k)
-
-    return Cbar_k
+# All PP implementations are now rebased in pyscf/pbc/pwscf/pseudo.py
 
 
 """ Columb energy
