@@ -66,7 +66,7 @@ def apply_vppnl_kpt(cell, C_k, kpt, mesh=None, Gv=None):
 """ PW-PP class implementation goes here
 """
 class PWPP:
-    def __init__(self, cell, kpts, mesh=None):
+    def __init__(self, cell, kpts, mesh=None, direct_nloc=True):
         self.cell = cell
         self.stdout = cell.stdout
         self.verbose = cell.verbose
@@ -74,6 +74,7 @@ class PWPP:
         if mesh is None: mesh = cell.mesh
         self.mesh = mesh
         self.Gv = cell.get_Gv(mesh)
+        self.direct_nloc = direct_nloc
         self.spin = None
         lib.logger.debug(self, "Initializing PP local part")
         self.vpplocR = get_vpplocR(cell, self.mesh, self.Gv)
@@ -83,14 +84,18 @@ class PWPP:
             self._ecp = format_ccecp_param(cell)
             self.fppnloc = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
             self.fswap = lib.H5TmpFile(self.fppnloc.name)
-            nkpts = len(self.kpts)
-            ngrids = self.Gv.shape[0]
-            self.vppnlocGG = self.fswap.create_dataset(
-                                                "vppnlocGG", shape=(nkpts,ngrids,ngrids),
-                                                dtype=dtype)
-            fill_vppnlocGG_ccecp(cell, self.kpts, self.Gv, _ecp=self._ecp,
-                                 out=self.vppnlocGG)
+            if self.direct_nloc:
+                self.vppnlocGG = None
+            else:
+                nkpts = len(self.kpts)
+                ngrids = self.Gv.shape[0]
+                self.vppnlocGG = self.fswap.create_dataset(
+                                                    "vppnlocGG", shape=(nkpts,ngrids,ngrids),
+                                                    dtype=dtype)
+                fill_vppnlocGG_ccecp(cell, self.kpts, self.Gv, _ecp=self._ecp,
+                                     out=self.vppnlocGG)
         else:
+            self._ecp = None
             self.vppnlocGG = None
 
     def update_subspace_vppnloc(self, C_ks, spin=None):
@@ -99,19 +104,18 @@ class PWPP:
             dataname = "vppnlocWks"
             if dataname in self.fswap: del self.fswap[dataname]
             self.vppnlocWks = self.fswap.create_group(dataname)
-            max_memory = (cell.max_memory - lib.current_memory()[0]) * 0.8
-            ngrids = self.Gv.shape[0]
-            Gblksize = min(int(np.floor(max_memory*1e6/16/ngrids)), ngrids)
-            lib.logger.debug1(cell, "update subspace vppnloc in %d segs",
-                              (ngrids-1)//Gblksize+1)
             nkpts = len(self.kpts)
             for k in range(nkpts):
                 key = "%d"%k if spin is None else "%d/%d" % (spin,k)
                 C_k = C_ks[k] if isinstance(C_ks, list) else C_ks[key][()]
-                W_k = np.zeros_like(C_k)
-                for p0,p1 in lib.prange(0,ngrids,Gblksize):
-                    W_k += lib.dot(C_k[:,p0:p1].conj(),
-                                   self.vppnlocGG[k,p0:p1]).conj()
+                if self.vppnlocGG is None:
+                    kpt = self.kpts[k]
+                    Gv = self.Gv
+                    W_k = apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv,
+                                                    _ecp=self._ecp)
+                else:
+                    W_k = apply_vppnlocGG_kpt_ccecp_precompute(cell, C_k, k,
+                                                               self.vppnlocGG)
                 M_k = lib.dot(C_k.conj(), W_k.T)
                 e_k, u_k = scipy.linalg.eigh(M_k)
                 idx_keep = np.where(e_k > 1e-12)[0]
@@ -120,7 +124,6 @@ class PWPP:
                 W_k = None
         else:
             self.vppnlocWks = None
-
 
     def apply_vppl_kpt(self, C_k, mesh=None, vpplocR=None):
         if mesh is None: mesh = self.mesh
@@ -344,6 +347,14 @@ def fill_vppnlocGG_ccecp(cell, kpts, Gv, out, _ecp=None):
     fakemol._bas[0,gto.PTR_EXP  ] = ptr+3
     fakemol._bas[0,gto.PTR_COEFF] = ptr+4
 
+# get uniq atom list
+    uniq_atm_map = dict()
+    for iatm in range(cell.natm):
+        atm = cell.atom_symbol(iatm)
+        if not atm in uniq_atm_map:
+            uniq_atm_map[atm] = []
+        uniq_atm_map[atm].append(iatm)
+
     for k,kpt in enumerate(kpts):
         for p0,p1 in lib.prange(0,ngrids,Gblksize):
             out[k,p0:p1] = 0. + 0.j
@@ -357,8 +368,7 @@ def fill_vppnlocGG_ccecp(cell, kpts, Gv, out, _ecp=None):
             if G0idx.size > 0:
                 invG_rad[G0idx] = 0
 
-        for iatm in range(cell.natm):
-            atm = cell.atom_symbol(iatm)
+        for atm,iatm_lst in uniq_atm_map.items():
             _ecpnl_lst = _ecp[atm][1]
             for _ecpnl in _ecpnl_lst:
                 l = _ecpnl[0]
@@ -368,8 +378,10 @@ def fill_vppnlocGG_ccecp(cell, kpts, Gv, out, _ecp=None):
                     fakemol._bas[0,gto.ANG_OF] = l
                     fakemol._env[ptr+3] = 0.25 / al
                     fakemol._env[ptr+4] = 2.*np.pi**1.25 * cl**0.5 / al**0.75
-                    # pYlm_part.shape = (ngrids, 2*l+1)
-                    pYlm_part = fakemol.eval_gto('GTOval', Gk) * SI[iatm][:,None]
+                    # pYlm_part.shape = (ngrids, (2*l+1)*len(iatm_lst))
+                    pYlm_part = np.einsum("gl,ag->gla",
+                                          fakemol.eval_gto('GTOval', Gk),
+                                          SI[iatm_lst]).reshape(ngrids,-1)
                     if l > 0:
                         pYlm_part *= (invG_rad**l)[:,None]
                     for p0,p1 in lib.prange(0,ngrids,Gblksize):
@@ -383,6 +395,82 @@ def fill_vppnlocGG_ccecp(cell, kpts, Gv, out, _ecp=None):
     # vnlGG /= cell.vol
 
     return vnlGG
+
+
+def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv, _ecp=None):
+    if _ecp is None: _ecp = format_ccecp_param(cell)
+    SI = cell.get_SI()
+    ngrids = Gv.shape[0]
+
+    from pyscf import gto
+    fakemol = gto.Mole()
+    fakemol._atm = np.zeros((1,gto.ATM_SLOTS), dtype=np.int32)
+    fakemol._bas = np.zeros((1,gto.BAS_SLOTS), dtype=np.int32)
+    ptr = gto.PTR_ENV_START
+    fakemol._env = np.zeros(ptr+10)
+    fakemol._bas[0,gto.NPRIM_OF ] = 1
+    fakemol._bas[0,gto.NCTR_OF  ] = 1
+    fakemol._bas[0,gto.PTR_EXP  ] = ptr+3
+    fakemol._bas[0,gto.PTR_COEFF] = ptr+4
+
+    uniq_atm_map = dict()
+    for iatm in range(cell.natm):
+        atm = cell.atom_symbol(iatm)
+        if not atm in uniq_atm_map:
+            uniq_atm_map[atm] = []
+        uniq_atm_map[atm].append(iatm)
+
+    nmo = C_k.shape[0]
+    lmax = np.max([_ecpitem[1][0] for _ecpitem in _ecp.values()])
+
+    dsize = 16
+    max_memory = (cell.max_memory - lib.current_memory()[0]) * 0.9
+    Gblksize = min(int(np.floor((max_memory*1e6/dsize/ngrids -
+                                 (2*lmax+1+3+nmo))*0.5)), ngrids)
+    lib.logger.debug1(cell, "Computing v^nl*C_k in %d segs with blksize %d",
+                      (ngrids-1)//Gblksize+1, Gblksize)
+
+    Gk = Gv + kpt
+    G_rad = lib.norm(Gk, axis=1)
+    G0idx = np.where(G_rad==0)[0]
+
+    Cbar_k = np.zeros_like(C_k)
+    for atm,iatm_lst in uniq_atm_map.items():
+        _ecpnl_lst = _ecp[atm][1]
+        for _ecpnl in _ecpnl_lst:
+            l = _ecpnl[0]
+            nl = (len(_ecpnl) - 1) // 2
+            for il in range(nl):
+                al, cl = _ecpnl[(1+il*2):(3+il*2)]
+                fakemol._bas[0,gto.ANG_OF] = l
+                fakemol._env[ptr+3] = 0.25 / al
+                fakemol._env[ptr+4] = 2.*np.pi**1.25 * cl**0.5 / al**0.75
+                # pYlm_part.shape = (ngrids, (2*l+1)*len(iatm_lst))
+                pYlm_part = np.einsum("gl,ag->gla",
+                                      fakemol.eval_gto('GTOval', Gk),
+                                      SI[iatm_lst]).reshape(ngrids,-1)
+                if l > 0:
+                    pYlm_part *= (invG_rad**l)[:,None]
+                G_red = G_rad * (0.5 / al)
+                for p0,p1 in lib.prange(0,ngrids,Gblksize):
+                    vnlGG = lib.dot(pYlm_part[p0:p1], pYlm_part.conj().T)
+                    vnlGG *= spherical_in(l, G_rad[p0:p1,None]*G_red)
+                    Cbar_k[:,p0:p1] += lib.dot(vnlGG, C_k.T).T
+                    vnlGG = None
+                G_red = None
+    Cbar_k /= cell.vol
+
+    return Cbar_k
+
+
+def apply_vppnlocGG_kpt_ccecp_precompute(cell, C_k, k, vppnlocGG):
+    ngrids = C_k.shape[1]
+    max_memory = (cell.max_memory - lib.current_memory()[0]) * 0.8
+    Gblksize = min(int(np.floor(max_memory*1e6/16/ngrids)), ngrids)
+    W_k = np.zeros_like(C_k)
+    for p0,p1 in lib.prange(0,ngrids,Gblksize):
+        W_k += lib.dot(C_k[:,p0:p1].conj(), vppnlocGG[k,p0:p1]).conj()
+    return W_k
 
 
 def apply_vppnl_kpt_ccecp(cell, C_k, kpt, Gv, _ecp=None):
