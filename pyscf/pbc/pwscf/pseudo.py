@@ -239,6 +239,45 @@ def apply_vppnl_kpt_gth(cell, C_k, kpt, Gv):
 
 """ ccECP implementation starts here
 """
+def fast_SphBslin(n, xs, thr_switch=20, thr_overflow=700):
+    """ A faster implementation of the scipy.special.spherical_in
+
+    Args:
+        thr_switch (default: 20):
+            for xs > thr_switch,
+                cohs(xs) ~ 0.5 * exp(xs)
+                sinh(xs) ~ 0.5 * exp(xs)
+        thr_overflow (default: 700):
+            for xs > thr_overflow, we set the output to be zero.
+            The spherical_in blows up for large input but since the goal is to compute
+                spherical_in(xs) * np.exp(-xs)
+            the end results will be essentially 0 due to the exponential.
+    """
+    mask = xs < thr_switch
+    mask_overflow = xs > thr_overflow
+    xs0 = xs[mask]
+    with np.errstate(over="ignore"):
+        if n == 0:
+            ys = 0.5 * np.exp(xs) / xs
+            ys[mask] = np.sinh(xs0) / xs0
+        elif n == 1:
+            ys = 0.5 * np.exp(xs) * (xs-1) / xs**2.
+            ys[mask] = (xs0*np.cosh(xs0) - np.sinh(xs0)) / xs0**2.
+        elif n == 2:
+            ys = 0.5 * np.exp(xs) * (xs**2.-3.*(xs-1)) / xs**3.
+            ys[mask] = ((xs0**2.+3.)*np.sinh(xs0) - 3.*xs0*np.cosh(xs0)) / xs0**3.
+        elif n == 3:
+            ys = 0.5 * np.exp(xs) * ((xs**2.+15.)*(xs-6.) + 75.) / xs**4.
+            ys[mask] = ((xs0**3.+15.*xs0)*np.cosh(xs0) -
+                        (6.*xs0**2.+15.)*np.sinh(xs0)) / xs0**4.
+        else:
+            raise NotImplementedError("fast_SphBslin with n=%d is not implemented." % n)
+
+        ys[mask_overflow] = 0.
+
+    return ys
+
+
 def format_ccecp_param(cell):
     r""" Format the ecp data into the following dictionary:
         _ecp = {
@@ -361,12 +400,9 @@ def fill_vppnlocGG_ccecp(cell, kpts, Gv, out, _ecp=None):
 
         Gk = Gv + kpt
         G_rad = lib.norm(Gk, axis=1)
-        G0idx = np.where(G_rad==0)[0]
+        if abs(kpt).sum() < 1e-8: G_rad += 1e-40    # avoid inverting zero
         G_rad2 = G_rad[:,None] * G_rad
-        with np.errstate(divide="ignore"):
-            invG_rad = 1. / G_rad
-            if G0idx.size > 0:
-                invG_rad[G0idx] = 0
+        invG_rad = 1. / G_rad
 
         for atm,iatm_lst in uniq_atm_map.items():
             _ecpnl_lst = _ecp[atm][1]
@@ -386,13 +422,12 @@ def fill_vppnlocGG_ccecp(cell, kpts, Gv, out, _ecp=None):
                         pYlm_part *= (invG_rad**l)[:,None]
                     for p0,p1 in lib.prange(0,ngrids,Gblksize):
                         vnlGG = lib.dot(pYlm_part[p0:p1], pYlm_part.conj().T)
-                        vnlGG *= spherical_in(l, G_rad2[p0:p1] * (0.5/al))
+                        vnlGG *= fast_SphBslin(l, G_rad2[p0:p1] * (0.5/al))
                         out[k,p0:p1] += vnlGG
                         vnlGG = None
 
         for p0,p1 in lib.prange(0,ngrids,Gblksize):
             out[k,p0:p1] /= cell.vol
-    # vnlGG /= cell.vol
 
     return vnlGG
 
@@ -423,16 +458,18 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv, _ecp=None):
     nmo = C_k.shape[0]
     lmax = np.max([_ecpitem[1][0] for _ecpitem in _ecp.values()])
 
+    dtype = np.complex128
     dsize = 16
     max_memory = (cell.max_memory - lib.current_memory()[0]) * 0.9
     Gblksize = min(int(np.floor((max_memory*1e6/dsize/ngrids -
                                  (2*lmax+1+3+nmo))*0.5)), ngrids)
+    buf = np.empty(Gblksize*ngrids, dtype=dtype)
     lib.logger.debug1(cell, "Computing v^nl*C_k in %d segs with blksize %d",
                       (ngrids-1)//Gblksize+1, Gblksize)
 
     Gk = Gv + kpt
     G_rad = lib.norm(Gk, axis=1)
-    G0idx = np.where(G_rad==0)[0]
+    if abs(kpt).sum() < 1e-8: G_rad += 1e-40    # avoid inverting zero
 
     Cbar_k = np.zeros_like(C_k)
     for atm,iatm_lst in uniq_atm_map.items():
@@ -453,10 +490,13 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv, _ecp=None):
                     pYlm_part *= (invG_rad**l)[:,None]
                 G_red = G_rad * (0.5 / al)
                 for p0,p1 in lib.prange(0,ngrids,Gblksize):
-                    vnlGG = lib.dot(pYlm_part[p0:p1], pYlm_part.conj().T)
-                    vnlGG *= spherical_in(l, G_rad[p0:p1,None]*G_red)
+                    # use np.dot since a slice is neither F nor C-contiguous
+                    out = np.ndarray((p1-p0,ngrids), dtype=dtype, buffer=buf)
+                    vnlGG = np.dot(pYlm_part[p0:p1], pYlm_part.conj().T,
+                                   out=out)
+                    vnlGG *= fast_SphBslin(l, G_rad[p0:p1,None]*G_red)
                     Cbar_k[:,p0:p1] += lib.dot(vnlGG, C_k.T).T
-                    vnlGG = None
+                    vnlGG = out = None
                 G_red = None
     Cbar_k /= cell.vol
 

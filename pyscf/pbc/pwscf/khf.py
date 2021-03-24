@@ -1293,6 +1293,6 @@ if __name__ == "__main__":
     mf = PWKRHF(cell, kpts)
     mf.nvir = 4 # converge first 4 virtual bands
     mf.kernel()
-    assert(abs(mf.e_tot - -11.0411939355984) < 1.e-5)
-
     mf.dump_scf_summary()
+    
+    assert(abs(mf.e_tot - -11.0411939355984) < 1.e-5)
