@@ -240,43 +240,21 @@ def apply_vppnl_kpt_gth(cell, C_k, kpt, Gv):
 
 """ ccECP implementation starts here
 """
-def fast_SphBslin(n, xs, thr_switch=20, thr_overflow=700):
-    """ A faster implementation of the scipy.special.spherical_in
+def fast_SphBslin(n, xs, thr_switch=20, thr_overflow=700, out=None):
+    if out is None: out = np.zeros_like(xs)
+    if n == 0:
+        out[:] = np.sinh(xs) / xs
+    elif n == 1:
+        out[:] = (xs * np.cosh(xs) - np.sinh(xs)) / xs**2.
+    elif n == 2:
+        out[:] = ((xs**2.+3.)*np.sinh(xs) - 3.*xs*np.cosh(xs)) / xs**3.
+    elif n == 3:
+        out[:] = ((xs**3.+15.*xs)*np.cosh(xs) -
+                (6.*xs**2.+15.)*np.sinh(xs)) / xs**4.
+    else:
+        raise NotImplementedError("fast_SphBslin with n=%d is not implemented." % n)
 
-    Args:
-        thr_switch (default: 20):
-            for xs > thr_switch,
-                cohs(xs) ~ 0.5 * exp(xs)
-                sinh(xs) ~ 0.5 * exp(xs)
-        thr_overflow (default: 700):
-            for xs > thr_overflow, we set the output to be zero.
-            The spherical_in blows up for large input but since the goal is to compute
-                spherical_in(xs) * np.exp(-xs)
-            the end results will be essentially 0 due to the exponential.
-    """
-    mask = xs < thr_switch
-    mask_overflow = xs > thr_overflow
-    xs0 = xs[mask]
-    with np.errstate(over="ignore"):
-        if n == 0:
-            ys = 0.5 * np.exp(xs) / xs
-            ys[mask] = np.sinh(xs0) / xs0
-        elif n == 1:
-            ys = 0.5 * np.exp(xs) * (xs-1) / xs**2.
-            ys[mask] = (xs0*np.cosh(xs0) - np.sinh(xs0)) / xs0**2.
-        elif n == 2:
-            ys = 0.5 * np.exp(xs) * (xs**2.-3.*(xs-1)) / xs**3.
-            ys[mask] = ((xs0**2.+3.)*np.sinh(xs0) - 3.*xs0*np.cosh(xs0)) / xs0**3.
-        elif n == 3:
-            ys = 0.5 * np.exp(xs) * ((xs**2.+15.)*(xs-6.) + 75.) / xs**4.
-            ys[mask] = ((xs0**3.+15.*xs0)*np.cosh(xs0) -
-                        (6.*xs0**2.+15.)*np.sinh(xs0)) / xs0**4.
-        else:
-            raise NotImplementedError("fast_SphBslin with n=%d is not implemented." % n)
-
-        ys[mask_overflow] = 0.
-
-    return ys
+    return out
 
 
 def format_ccecp_param(cell):
@@ -458,13 +436,16 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv, _ecp=None):
 
     nmo = C_k.shape[0]
     lmax = np.max([_ecpitem[1][0] for _ecpitem in _ecp.values()])
+    natmmax = np.max([len(iatm_lst) for iatm_lst in uniq_atm_map.values()])
 
     dtype = np.complex128
     dsize = 16
     max_memory = (cell.max_memory - lib.current_memory()[0]) * 0.9
     Gblksize = min(int(np.floor((max_memory*1e6/dsize/ngrids -
-                                 (2*lmax+1+3+nmo))*0.5)), ngrids)
+                                 ((2*lmax+1)*natmmax+3+nmo))*0.3)), ngrids)
     buf = np.empty(Gblksize*ngrids, dtype=dtype)
+    buf2 = np.empty(Gblksize*ngrids, dtype=dtype)
+    buf3 = np.empty(Gblksize*ngrids, dtype=dtype)
     lib.logger.debug1(cell, "Computing v^nl*C_k in %d segs with blksize %d",
                       (ngrids-1)//Gblksize+1, Gblksize)
 
@@ -488,17 +469,20 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv, _ecp=None):
                                       fakemol.eval_gto('GTOval', Gk),
                                       SI[iatm_lst]).reshape(ngrids,-1)
                 if l > 0:
-                    pYlm_part *= (invG_rad**l)[:,None]
+                    pYlm_part[:] *= (invG_rad**l)[:,None]
                 G_red = G_rad * (0.5 / al)
                 for p0,p1 in lib.prange(0,ngrids,Gblksize):
+                    G_rad2 = np.ndarray((p1-p0,ngrids), dtype=dtype, buffer=buf)
+                    vnlGG = np.ndarray((p1-p0,ngrids), dtype=dtype, buffer=buf2)
+                    SBin = np.ndarray((p1-p0,ngrids), dtype=dtype, buffer=buf3)
+                    G_rad2[:] = G_rad[p0:p1,None]*G_red
                     # use np.dot since a slice is neither F nor C-contiguous
-                    out = np.ndarray((p1-p0,ngrids), dtype=dtype, buffer=buf)
                     vnlGG = np.dot(pYlm_part[p0:p1], pYlm_part.conj().T,
-                                   out=out)
-                    vnlGG *= fast_SphBslin(l, G_rad[p0:p1,None]*G_red)
+                                   out=vnlGG)
+                    vnlGG[:] *= fast_SphBslin(l, G_rad2, out=SBin)
                     Cbar_k[:,p0:p1] += lib.dot(vnlGG, C_k.T).T
-                    vnlGG = out = None
-                G_red = None
+                    G_rad2 = vnlGG = SBin = None
+                G_red = pYlm_part = None
     Cbar_k /= cell.vol
 
     return Cbar_k
