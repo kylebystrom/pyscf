@@ -29,7 +29,7 @@ if __name__ == "__main__":
         ke_cutoff=ke_cutoff
     )
     cell.build()
-    cell.verbose = 5
+    cell.verbose = 6
 
 # kpts
     kmesh = [nk]*3

@@ -108,6 +108,7 @@ class PWPP:
             for k in range(nkpts):
                 key = "%d"%k if spin is None else "%d/%d" % (spin,k)
                 C_k = C_ks[k] if isinstance(C_ks, list) else C_ks[key][()]
+                lib.logger.debug1(self, "Update ccECP-KB subspace for kpt %d (% .6f % .6f % .6f)", k, *self.kpts[k])
                 if self.vppnlocGG is None:
                     kpt = self.kpts[k]
                     Gv = self.Gv
