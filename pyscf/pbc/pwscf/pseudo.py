@@ -5,8 +5,9 @@
 import tempfile
 import numpy as np
 import scipy.linalg
-from scipy.special import dawsn, spherical_in
+from scipy.special import dawsn
 
+from pyscf.pbc.pwscf.pw_helper import get_kcomp, set_kcomp
 from pyscf.pbc.gto import pseudo as gth_pseudo
 from pyscf.pbc import tools
 from pyscf.pbc.lib.kpts_helper import member
@@ -88,17 +89,17 @@ class PWPP:
         if mesh is None: mesh = cell.mesh
         self.mesh = mesh
         self.Gv = cell.get_Gv(mesh)
-        self.spin = None
         lib.logger.debug(self, "Initializing PP local part")
         self.vpplocR = get_vpplocR(cell, self.mesh, self.Gv)
         if len(cell._ecp) > 0:
             lib.logger.debug(self, "Initializing ccECP non-local part")
             dtype = np.complex128
             self._ecp = format_ccecp_param(cell)
-            self.fppnloc = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
-            self.fswap = lib.H5TmpFile(self.fppnloc.name)
+            self.swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+            self.fswap = lib.H5TmpFile(self.swapfile.name)
             if self.direct_nloc:
                 self.vppnlocGG = None
+                self.vppnlocWks = self.fswap.create_group("vppnlocWks")
             else:
                 nkpts = len(self.kpts)
                 ngrids = self.Gv.shape[0]
@@ -111,41 +112,46 @@ class PWPP:
             self._ecp = None
             self.vppnlocGG = None
 
-    def update_subspace_vppnloc(self, C_ks, comp=None):
-        cell = self.cell
-        if len(cell._ecp) > 0:
-            dataname = "vppnlocWks"
-            if dataname in self.fswap: del self.fswap[dataname]
-            self.vppnlocWks = self.fswap.create_group(dataname)
+    def update_vppnloc_support_vec(self, C_ks, ncomp=1):
+        if not self._ecp is None:
+            out = self.vppnlocWks
+            if ncomp > 1:
+                for comp in range(ncomp):
+                    key = "%d"%comp
+                    if key in out: del out[key]
+                    out.create_group(key)
             nkpts = len(self.kpts)
-            if comp is None: comp = [None]
-            for icomp in comp:
-                for k in range(nkpts):
-                    if icomp is None:
-                        key = "%d"%k
-                        C_k = C_ks[k] if isinstance(C_ks, list) else \
-                                                                C_ks[key][()]
-                    else:
-                        key = "%d/%d" % (icomp,k)
-                        C_k = C_ks[icomp][k] if isinstance(C_ks, list) else \
-                                                                C_ks[key][()]
-                    lib.logger.debug1(self, "Update ccECP-KB subspace for kpt %d (% .6f % .6f % .6f)", k, *self.kpts[k])
-                    if self.vppnlocGG is None:
-                        kpt = self.kpts[k]
-                        Gv = self.Gv
-                        W_k = apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv,
-                                                        _ecp=self._ecp)
-                    else:
-                        W_k = apply_vppnlocGG_kpt_ccecp_precompute(cell, C_k, k,
-                                                                self.vppnlocGG)
-                    M_k = lib.dot(C_k.conj(), W_k.T)
-                    e_k, u_k = scipy.linalg.eigh(M_k)
-                    idx_keep = np.where(e_k > 1e-12)[0]
-                    self.vppnlocWks[key] = lib.dot((u_k[:,idx_keep]*
-                                                    e_k[idx_keep]**-0.5).T, W_k)
-                    W_k = None
-        else:
-            self.vppnlocWks = None
+            cell = self.cell
+            for k in range(nkpts):
+                if ncomp == 1:
+                    C_k = get_kcomp(C_ks, k)
+                else:
+                    comp_loc = [0] * (ncomp+1)
+                    C_k = [None] * ncomp
+                    for comp in range(ncomp):
+                        C_k[comp] = get_kcomp(C_ks["%d"%comp], k)
+                        comp_loc[comp+1] = comp_loc[comp] + C_k[comp].shape[0]
+                    C_k = np.vstack(C_k)
+                if self.vppnlocGG is None:
+                    kpt = self.kpts[k]
+                    Gv = self.Gv
+                    W_k = apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv,
+                                                    _ecp=self._ecp)
+                else:
+                    W_k = apply_vppnlocGG_kpt_ccecp_precompute(cell, C_k, k,
+                                                               self.vppnlocGG)
+                if ncomp == 1:
+                    W_k = get_support_vec(C_k, W_k, method="eig")
+                    set_kcomp(W_k, out, k)
+                else:
+                    for comp in range(ncomp):
+                        p0, p1 = comp_loc[comp:comp+2]
+                        w_k = get_support_vec(C_k[p0:p1], W_k[p0:p1],
+                                              method="eig")
+                        set_kcomp(w_k, out["%d"%comp], k)
+                        w_k = None
+
+                C_k = W_k = None
 
     def apply_vppl_kpt(self, C_k, mesh=None, vpplocR=None, C_k_R=None):
         if mesh is None: mesh = self.mesh
@@ -153,16 +159,19 @@ class PWPP:
         return apply_vppl_kpt(self, C_k, mesh=mesh, vpplocR=vpplocR,
                               C_k_R=C_k_R)
 
-    def apply_vppnl_kpt(self, C_k, kpt, mesh=None, Gv=None):
+    def apply_vppnl_kpt(self, C_k, kpt, mesh=None, Gv=None, comp=None):
         cell = self.cell
-        spin = self.spin
         if len(cell._ecp) > 0:
             k = member(kpt, self.kpts)[0]
             if self.vppnlocWks is None:
                 return lib.dot(C_k.conj(), self.vppnlocGG[k]).conj()
             else:
-                key = "%d"%k if spin is None else "%d/%d" % (spin,k)
-                W_k = self.vppnlocWks[key][()]
+                if comp is None:
+                    W_k = get_kcomp(self.vppnlocWks, k)
+                elif isinstance(comp, int):
+                    W_k = get_kcomp(self.vppnlocWks["%d"%comp], k)
+                else:
+                    raise RuntimeError("comp must be None or int")
                 return lib.dot(lib.dot(C_k, W_k.T.conj()), W_k)
         elif not cell.pseudo is None:
             if "GTH" in cell.pseudo.upper():
@@ -525,3 +534,21 @@ def apply_vppnl_kpt_ccecp(cell, C_k, kpt, Gv, _ecp=None):
     """
     vppnlocGG = get_vppnlocGG_kpt_ccecp(cell, kpt, Gv, _ecp=_ecp)
     return lib.dot(C_k, vppnlocGG)
+
+
+def get_support_vec(C, W, method="cd", thr_eig=1e-12):
+    M = lib.dot(C.conj(), W.T)
+    if np.sum(np.abs(M)) < 1e-10:
+        svec = np.zeros_like(C)
+    else:
+        if method == "cd":
+            svec = scipy.linalg.cholesky(M, lower=True)
+            svec = scipy.linalg.solve_triangular(svec.conj(), W, lower=True)
+        elif method == "eig":
+            e, u = scipy.linalg.eigh(M)
+            idx_keep = np.where(e > thr_eig)[0]
+            svec = lib.dot((u[:,idx_keep]*e[idx_keep]**-0.5).T, W)
+        else:
+            raise RuntimeError("Unknown method %s" % str(method))
+
+    return svec

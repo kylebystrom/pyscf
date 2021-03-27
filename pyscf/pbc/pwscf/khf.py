@@ -648,7 +648,7 @@ def init_guess_from_C0(cell, C0_ks, ntot_ks, C_ks=None, mocc_ks=None):
 
 
 def update_pp(mf, C_ks):
-    mf.with_pp.update_subspace_vppnloc(C_ks)
+    mf.with_pp.update_vppnloc_support_vec(C_ks)
 
 
 def initialize_ACE(mf, C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks, Ct_ks=None):
@@ -665,11 +665,11 @@ def initialize_ACE(mf, C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks, Ct_ks=None):
     mf.scf_summary["t-ace"] += tock - tick
 
 
-def apply_h1e_kpt(mf, C_k, kpt, mesh, Gv, ret_E=False):
+def apply_h1e_kpt(mf, C_k, kpt, mesh, Gv, comp=None, ret_E=False):
     r""" Apply 1e part of the Fock opeartor to orbitals at given k-point. The local part includes kinetic and pseudopotential (both local and non-local).
     """
     res = apply_Fock_local_kpt(mf.cell, C_k, kpt, mesh, Gv, mf.with_pp, None,
-                               ret_E=ret_E)
+                               comp=comp, ret_E=ret_E)
 
     Cbar_k = res[0]
 
@@ -696,7 +696,8 @@ def apply_h1e_kpt(mf, C_k, kpt, mesh, Gv, ret_E=False):
         return Cbar_k
 
 
-def apply_Fock_local_kpt(cell, C_k, kpt, mesh, Gv, with_pp, vj_R, ret_E=False):
+def apply_Fock_local_kpt(cell, C_k, kpt, mesh, Gv, with_pp, vj_R, comp=None,
+                         ret_E=False):
     r""" Apply local part of the Fock opeartor to orbitals at given k-point. The local part includes kinetic, pseudopotential (both local and non-local), and Hartree.
     """
     es = np.zeros(4, dtype=np.complex128)
@@ -717,7 +718,7 @@ def apply_Fock_local_kpt(cell, C_k, kpt, mesh, Gv, with_pp, vj_R, ret_E=False):
     tick = np.asarray([time.clock(), time.time()])
     tspans[1] = tick - tock
 
-    tmp = with_pp.apply_vppnl_kpt(C_k, kpt, mesh=mesh, Gv=Gv)
+    tmp = with_pp.apply_vppnl_kpt(C_k, kpt, mesh=mesh, Gv=Gv, comp=comp)
     Cbar_k += tmp
     es[2] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2
     tock = np.asarray([time.clock(), time.time()])
@@ -762,7 +763,7 @@ def apply_Fock_nonlocal_kpt(cell, C_k, kpt, mocc_ks, kpts, mesh, Gv, exxdiv,
 
 
 def apply_Fock_kpt(mf, C_k, kpt, mocc_ks, mesh, Gv, vj_R, exxdiv,
-                   C_ks_exx=None, ace_xi_k=None, ret_E=False):
+                   C_ks_exx=None, ace_xi_k=None, comp=None, ret_E=False):
     """ Apply Fock operator to orbitals at given k-point.
     """
     cell = mf.cell
@@ -770,7 +771,7 @@ def apply_Fock_kpt(mf, C_k, kpt, mocc_ks, mesh, Gv, vj_R, exxdiv,
     with_pp = mf.with_pp
 # local part
     res_l = apply_Fock_local_kpt(cell, C_k, kpt, mesh, Gv, with_pp, vj_R,
-                                 ret_E=ret_E)
+                                 comp=comp, ret_E=ret_E)
 # nonlocal part
     res_nl = apply_Fock_nonlocal_kpt(cell, C_k, kpt, mocc_ks, kpts,
                                      mesh, Gv, exxdiv, C_ks_exx=C_ks_exx,
@@ -801,7 +802,7 @@ def apply_Fock_kpt(mf, C_k, kpt, mocc_ks, mesh, Gv, vj_R, exxdiv,
 
 
 def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
-                  C_ks_exx=None, ace_xi_ks=None, vj_R=None,
+                  C_ks_exx=None, ace_xi_ks=None, vj_R=None, comp=None,
                   ret_mocc=True):
     cell = mf.cell
     if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks)
@@ -820,7 +821,7 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
         ace_xi_k = None if ace_xi_ks is None else ace_xi_ks["%d"%k][()]
         Cbar_k = mf.apply_Fock_kpt(C_k, kpt, mocc_ks, mesh, Gv, vj_R,
                                    exxdiv, C_ks_exx=C_ks_exx,
-                                   ace_xi_k=ace_xi_k, ret_E=False)
+                                   ace_xi_k=ace_xi_k, comp=comp, ret_E=False)
         moe_k = np.einsum("ig,ig->i", C_k.conj(), Cbar_k)
         if (moe_k.imag > 1e-6).any():
             logger.warn(mf, "MO energies have imaginary part %s for kpt %d",
@@ -908,7 +909,7 @@ def energy_tot(mf, C_ks, mocc_ks, moe_ks=None, mesh=None, Gv=None,
 
 def converge_band_kpt(mf, C_k, kpt, mocc_ks, nband=None, mesh=None, Gv=None,
                       C_ks_exx=None, ace_xi_k=None,
-                      vj_R=None,
+                      vj_R=None, comp=None,
                       conv_tol_davidson=1e-6,
                       max_cycle_davidson=100,
                       verbose_davidson=0):
@@ -922,7 +923,7 @@ def converge_band_kpt(mf, C_k, kpt, mocc_ks, nband=None, mesh=None, Gv=None,
         Cbar_k_ = mf.apply_Fock_kpt(C_k_, kpt, mocc_ks, mesh, Gv,
                                     vj_R, "none",
                                     C_ks_exx=C_ks_exx, ace_xi_k=ace_xi_k,
-                                    ret_E=False)
+                                    comp=comp, ret_E=False)
         return Cbar_k_
 
     tick = np.asarray([time.clock(), time.time()])
@@ -952,7 +953,7 @@ def converge_band_kpt(mf, C_k, kpt, mocc_ks, nband=None, mesh=None, Gv=None,
 def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None,
                   mesh=None, Gv=None,
                   C_ks_exx=None, ace_xi_ks=None,
-                  vj_R=None,
+                  vj_R=None, comp=None,
                   conv_tol_davidson=1e-6,
                   max_cycle_davidson=100,
                   verbose_davidson=0):
@@ -978,7 +979,7 @@ def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None,
                                          mesh=mesh, Gv=Gv,
                                          C_ks_exx=C_ks_exx,
                                          ace_xi_k=ace_xi_k,
-                                         vj_R=vj_R,
+                                         vj_R=vj_R, comp=comp,
                                          conv_tol_davidson=conv_tol_davidson,
                                          max_cycle_davidson=max_cycle_davidson,
                                          verbose_davidson=verbose_davidson)

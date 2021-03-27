@@ -75,7 +75,6 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
 
     moe_ks = [None] * 2
     for s in [0,1]:
-        mf.with_pp.spin = s
         C_ks_ = get_spin_component(C_ks, s)
         C_ks_exx_ = None if C_ks_exx is None else \
                                             get_spin_component(C_ks_exx, s)
@@ -85,7 +84,7 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
                                       mesh=mesh, Gv=Gv, exxdiv=exxdiv,
                                       C_ks_exx=C_ks_exx_,
                                       ace_xi_ks=ace_xi_ks_,
-                                      vj_R=vj_R,
+                                      vj_R=vj_R, comp=s,
                                       ret_mocc=False)
 
     # determine mo occ and apply ewald shift if requested
@@ -227,7 +226,8 @@ def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None):
 
 
 def update_pp(mf, C_ks):
-    mf.with_pp.update_subspace_vppnloc(C_ks, comp=[0,1])
+    # mf.with_pp.update_vppnloc_support_vec(C_ks, comp=[0,1])
+    mf.with_pp.update_vppnloc_support_vec(C_ks, ncomp=2)
 
 
 def initialize_ACE(mf, C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks, Ct_ks=None):
@@ -270,7 +270,6 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
         if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks)
         e_comp = np.zeros(5)
         for s in [0,1]:
-            mf.with_pp.spin = s
             C_ks_s = get_spin_component(C_ks, s)
             C_ks_exx_s = None if C_ks_exx is None else \
                                                 get_spin_component(C_ks_exx, s)
@@ -285,6 +284,7 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
                 e_comp_k = mf.apply_Fock_kpt(Co_k, kpt, mocc_ks, mesh, Gv,
                                              vj_R, exxdiv,
                                              C_ks_exx=C_ks_exx_s, ace_xi_k=ace_xi_k,
+                                             comp=s,
                                              ret_E=True)[1]
                 e_comp_k *= 0.5
                 e_ks[k] += np.sum(e_comp_k)
@@ -299,7 +299,6 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
             mf.scf_summary[comp] = e
     else:
         for s in [0,1]:
-            mf.with_pp.spin = s
             C_ks_s = get_spin_component(C_ks, s)
             moe_ks_s = moe_ks[s]
             for k in range(nkpts):
@@ -307,7 +306,7 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
                 nocc_k = nocc_ks[s][k]
                 Co_k = C_ks_s[k][:nocc_k] if C_incore else C_ks_s["%d"%k][:nocc_k]
                 e1_comp = mf.apply_h1e_kpt(Co_k, kpt, mesh, Gv,
-                                           ret_E=True)[1]
+                                           comp=s, ret_E=True)[1]
                 e1_comp *= 0.5
                 e_ks[k] += np.sum(e1_comp) * 0.5 + np.sum(moe_ks_s[k][:nocc_k]) * 0.5
     e_scf = np.sum(e_ks) / nkpts
@@ -337,7 +336,6 @@ def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None,
     else:
         Cout_ks = C_ks
     for s in [0,1]:
-        mf.with_pp.spin = s
         C_ks_s = get_spin_component(C_ks, s)
         C_ks_exx_s = None if C_ks_exx is None else \
                                             get_spin_component(C_ks_exx, s)
@@ -346,7 +344,7 @@ def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None,
         conv_ks[s], moeout_ks[s], Cout_ks_s, fc_ks[s] = khf.converge_band(
                             mf, C_ks_s, mocc_ks[s], kpts, mesh=mesh, Gv=Gv,
                             C_ks_exx=C_ks_exx_s, ace_xi_ks=ace_xi_ks_s,
-                            vj_R=vj_R,
+                            vj_R=vj_R, comp=s,
                             conv_tol_davidson=conv_tol_davidson,
                             max_cycle_davidson=max_cycle_davidson,
                             verbose_davidson=verbose_davidson)
