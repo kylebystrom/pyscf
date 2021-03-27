@@ -11,6 +11,7 @@ from pyscf.pbc.gto import pseudo as gth_pseudo
 from pyscf.pbc import tools
 from pyscf.pbc.lib.kpts_helper import member
 from pyscf import lib
+from pyscf import __config__
 
 
 """ Wrapper functions
@@ -42,10 +43,11 @@ def get_vpplocG(cell, mesh=None, Gv=None):
         return get_vpplocG_alle(cell, Gv)
 
 
-def apply_vppl_kpt(cell, C_k, mesh=None, vpplocR=None):
+def apply_vppl_kpt(cell, C_k, mesh=None, vpplocR=None, C_k_R=None):
     if mesh is None: mesh = cell.mesh
     if vpplocR is None: vpplocR = get_vpplocR(cell, mesh)
-    return tools.fft(tools.ifft(C_k, mesh) * vpplocR, mesh)
+    if C_k_R is None: C_k_R = tools.ifft(C_k, mesh)
+    return tools.fft(C_k_R * vpplocR, mesh)
 
 
 def apply_vppnl_kpt(cell, C_k, kpt, mesh=None, Gv=None):
@@ -60,13 +62,25 @@ def apply_vppnl_kpt(cell, C_k, kpt, mesh=None, Gv=None):
         else:
             raise NotImplementedError("Pseudopotential %s is currently not supported." % (str(cell.pseudo)))
     else:
-        return apply_ppnl_kpt_alle(cell, C_k, kpt, Gv, **kwargs)
+        return apply_vppnl_kpt_alle(cell, C_k, kpt, Gv, **kwargs)
 
 
 """ PW-PP class implementation goes here
 """
+def pseudopotential(mf, with_pp=None, mesh=None):
+    if with_pp is None:
+        with_pp = PWPP(mf.cell, mf.kpts, mesh=mesh)
+
+    mf.with_pp = with_pp
+
+    return mf
+
+
 class PWPP:
-    def __init__(self, cell, kpts, mesh=None, direct_nloc=True):
+
+    direct_nloc = getattr(__config__, "pbc_pwscf_pseudo_PWPP_direct_nloc", True)
+
+    def __init__(self, cell, kpts, mesh=None):
         self.cell = cell
         self.stdout = cell.stdout
         self.verbose = cell.verbose
@@ -74,7 +88,6 @@ class PWPP:
         if mesh is None: mesh = cell.mesh
         self.mesh = mesh
         self.Gv = cell.get_Gv(mesh)
-        self.direct_nloc = direct_nloc
         self.spin = None
         lib.logger.debug(self, "Initializing PP local part")
         self.vpplocR = get_vpplocR(cell, self.mesh, self.Gv)
@@ -134,10 +147,11 @@ class PWPP:
         else:
             self.vppnlocWks = None
 
-    def apply_vppl_kpt(self, C_k, mesh=None, vpplocR=None):
+    def apply_vppl_kpt(self, C_k, mesh=None, vpplocR=None, C_k_R=None):
         if mesh is None: mesh = self.mesh
         if vpplocR is None: vpplocR = self.vpplocR
-        return apply_vppl_kpt(self, C_k, mesh=mesh, vpplocR=vpplocR)
+        return apply_vppl_kpt(self, C_k, mesh=mesh, vpplocR=vpplocR,
+                              C_k_R=C_k_R)
 
     def apply_vppnl_kpt(self, C_k, kpt, mesh=None, Gv=None):
         cell = self.cell
@@ -168,7 +182,7 @@ def get_vpplocG_alle(cell, Gv):
     return vpplocG
 
 
-def apply_ppnl_kpt_alle(cell, C_k, kpt, Gv):
+def apply_vppnl_kpt_alle(cell, C_k, kpt, Gv):
     return np.zeros_like(C_k)
 
 
