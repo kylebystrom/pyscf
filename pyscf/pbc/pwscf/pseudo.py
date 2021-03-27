@@ -98,31 +98,39 @@ class PWPP:
             self._ecp = None
             self.vppnlocGG = None
 
-    def update_subspace_vppnloc(self, C_ks, spin=None):
+    def update_subspace_vppnloc(self, C_ks, comp=None):
         cell = self.cell
         if len(cell._ecp) > 0:
             dataname = "vppnlocWks"
             if dataname in self.fswap: del self.fswap[dataname]
             self.vppnlocWks = self.fswap.create_group(dataname)
             nkpts = len(self.kpts)
-            for k in range(nkpts):
-                key = "%d"%k if spin is None else "%d/%d" % (spin,k)
-                C_k = C_ks[k] if isinstance(C_ks, list) else C_ks[key][()]
-                lib.logger.debug1(self, "Update ccECP-KB subspace for kpt %d (% .6f % .6f % .6f)", k, *self.kpts[k])
-                if self.vppnlocGG is None:
-                    kpt = self.kpts[k]
-                    Gv = self.Gv
-                    W_k = apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv,
-                                                    _ecp=self._ecp)
-                else:
-                    W_k = apply_vppnlocGG_kpt_ccecp_precompute(cell, C_k, k,
-                                                               self.vppnlocGG)
-                M_k = lib.dot(C_k.conj(), W_k.T)
-                e_k, u_k = scipy.linalg.eigh(M_k)
-                idx_keep = np.where(e_k > 1e-12)[0]
-                self.vppnlocWks[key] = lib.dot((u_k[:,idx_keep]*
-                                                e_k[idx_keep]**-0.5).T, W_k)
-                W_k = None
+            if comp is None: comp = [None]
+            for icomp in comp:
+                for k in range(nkpts):
+                    if icomp is None:
+                        key = "%d"%k
+                        C_k = C_ks[k] if isinstance(C_ks, list) else \
+                                                                C_ks[key][()]
+                    else:
+                        key = "%d/%d" % (icomp,k)
+                        C_k = C_ks[icomp][k] if isinstance(C_ks, list) else \
+                                                                C_ks[key][()]
+                    lib.logger.debug1(self, "Update ccECP-KB subspace for kpt %d (% .6f % .6f % .6f)", k, *self.kpts[k])
+                    if self.vppnlocGG is None:
+                        kpt = self.kpts[k]
+                        Gv = self.Gv
+                        W_k = apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv,
+                                                        _ecp=self._ecp)
+                    else:
+                        W_k = apply_vppnlocGG_kpt_ccecp_precompute(cell, C_k, k,
+                                                                self.vppnlocGG)
+                    M_k = lib.dot(C_k.conj(), W_k.T)
+                    e_k, u_k = scipy.linalg.eigh(M_k)
+                    idx_keep = np.where(e_k > 1e-12)[0]
+                    self.vppnlocWks[key] = lib.dot((u_k[:,idx_keep]*
+                                                    e_k[idx_keep]**-0.5).T, W_k)
+                    W_k = None
         else:
             self.vppnlocWks = None
 

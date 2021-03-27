@@ -227,7 +227,7 @@ def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None):
 
 
 def update_subspace_vppnloc(mf, pp, C_ks):
-    for s in [0,1]: pp.update_subspace_vppnloc(C_ks, spin=s)
+    pp.update_subspace_vppnloc(C_ks, comp=[0,1])
 
 
 def initialize_ACE(mf, C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks, Ct_ks=None):
@@ -442,6 +442,7 @@ class PWKUHF(khf.PWKRHF):
     get_band_err = get_band_err
     dump_moe = dump_moe
     copy_C_ks = copy_C_ks
+    update_subspace_vppnloc = update_subspace_vppnloc
     initialize_ACE = initialize_ACE
     get_mo_energy = get_mo_energy
     energy_elec = energy_elec
@@ -458,7 +459,7 @@ if __name__ == "__main__":
         spin=2,
     )
     cell.build()
-    cell.verbose = 5
+    cell.verbose = 6
 
     nk = 1
     kmesh = (nk,)*3
