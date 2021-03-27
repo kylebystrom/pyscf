@@ -72,7 +72,7 @@ def get_jk_favork(sgx, dm, hermi=1, with_j=True, with_k=True,
         batch_nuc = _gen_batch_nuc(mol)
     else:
         batch_jk = _gen_jk_direct(mol, 's2', with_j, with_k, direct_scf_tol,
-                                  sgx._opt)
+                                  sgx._opt, sgx.pjs)
     t1 = logger.timer_debug1(mol, "sgX initialziation", *t0)
 
     sn = numpy.zeros((nao,nao))
@@ -161,7 +161,7 @@ def get_jk_favorj(sgx, dm, hermi=1, with_j=True, with_k=True,
         batch_nuc = _gen_batch_nuc(mol)
     else:
         batch_jk = _gen_jk_direct(mol, 's2', with_j, with_k, direct_scf_tol,
-                                  sgx._opt)
+                                  sgx._opt, sgx.pjs)
 
     sn = numpy.zeros((nao,nao))
     ngrids = grids.coords.shape[0]
@@ -186,6 +186,7 @@ def get_jk_favorj(sgx, dm, hermi=1, with_j=True, with_k=True,
         coords = grids.coords[i0:i1]
         ao = mol.eval_gto('GTOval', coords)
         wao = ao * grids.weights[i0:i1,None]
+        weights = grids.weights[i0:i1,None]
 
         fg = lib.einsum('gi,xij->xgj', wao, proj_dm)
         mask = numpy.zeros(i1-i0, dtype=bool)
@@ -196,6 +197,7 @@ def get_jk_favorj(sgx, dm, hermi=1, with_j=True, with_k=True,
             ao = ao[mask]
             fg = fg[:,mask]
             coords = coords[mask]
+            weights = weights[mask]
 
         if with_j:
             rhog = numpy.einsum('xgu,gu->xg', fg, ao)
@@ -214,7 +216,7 @@ def get_jk_favorj(sgx, dm, hermi=1, with_j=True, with_k=True,
         else:
             tnuc = tnuc[0] - time.clock(), tnuc[1] - time.time()
             if with_j: rhog = rhog.copy()
-            jpart, gv = batch_jk(mol, coords, rhog, fg.copy())
+            jpart, gv = batch_jk(mol, coords, rhog, fg.copy(), weights)
             tnuc = tnuc[0] + time.clock(), tnuc[1] + time.time()
 
         if with_j:
@@ -246,7 +248,8 @@ def _gen_batch_nuc(mol):
         return lib.unpack_tril(j3c.T, out=out)
     return batch_nuc
 
-def _gen_jk_direct(mol, aosym, with_j, with_k, direct_scf_tol, sgxopt=None):
+def _gen_jk_direct(mol, aosym, with_j, with_k, direct_scf_tol,
+                   sgxopt=None, pjs=False):
     '''Contraction between sgX Coulomb integrals and density matrices
     J: einsum('guv,xg->xuv', gbn, dms) if dms == rho at grid
        einsum('gij,xij->xg', gbn, dms) if dms are density matrices
@@ -263,7 +266,10 @@ def _gen_jk_direct(mol, aosym, with_j, with_k, direct_scf_tol, sgxopt=None):
     fdot = _vhf._fpointer('SGXdot_nr'+aosym)
     drv = _vhf.libcvhf.SGXnr_direct_drv
 
-    def jk_part(mol, grid_coords, dms, fg):
+    def jk_part(mol, grid_coords, dms, fg, weights):
+        if pjs:
+            sgxopt.set_dm(fg/weights[None,:], mol._atm, mol._bas, mol._env)
+            ao_loc = moleintor.make_loc(mol._bas, sgxopt._intor)
         fakemol = gto.fakemol_for_charges(grid_coords)
         atm, bas, env = gto.mole.conc_env(mol._atm, mol._bas, mol._env,
                                           fakemol._atm, fakemol._bas, fakemol._env)

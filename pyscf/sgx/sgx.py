@@ -32,7 +32,8 @@ from pyscf.sgx import sgx_jk
 from pyscf.df import df_jk
 from pyscf import __config__
 
-def sgx_fit(mf, auxbasis=None, with_df=None):
+
+def sgx_fit(mf, auxbasis=None, with_df=None, pjs=False):
     '''For the given SCF object, update the J, K matrix constructor with
     corresponding SGX or density fitting integrals.
 
@@ -65,7 +66,7 @@ def sgx_fit(mf, auxbasis=None, with_df=None):
     assert(isinstance(mf, scf.hf.SCF))
 
     if with_df is None:
-        with_df = SGX(mf.mol)
+        with_df = SGX(mf.mol, pjs=pjs)
         with_df.max_memory = mf.max_memory
         with_df.stdout = mf.stdout
         with_df.verbose = mf.verbose
@@ -172,9 +173,22 @@ def _make_opt(mol):
     vhfopt._cintopt = cintopt
     return vhfopt
 
+def _make_opt_pjs(mol):
+    '''Optimizer to genrate 3-center 2-electron integrals'''
+    intor = mol._add_suffix('int3c2e')
+    cintopt = gto.moleintor.make_cintopt(mol._atm, mol._bas, mol._env, intor)
+    # intor 'int1e_ovlp' is used by the prescreen method
+    # 'SGXnr_ovlp_prescreen' only. Not used again in other places.
+    # It can be released early
+    vhfopt = _vhf.SGXOpt(mol, 'int1e_ovlp', 'SGXnr_pj_prescreen',
+                         'SGXsetnr_direct_scf', 'SGXsetnr_direct_scf_dm')
+    vhfopt._intor = intor
+    vhfopt._cintopt = cintopt
+    return vhfopt
+
 
 class SGX(lib.StreamObject):
-    def __init__(self, mol, auxbasis=None):
+    def __init__(self, mol, auxbasis=None, pjs=False):
         self.mol = mol
         self.stdout = mol.stdout
         self.verbose = mol.verbose
@@ -187,6 +201,7 @@ class SGX(lib.StreamObject):
         # the RIJCOSX method in ORCA
         self.dfj = False
         self._auxbasis = auxbasis
+        self.pjs = pjs
 
         # debug=True generates a dense tensor of the Coulomb integrals at each
         # grids. debug=False utilizes the sparsity of the integral tensor and
@@ -233,7 +248,10 @@ class SGX(lib.StreamObject):
         if level is None:
             level = self.grids_level_f
         self.grids = sgx_jk.get_gridss(self.mol, level, self.grids_thrd)
-        self._opt = _make_opt(self.mol)
+        if self.pjs:
+            self._opt = _make_opt_pjs(self.mol)
+        else:
+            self._opt = _make_opt(self.mol)
 
         # In the RSH-integral temporary treatment, recursively rebuild SGX
         # objects in _rsh_df.

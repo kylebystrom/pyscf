@@ -65,7 +65,7 @@ int GTOmax_cache_size(int (*intor)(), int *shls_slice, int ncenter,
         const int ioff = ao_loc[ish0]; \
         const int joff = ao_loc[jsh0]; \
         int i0, j0, i1, j1, ish, jsh, idm; \
-        int shls[3]; \
+        int shls[4]; \
         int (*fprescreen)(); \
         if (vhfopt) { \
                 fprescreen = vhfopt->fprescreen; \
@@ -113,6 +113,7 @@ void SGXdot_nrs2(int (*intor)(), SGXJKOperator **jkop, SGXJKArray **vjk,
         DECLARE_ALL;
 
         shls[2] = ksh0 + ksh;
+        shls[3] = ksh;
 
         for (ish = ish0; ish < ish1; ish++) {
         for (jsh = jsh0; jsh <= ish; jsh++) {
@@ -160,8 +161,8 @@ void SGXnr_direct_drv(int (*intor)(), void (*fdot)(), SGXJKOperator **jkop,
         for (i = 0; i < n_dm; i++) {
                 v_priv[i] = jkop[i]->allocate(shls_slice, ao_loc, ncomp);
         }
-        double *buf = malloc(sizeof(double) * di*di*ncomp);
-        double *cache = malloc(sizeof(double) * cache_size);
+        double *buf = calloc(di*di*ncomp, sizeof(double));
+        double *cache = calloc(cache_size, sizeof(double));
 #pragma omp for nowait schedule(dynamic, 1)
         for (ksh = 0; ksh < nksh; ksh++) {
                 for (i = 0; i < n_dm; i++) {
@@ -245,6 +246,39 @@ void SGXsetnr_direct_scf(CVHFOpt *opt, int (*intor)(), CINTOpt *cintopt,
         free(cache);
 }
 }
+
+void SGXsetnr_direct_scf_dm(CVHFOpt *opt, double *dm, int nset, int *ao_loc,
+                            int *atm, int natm, int *bas, int nbas, double *env,
+                            int ngrid, int alloc)
+{
+        nbas = opt->nbas;
+        if (alloc) {
+                if (opt->dm_cond) { // NOT reuse opt->dm_cond because nset may be diff in different call
+                        free(opt->dm_cond);
+                }
+                opt->dm_cond = (double *)malloc(sizeof(double) * nbas*ngrid);
+        }
+        // nbas in the input arguments may different to opt->nbas.
+        // Use opt->nbas because it is used in the prescreen function
+        memset(opt->dm_cond, 0, sizeof(double)*nbas*ngrid);
+
+        const size_t nao = ao_loc[nbas];
+        double dmax, tmp;
+        size_t i, j, jsh, iset;
+        double *pdm;
+        for (i = 0; i < ngrid; i++) {
+        for (jsh = 0; jsh < nbas; jsh++) {
+                dmax = 0;
+                for (iset = 0; iset < nset; iset++) {
+                        pdm = dm + nao*ngrid*iset;
+                        for (j = ao_loc[jsh]; j < ao_loc[jsh+1]; j++) {
+                                dmax = MAX(dmax, fabs(pdm[i*nao+j]));
+                        }
+                }
+                opt->dm_cond[i*nbas+jsh] = dmax;
+        } }
+}
+
 int SGXnr_ovlp_prescreen(int *shls, CVHFOpt *opt,
                          int *atm, int *bas, double *env)
 {
@@ -258,6 +292,25 @@ int SGXnr_ovlp_prescreen(int *shls, CVHFOpt *opt,
         assert(i < n);
         assert(j < n);
         return opt->q_cond[i*n+j] > opt->direct_scf_cutoff;
+}
+
+int SGXnr_pj_prescreen(int *shls, CVHFOpt *opt,
+                       int *atm, int *bas, double *env)
+{
+        if (!opt) {
+                return 1;
+        }
+        int i = shls[0];
+        int j = shls[1];
+        int k = shls[3];
+        int n = opt->nbas;
+        assert(opt->q_cond);
+        assert(opt->dm_cond);
+        assert(i < n);
+        assert(j < n);
+        return opt->q_cond[i*n+j]
+               * MAX(fabs(opt->dm_cond[k*n+j]), fabs(opt->dm_cond[k*n+i]))
+               > opt->direct_scf_cutoff;
 }
 
 
