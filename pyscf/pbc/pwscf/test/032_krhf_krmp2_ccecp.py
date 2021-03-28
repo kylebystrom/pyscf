@@ -11,7 +11,7 @@ from pyscf import lib
 
 
 if __name__ == "__main__":
-    nk = 2
+    kmesh = [2,1,1]
     ke_cutoff = 50
     pseudo = "ccecp"
     atom = "C 0 0 0; C 0.89169994 0.89169994 0.89169994"
@@ -32,7 +32,6 @@ if __name__ == "__main__":
     cell.verbose = 6
 
 # kpts
-    kmesh = [nk]*3
     kpts = cell.make_kpts(kmesh)
     nkpts = len(kpts)
 
@@ -47,7 +46,7 @@ if __name__ == "__main__":
     pwmf.chkfile = chkfile
     pwmf.kernel()
 
-    assert(abs(pwmf.e_tot - -10.96979171264) < 1.e-4)
+    assert(abs(pwmf.e_tot - -10.5952881203557) < 1.e-4)
 
 # krhf init from chkfile
     pwmf.init_guess = "chkfile"
@@ -62,4 +61,4 @@ if __name__ == "__main__":
     pwmp = pwscf.KMP2(pwmf)
     pwmp.kernel()
 
-    assert(abs(pwmp.e_corr - -0.168626272635139) < 1.e-4)
+    assert(abs(pwmp.e_corr - -0.135436097284036) < 1.e-4)

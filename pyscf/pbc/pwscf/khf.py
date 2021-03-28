@@ -16,7 +16,9 @@ from pyscf.scf import chkfile as mol_chkfile
 from pyscf.pbc.pwscf import chkfile
 from pyscf.pbc import gto, scf, tools
 from pyscf.pbc.pwscf import pw_helper
+from pyscf.pbc.pwscf.pw_helper import get_kcomp, set_kcomp
 from pyscf.pbc.pwscf import pseudo as pw_pseudo
+from pyscf.pbc.pwscf import jk as pw_jk
 from pyscf.lib import logger
 import pyscf.lib.parameters as param
 
@@ -28,7 +30,7 @@ import pyscf.lib.parameters as param
 THR_OCC = 1E-3
 
 
-def kernel_doubleloop(mf, kpts, C0=None, facexi=None,
+def kernel_doubleloop(mf, kpts, C0=None,
             nbandv=0, nbandv_extra=1,
             conv_tol=1.E-6, conv_tol_davidson=1.E-6, conv_tol_band=1e-4,
             max_cycle=100, max_cycle_davidson=10, verbose_davidson=0,
@@ -41,9 +43,6 @@ def kernel_doubleloop(mf, kpts, C0=None, facexi=None,
         Args:
             C0 (list of numpy arrays):
                 A list of nkpts numpy arrays, each of size nocc(k) * Npw.
-            facexi (None, str or h5py file):
-                Specify where to store the ACE xi vectors.
-                If None, a tempfile is created and discarded at the end of the calculation. If str, a h5py file will be created and saved (for later use).
             nbandv (int):
                 How many virtual bands to compute? Default is zero.
             nbandv_extra (int):
@@ -68,41 +67,13 @@ def kernel_doubleloop(mf, kpts, C0=None, facexi=None,
     tock = np.asarray([time.clock(), time.time()])
     mf.scf_summary["t-init"] = tock - tick
 
-    """
-    In swap:
-        ace_xi
-        C_ks_exx
-    In fchk:
-        C_ks
-    """
-
-    if facexi is None:
-        swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
-        logger.info(mf, "ACE xi vectors will be written to %s", swapfile.name)
-        facexi = lib.H5TmpFile(swapfile.name)
-        swapfile = None
-    elif isinstance(facexi, str):
-        facexi = h5py.File(facexi, "w")
-
-    if ace_exx:
-        if "ace_xi_ks" in facexi: del facexi["ace_xi_ks"]
-        ace_xi_ks = facexi.create_group("ace_xi_ks")
-        C_ks_exx = None
-    else:
-        ace_xi_ks = None
-        if "C_ks_exx" in facexi: del facexi["C_ks_exx"]
-        C_ks_exx = facexi.create_group("C_ks_exx")
-
     # init E
     mesh = cell.mesh
     Gv = cell.get_Gv(mesh)
     vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
     mf.update_pp(C_ks)
-    mf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks)
-    mf.copy_C_ks(C_ks, C_ks_exx)
-    moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks,
-                                       C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
-                                       vj_R=vj_R)
+    mf.update_k(C_ks, mocc_ks)
+    moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks, vj_R=vj_R)
     e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks)
     logger.info(mf, 'init E= %.15g', e_tot)
     mf.dump_moe(moe_ks, mocc_ks, nband=nband)
@@ -110,7 +81,7 @@ def kernel_doubleloop(mf, kpts, C0=None, facexi=None,
     scf_conv = False
 
     if mf.max_cycle <= 0:
-        mf.remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra)
+        remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra)
         return scf_conv, e_tot, moe_ks, C_ks, mocc_ks
 
     if dump_chk:
@@ -139,29 +110,22 @@ def kernel_doubleloop(mf, kpts, C0=None, facexi=None,
                                 conv_tol_davidson=conv_tol_davidson,
                                 verbose_davidson=verbose_davidson,
                                 damp_type=damp_type, damp_factor=damp_factor,
-                                C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
                                 vj_R=vj_R,
                                 last_hf_e=e_tot)
         fc_tot += fc_this
         if not chg_scf_conv:
             logger.warn(mf, "  Charge SCF not converged.")
 
-        # update coulomb potential, facexi, and energies
+        # update coulomb potential, support vecs for PP & EXX, and energies
         mocc_ks = chg_mocc_ks
         vj_R = mf.get_vj_R(C_ks, mocc_ks)
         mf.update_pp(C_ks)
-        mf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks)
-        mf.copy_C_ks(C_ks, C_ks_exx)
+        mf.update_k(C_ks, mocc_ks)
         last_hf_moe = moe_ks
-        moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks,
-                                           C_ks_exx=C_ks_exx,
-                                           ace_xi_ks=ace_xi_ks,
-                                           vj_R=vj_R)
-        de_band = mf.get_band_err(moe_ks, last_hf_moe, nband)
+        moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks, vj_R=vj_R)
+        de_band = get_band_err(moe_ks, last_hf_moe, nband)
         last_hf_e = e_tot
-        e_tot = mf.energy_tot(C_ks, mocc_ks,
-                              C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
-                              vj_R=vj_R)
+        e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
         de = e_tot - last_hf_e
 
         logger.info(mf, 'cycle= %d E= %.15g  delta_E= %4.3g  max|dEband|= %4.3g  %d FC (%d tot)',
@@ -198,26 +162,18 @@ def kernel_doubleloop(mf, kpts, C0=None, facexi=None,
                                 conv_tol_davidson=conv_tol_davidson,
                                 verbose_davidson=verbose_davidson,
                                 damp_type=damp_type, damp_factor=damp_factor,
-                                C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
-                                vj_R=vj_R,
                                 last_hf_e=e_tot)
         fc_tot += fc_this
 
         mocc_ks = chg_mocc_ks
         vj_R = mf.get_vj_R(C_ks, mocc_ks)
         mf.update_pp(C_ks)
-        mf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks)
-        mf.copy_C_ks(C_ks, C_ks_exx)
+        mf.update_k(C_ks, mocc_ks)
         last_hf_moe = moe_ks
-        moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks,
-                                           C_ks_exx=C_ks_exx,
-                                           ace_xi_ks=ace_xi_ks,
-                                           vj_R=vj_R)
-        de_band = mf.get_band_err(moe_ks, last_hf_moe, nband)
+        moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks, vj_R=vj_R)
+        de_band = get_band_err(moe_ks, last_hf_moe, nband)
         last_hf_e = e_tot
-        e_tot = mf.energy_tot(C_ks, mocc_ks,
-                              C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
-                              vj_R=vj_R)
+        e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
         de = e_tot - last_hf_e
 
         logger.info(mf, 'Extra cycle  E= %.15g  delta_E= %4.3g  max|dEband|= %4.3g  %d FC (%d tot)',
@@ -230,7 +186,7 @@ def kernel_doubleloop(mf, kpts, C0=None, facexi=None,
             scf_conv = True
 
     # remove extra virtual bands before return
-    mf.remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra)
+    remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra)
 
     if dump_chk:
         mf.dump_chk(locals())
@@ -239,7 +195,6 @@ def kernel_doubleloop(mf, kpts, C0=None, facexi=None,
         callback(locals())
 
     if dump_chk: fchk.close()
-    if ace_exx: facexi.close()
 
     cput1 = (time.clock(), time.time())
     mf.scf_summary["t-tot"] = np.asarray(cput1) - np.asarray(cput0)
@@ -260,29 +215,42 @@ def get_nband(mf, nbandv, nbandv_extra):
     return nbando, nbandv_tot, nband, nband_tot
 
 
-def get_band_err(mf, moe_ks, last_hf_moe, nband):
-    if nband == 0: return 0.
-
-    nkpts = len(mf.kpts)
-    return np.max([np.max(abs(moe_ks[k] - last_hf_moe[k])[:nband])
-                  for k in range(nkpts)])
-
-
-def remove_extra_virbands(mf, C_ks, moe_ks, mocc_ks, nbandv_extra):
-    if nbandv_extra > 0:
+def get_band_err(moe_ks, last_hf_moe, nband):
+    if isinstance(moe_ks[0], np.ndarray):
+        if nband == 0: return 0.
         nkpts = len(moe_ks)
-        for k in range(nkpts):
-            moe_ks[k] = moe_ks[k][:-nbandv_extra]
-            mocc_ks[k] = mocc_ks[k][:-nbandv_extra]
-        if isinstance(C_ks, list):
+        return np.max([np.max(abs(moe_ks[k] - last_hf_moe[k])[:nband])
+                      for k in range(nkpts)])
+    else:
+        ncomp = len(moe_ks)
+        if isinstance(nband, int): nband = [nband] * ncomp
+        if sum(nband) == 0: return 0.
+        err = np.zeros(ncomp)
+        for comp in range(ncomp):
+            err[comp] = get_band_err(moe_ks[comp], last_hf_moe[comp],
+                                     nband[comp])
+        return np.max(err)
+
+
+def remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra):
+    if isinstance(moe_ks[0], np.ndarray):
+        if nbandv_extra > 0:
+            nkpts = len(moe_ks)
             for k in range(nkpts):
-                C_ks[k] = C_ks[k][:-nbandv_extra]
-        else:
-            for k in range(nkpts):
-                key = "%d" % k
-                C = C_ks[key][:-nbandv_extra]
-                del C_ks[key]
-                C_ks[key] = C
+                n_k = len(moe_ks[k])
+                occ = list(range(n_k-nbandv_extra))
+                moe_ks[k] = moe_ks[k][occ]
+                mocc_ks[k] = mocc_ks[k][occ]
+                C = get_kcomp(C_ks, k, occ=occ)
+                set_kcomp(C, C_ks, k)
+    else:
+        ncomp = len(moe_ks)
+        if isinstance(nbandv_extra, int):
+            nbandv_extra = [nbandv_extra] * ncomp
+        for comp in range(ncomp):
+            C_ks_comp = get_kcomp(C_ks, comp, load=False)
+            remove_extra_virbands(C_ks_comp, moe_ks[comp], mocc_ks[comp],
+                                  nbandv_extra[comp])
 
 
 def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
@@ -290,14 +258,13 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
                   max_cycle_davidson=10, conv_tol_davidson=1e-8,
                   verbose_davidson=0,
                   damp_type="anderson", damp_factor=0.3,
-                  C_ks_exx=None, ace_xi_ks=None,
                   vj_R=None,
                   last_hf_e=None):
 
     cell = mf.cell
-    if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks)
     if mesh is None: mesh = cell.mesh
     if Gv is None: Gv = cell.get_Gv(mesh)
+    if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
 
     scf_conv = False
 
@@ -317,7 +284,6 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
         conv_ks, moe_ks, C_ks, fc_ks = mf.converge_band(
                             C_ks, mocc_ks, kpts,
                             mesh=mesh, Gv=Gv,
-                            C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
                             vj_R=vj_R,
                             conv_tol_davidson=conv_tol_davidson,
                             max_cycle_davidson=max_cycle_davidson,
@@ -333,9 +299,7 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
         vj_R = mf.get_vj_R(C_ks, mocc_ks)
 
         if cycle > 0: last_hf_e = e_tot
-        e_tot = mf.energy_tot(C_ks, mocc_ks,
-                              C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
-                              vj_R=vj_R)
+        e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
         if not last_hf_e is None:
             de = e_tot-last_hf_e
         else:
@@ -354,23 +318,6 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
             break
 
     return scf_conv, fc_tot, C_ks, moe_ks, mocc_ks, e_tot
-
-
-def copy_C_ks(mf, C_ks, C_ks_exx):
-    if C_ks_exx is None:
-        return None
-    else:
-        nkpts = len(C_ks)
-        for k in range(nkpts):
-            key = "%d" % k
-            C = C_ks[k] if isinstance(C_ks, list) else C_ks[key][()]
-            if isinstance(C_ks_exx, list):
-                C_ks_exx[k] = C.copy()
-            else:
-                if key in C_ks_exx: del C_ks_exx[key]
-                C_ks_exx[key] = C
-
-        return C_ks_exx
 
 
 def get_mo_occ(cell, moe_ks=None, C_ks=None, nocc=None):
@@ -617,25 +564,19 @@ def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None):
 def init_guess_from_C0(cell, C0_ks, ntot_ks, C_ks=None, mocc_ks=None):
     nkpts = len(C0_ks)
     if C_ks is None: C_ks = [None] * nkpts
-    incore0 = isinstance(C0_ks, list)
-    incore = isinstance(C_ks, list)
 
     # discarded high-energy orbitals if chkfile has more than requested
     for k in range(nkpts):
         key = "%d"%k
         ntot = ntot_ks[k]
-        C0_k = C0_ks[k] if incore0 else C0_ks[key][()]
+        C0_k = get_kcomp(C0_ks, k)
         if C0_k.shape[0] > ntot:
             C = C0_k[:ntot]
             if not mocc_ks is None:
                 mocc_ks[k] = mocc_ks[k][:ntot]
         else:
             C = C0_k
-        if incore:
-            C_ks[k] = C
-        else:
-            if key in C_ks: del C_ks[key]
-            C_ks[key] = C
+        set_kcomp(C, C_ks, k)
 
     if mocc_ks is None:
         mocc_ks = get_mo_occ(cell, C_ks=C_ks)
@@ -651,58 +592,24 @@ def update_pp(mf, C_ks):
     mf.with_pp.update_vppnloc_support_vec(C_ks)
 
 
-def initialize_ACE(mf, C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks, Ct_ks=None):
+def update_k(mf, C_ks, mocc_ks):
     tick = np.asarray([time.clock(), time.time()])
     if not "t-ace" in mf.scf_summary:
         mf.scf_summary["t-ace"] = np.zeros(2)
 
-    if not ace_xi_ks is None:
-        cell = mf.cell
-        pw_helper.initialize_ACE(cell, C_ks, mocc_ks, kpts, mesh, Gv,
-                                 ace_xi_ks, Ct_ks=Ct_ks)
+    mf.with_jk.update_k_support_vec(C_ks, mocc_ks, mf.kpts)
 
     tock = np.asarray([time.clock(), time.time()])
     mf.scf_summary["t-ace"] += tock - tick
 
 
-def apply_h1e_kpt(mf, C_k, kpt, mesh, Gv, comp=None, ret_E=False):
-    r""" Apply 1e part of the Fock opeartor to orbitals at given k-point. The local part includes kinetic and pseudopotential (both local and non-local).
+def apply_hcore_kpt(mf, C_k, kpt, mesh, Gv, with_pp, C_k_R=None, comp=None,
+                    ret_E=False):
+    r""" Apply hcore (kinetic and PP) opeartor to orbitals at given k-point.
     """
-    res = apply_Fock_local_kpt(mf.cell, C_k, kpt, mesh, Gv, mf.with_pp, None,
-                               comp=comp, ret_E=ret_E)
+    es = np.zeros(3, dtype=np.complex128)
 
-    Cbar_k = res[0]
-
-    if ret_E:
-        es = res[1][:3]
-        if (np.abs(es.imag) > 1e-6).any():
-            e_comp = mf.scf_summary["e_comp_name_lst"]
-            icomps = np.where(np.abs(es.imag) > 1e-6)[0]
-            logger.warn(mf, "Energy has large imaginary part:" +
-                     "%s : %s\n" * len(icomps),
-                     *[s for i in icomps for s in [e_comp[i],es[i]]])
-        es = es.real
-
-    tspans = res[-1][:3]
-    for icomp,comp in enumerate(mf.scf_summary["e_comp_name_lst"][:3]):
-        key = "t-%s" % comp
-        if not key in mf.scf_summary:
-            mf.scf_summary[key] = np.zeros(2)
-        mf.scf_summary[key] += tspans[icomp]
-
-    if ret_E:
-        return Cbar_k, es
-    else:
-        return Cbar_k
-
-
-def apply_Fock_local_kpt(cell, C_k, kpt, mesh, Gv, with_pp, vj_R, comp=None,
-                         ret_E=False):
-    r""" Apply local part of the Fock opeartor to orbitals at given k-point. The local part includes kinetic, pseudopotential (both local and non-local), and Hartree.
-    """
-    es = np.zeros(4, dtype=np.complex128)
-
-    tspans = np.zeros((4,2))
+    tspans = np.zeros((3,2))
     tick = np.asarray([time.clock(), time.time()])
 
     tmp = pw_helper.apply_kin_kpt(C_k, kpt, mesh, Gv)
@@ -711,7 +618,7 @@ def apply_Fock_local_kpt(cell, C_k, kpt, mesh, Gv, with_pp, vj_R, comp=None,
     tock = np.asarray([time.clock(), time.time()])
     tspans[0] = tock - tick
 
-    C_k_R = tools.ifft(C_k, mesh)
+    if C_k_R is None: C_k_R = tools.ifft(C_k, mesh)
     tmp = with_pp.apply_vppl_kpt(C_k, mesh=mesh, C_k_R=C_k_R)
     Cbar_k += tmp
     es[1] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2
@@ -724,86 +631,90 @@ def apply_Fock_local_kpt(cell, C_k, kpt, mesh, Gv, with_pp, vj_R, comp=None,
     tock = np.asarray([time.clock(), time.time()])
     tspans[2] = tock - tick
 
-    if not vj_R is None:
-        tmp = tools.fft(C_k_R * vj_R, mesh)
-        Cbar_k += tmp * 2
-        es[3] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2.
-        tick = np.asarray([time.clock(), time.time()])
-        tspans[3] = tick - tock
-
-    C_k_R = None
+    for ie_comp,e_comp in enumerate(mf.scf_summary["e_comp_name_lst"][:3]):
+        key = "t-%s" % e_comp
+        if not key in mf.scf_summary:
+            mf.scf_summary[key] = np.zeros(2)
+        mf.scf_summary[key] += tspans[ie_comp]
 
     if ret_E:
-        return Cbar_k, es, tspans
-    else:
-        return Cbar_k, tspans
-
-
-def apply_Fock_nonlocal_kpt(cell, C_k, kpt, mocc_ks, kpts, mesh, Gv, exxdiv,
-                            C_ks_exx=None, ace_xi_k=None,
-                            ret_E=False):
-    r""" Apply non-local part of the Fock opeartor to orbitals at given k-point. The non-local part includes the exact exchange.
-    """
-    tick = np.asarray([time.clock(), time.time()])
-    if ace_xi_k is None:
-        assert(not C_ks_exx is None)
-        Cbar_k = pw_helper.apply_vk_kpt(cell, C_k, kpt, C_ks_exx, mocc_ks, kpts,
-                                        mesh=mesh, Gv=Gv)
-    else:
-        Cbar_k = pw_helper.apply_vk_kpt_ace(C_k, ace_xi_k)
-    Cbar_k *= -1
-    e = np.einsum("ig,ig->", C_k.conj(), Cbar_k)
-    tock = np.asarray([time.clock(), time.time()])
-    tspans = np.asarray(tock - tick).reshape(1,2)
-
-    if ret_E:
-        return Cbar_k, e, tspans
-    else:
-        return Cbar_k, tspans
-
-
-def apply_Fock_kpt(mf, C_k, kpt, mocc_ks, mesh, Gv, vj_R, exxdiv,
-                   C_ks_exx=None, ace_xi_k=None, comp=None, ret_E=False):
-    """ Apply Fock operator to orbitals at given k-point.
-    """
-    cell = mf.cell
-    kpts = mf.kpts
-    with_pp = mf.with_pp
-# local part
-    res_l = apply_Fock_local_kpt(cell, C_k, kpt, mesh, Gv, with_pp, vj_R,
-                                 comp=comp, ret_E=ret_E)
-# nonlocal part
-    res_nl = apply_Fock_nonlocal_kpt(cell, C_k, kpt, mocc_ks, kpts,
-                                     mesh, Gv, exxdiv, C_ks_exx=C_ks_exx,
-                                     ace_xi_k=ace_xi_k, ret_E=ret_E)
-    Cbar_k = res_l[0] + res_nl[0]
-
-    if ret_E:
-        es = np.concatenate([res_l[1], [res_nl[1]]])
         if (np.abs(es.imag) > 1e-6).any():
-            e_comp = mf.scf_summary["e_comp_name_lst"]
+            e_comp = mf.scf_summary["e_comp_name_lst"][:3]
             icomps = np.where(np.abs(es.imag) > 1e-6)[0]
             logger.warn(mf, "Energy has large imaginary part:" +
                      "%s : %s\n" * len(icomps),
                      *[s for i in icomps for s in [e_comp[i],es[i]]])
         es = es.real
-
-    tspans = np.vstack([res_l[-1], res_nl[-1]])
-    for icomp,comp in enumerate(mf.scf_summary["e_comp_name_lst"]):
-        key = "t-%s" % comp
-        if not key in mf.scf_summary:
-            mf.scf_summary[key] = np.zeros(2)
-        mf.scf_summary[key] += tspans[icomp]
-
-    if ret_E:
         return Cbar_k, es
     else:
         return Cbar_k
 
 
+def apply_jk_kpt(mf, C_k, kpt, mocc_ks, kpts, mesh, Gv, vj_R, with_jk,
+                 exxdiv, C_k_R=None, comp=None, ret_E=False):
+    r""" Apply non-local part of the Fock opeartor to orbitals at given k-point. The non-local part includes the exact exchange.
+    """
+    tspans = np.zeros((2,2))
+    es = np.zeros(2, dtype=np.complex128)
+
+    tick = np.asarray([time.clock(), time.time()])
+    tmp = with_jk.apply_j_kpt(C_k, mesh=mesh, vj_R=vj_R, C_k_R=C_k_R)
+    Cbar_k = tmp * 2.
+    es[0] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2.
+    tock = np.asarray([time.clock(), time.time()])
+    tspans[0] = np.asarray(tock - tick).reshape(1,2)
+
+    tmp = -with_jk.apply_k_kpt(C_k, kpt, mesh=mesh, Gv=Gv, exxdiv=exxdiv,
+                               comp=comp)
+    Cbar_k += tmp
+    es[1] = np.einsum("ig,ig->", C_k.conj(), tmp)
+    tick = np.asarray([time.clock(), time.time()])
+    tspans[1] = np.asarray(tick - tock).reshape(1,2)
+
+    for ie_comp,e_comp in enumerate(mf.scf_summary["e_comp_name_lst"][-2:]):
+        key = "t-%s" % e_comp
+        if not key in mf.scf_summary:
+            mf.scf_summary[key] = np.zeros(2)
+        mf.scf_summary[key] += tspans[ie_comp]
+
+    if ret_E:
+        if (np.abs(es.imag) > 1e-6).any():
+            e_comp = mf.scf_summary["e_comp_name_lst"][-2:]
+            icomps = np.where(np.abs(es.imag) > 1e-6)[0]
+            logger.warn(mf, "Energy has large imaginary part:" +
+                     "%s : %s\n" * len(icomps),
+                     *[s for i in icomps for s in [e_comp[i],es[i]]])
+        es = es.real
+        return Cbar_k, es
+    else:
+        return Cbar_k
+
+
+def apply_Fock_kpt(mf, C_k, kpt, mocc_ks, mesh, Gv, vj_R, exxdiv,
+                   comp=None, ret_E=False):
+    """ Apply Fock operator to orbitals at given k-point.
+    """
+    kpts = mf.kpts
+    with_pp = mf.with_pp
+    with_jk = mf.with_jk
+# 1e part
+    res_1e = mf.apply_hcore_kpt(C_k, kpt, mesh, Gv, with_pp, comp=comp,
+                                ret_E=ret_E)
+# 2e part
+    res_2e = mf.apply_jk_kpt(C_k, kpt, mocc_ks, kpts, mesh, Gv, vj_R, with_jk,
+                             exxdiv, comp=comp, ret_E=ret_E)
+
+    if ret_E:
+        Cbar_k = res_1e[0] + res_2e[0]
+        es = np.concatenate([res_1e[1], res_2e[1]])
+        return Cbar_k, es
+    else:
+        Cbar_k = res_1e + res_2e
+        return Cbar_k
+
+
 def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
-                  C_ks_exx=None, ace_xi_ks=None, vj_R=None, comp=None,
-                  ret_mocc=True):
+                  vj_R=None, comp=None, ret_mocc=True):
     cell = mf.cell
     if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks)
     if mesh is None: mesh = cell.mesh
@@ -818,30 +729,27 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
     for k in range(nkpts):
         kpt = kpts[k]
         C_k = C_ks[k] if C_incore else C_ks["%d"%k][()]
-        ace_xi_k = None if ace_xi_ks is None else ace_xi_ks["%d"%k][()]
         Cbar_k = mf.apply_Fock_kpt(C_k, kpt, mocc_ks, mesh, Gv, vj_R,
-                                   exxdiv, C_ks_exx=C_ks_exx,
-                                   ace_xi_k=ace_xi_k, comp=comp, ret_E=False)
+                                   exxdiv, comp=comp, ret_E=False)
         moe_k = np.einsum("ig,ig->i", C_k.conj(), Cbar_k)
         if (moe_k.imag > 1e-6).any():
             logger.warn(mf, "MO energies have imaginary part %s for kpt %d",
                         moe_k, k)
         moe_ks[k] = moe_k.real
 
-    if ret_mocc:
-        mocc_ks = mf.get_mo_occ(moe_ks)
-        if exxdiv == "ewald":
-            for k in range(nkpts):
-                moe_ks[k][mocc_ks[k] > THR_OCC] -= mf._madelung
+    mocc_ks = get_mo_occ(cell, moe_ks=moe_ks)
+    if exxdiv == "ewald":
+        for k in range(nkpts):
+            moe_ks[k][mocc_ks[k] > THR_OCC] -= mf._madelung
 
+    if ret_mocc:
         return moe_ks, mocc_ks
     else:
         return moe_ks
 
 
 def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
-                C_ks_exx=None, ace_xi_ks=None, vj_R=None,
-                exxdiv=None):
+                vj_R=None, exxdiv=None):
     ''' Compute the electronic energy
     Pass `moe_ks` to avoid the cost of applying the expensive vj and vk.
     '''
@@ -865,11 +773,8 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
             kpt = kpts[k]
             nocc_k = nocc_ks[k]
             Co_k = C_ks[k][:nocc_k] if C_incore else C_ks["%d"%k][:nocc_k]
-            ace_xi_k = None if ace_xi_ks is None else ace_xi_ks["%d"%k][()]
             e_comp_k = mf.apply_Fock_kpt(Co_k, kpt, mocc_ks, mesh, Gv,
-                                         vj_R, exxdiv,
-                                         C_ks_exx=C_ks_exx, ace_xi_k=ace_xi_k,
-                                         ret_E=True)[1]
+                                         vj_R, exxdiv, ret_E=True)[1]
             e_ks[k] = np.sum(e_comp_k)
             e_comp += e_comp_k
         e_comp /= nkpts
@@ -885,7 +790,9 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
             kpt = kpts[k]
             nocc_k = nocc_ks[k]
             Co_k = C_ks[k][:nocc_k] if C_incore else C_ks["%d"%k][:nocc_k]
-            e1_comp = mf.apply_h1e_kpt(Co_k, kpt, mesh, Gv, ret_E=True)[1]
+            # e1_comp = mf.apply_h1e_kpt(Co_k, kpt, mesh, Gv, ret_E=True)[1]
+            e1_comp = mf.apply_hcore_kpt(Co_k, kpt, mesh, Gv, mf.with_pp,
+                                         ret_E=True)[1]
             e_ks[k] = np.sum(e1_comp) * 0.5 + np.sum(moe_ks[k][:nocc_k])
     e_scf = np.sum(e_ks) / nkpts
 
@@ -897,18 +804,15 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
 
 
 def energy_tot(mf, C_ks, mocc_ks, moe_ks=None, mesh=None, Gv=None,
-               C_ks_exx=None, ace_xi_ks=None,
                vj_R=None, exxdiv=None):
     e_nuc = mf.scf_summary["nuc"]
     e_scf = mf.energy_elec(C_ks, mocc_ks, moe_ks=moe_ks, mesh=mesh, Gv=Gv,
-                           C_ks_exx=C_ks_exx, ace_xi_ks=ace_xi_ks,
                            vj_R=vj_R, exxdiv=exxdiv)
     e_tot = e_scf + e_nuc
     return e_tot
 
 
 def converge_band_kpt(mf, C_k, kpt, mocc_ks, nband=None, mesh=None, Gv=None,
-                      C_ks_exx=None, ace_xi_k=None,
                       vj_R=None, comp=None,
                       conv_tol_davidson=1e-6,
                       max_cycle_davidson=100,
@@ -922,7 +826,6 @@ def converge_band_kpt(mf, C_k, kpt, mocc_ks, nband=None, mesh=None, Gv=None,
         C_k_ = np.asarray(C_k_)
         Cbar_k_ = mf.apply_Fock_kpt(C_k_, kpt, mocc_ks, mesh, Gv,
                                     vj_R, "none",
-                                    C_ks_exx=C_ks_exx, ace_xi_k=ace_xi_k,
                                     comp=comp, ret_E=False)
         return Cbar_k_
 
@@ -952,7 +855,6 @@ def converge_band_kpt(mf, C_k, kpt, mocc_ks, nband=None, mesh=None, Gv=None,
 
 def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None,
                   mesh=None, Gv=None,
-                  C_ks_exx=None, ace_xi_ks=None,
                   vj_R=None, comp=None,
                   conv_tol_davidson=1e-6,
                   max_cycle_davidson=100,
@@ -973,12 +875,9 @@ def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None,
     for k in range(nkpts):
         kpt = kpts[k]
         C_k = C_ks[k] if C_incore else C_ks["%d"%k][()]
-        ace_xi_k = None if ace_xi_ks is None else ace_xi_ks["%d"%k][()]
         conv_, moeout_ks[k], Cout_k, fc_ks[k] = \
                     mf.converge_band_kpt(C_k, kpt, mocc_ks,
                                          mesh=mesh, Gv=Gv,
-                                         C_ks_exx=C_ks_exx,
-                                         ace_xi_k=ace_xi_k,
                                          vj_R=vj_R, comp=comp,
                                          conv_tol_davidson=conv_tol_davidson,
                                          max_cycle_davidson=max_cycle_davidson,
@@ -1040,10 +939,8 @@ class PWKRHF(mol_hf.SCF):
         self.nvir_extra = 1 # to facilitate converging the highest virtual
         self.init_guess = "hcore"
 
-# If _acexi_to_save is specified (as a str), the ACE xi vectors will be saved in this file. Otherwise, a tempfile is used and discarded after the calculation.
-        self._acexi_to_save = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
-
         self.with_pp = None
+        self.with_jk = None
 
         self._keys = self._keys.union(['cell', 'exxdiv'])
 
@@ -1070,10 +967,6 @@ class PWKRHF(mol_hf.SCF):
                 logger.info(self, "Damping factor = %s", self.damp_factor)
         if self.chkfile:
             logger.info(self, 'chkfile to save SCF result = %s', self.chkfile)
-        if isinstance(self._acexi_to_save, str):
-            logger.info(self, '_acexi_to_save = %s', self._acexi_to_save)
-        else:
-            logger.info(self, '_acexi_to_save = %s', self._acexi_to_save.name)
         logger.info(self, 'max_memory %d MB (current use %d MB)',
                     self.max_memory, lib.current_memory()[0])
 
@@ -1202,22 +1095,29 @@ class PWKRHF(mol_hf.SCF):
         return init_guess_from_C0(self.cell, C0, ntot_ks, fC_ks)
 
     def get_vj_R(self, C_ks, mocc_ks, mesh=None, Gv=None):
-        return pw_helper.get_vj_R(self.cell, C_ks, mocc_ks, mesh=mesh, Gv=Gv)
+        return self.with_jk.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
+
+    def init_pp(self, with_pp=None):
+        return pw_pseudo.pseudopotential(self, with_pp=with_pp)
+
+    def init_jk(self, with_jk=None, ace_exx=None):
+        if ace_exx is None: ace_exx = self.ace_exx
+        return pw_jk.jk(self, with_jk=with_jk, ace_exx=ace_exx)
 
     def scf(self, C0=None, **kwargs):
         self.dump_flags()
 
         if self.with_pp is None:
             with_pp = getattr(kwargs, "with_pp", None)
-            pw_pseudo.pseudopotential(self, with_pp=with_pp)
+            self.init_pp(with_pp=with_pp)
 
-        if isinstance(self._acexi_to_save, tempfile._TemporaryFileWrapper):
-            facexi = lib.H5TmpFile(self._acexi_to_save.name)
-        else:
-            facexi = self._acexi_to_save
+        if self.with_jk is None:
+            with_jk = getattr(kwargs, "with_jk", None)
+            self.init_jk(with_jk=with_jk)
+
         self.converged, self.e_tot, self.mo_energy, self.mo_coeff, \
                 self.mo_occ = kernel_doubleloop(self, self.kpts,
-                           C0=C0, facexi=facexi,
+                           C0=C0,
                            nbandv=self.nvir, nbandv_extra=self.nvir_extra,
                            conv_tol=self.conv_tol, max_cycle=self.max_cycle,
                            conv_tol_band=self.conv_tol_band,
@@ -1235,15 +1135,13 @@ class PWKRHF(mol_hf.SCF):
     kernel = lib.alias(scf, alias_name='kernel')
 
     kernel_charge = kernel_charge
-    remove_extra_virbands = remove_extra_virbands
     get_nband = get_nband
-    get_band_err = get_band_err
-    copy_C_ks = copy_C_ks
     dump_moe = dump_moe
     update_pp = update_pp
-    initialize_ACE = initialize_ACE
+    update_k = update_k
     get_mo_energy = get_mo_energy
-    apply_h1e_kpt = apply_h1e_kpt
+    apply_hcore_kpt = apply_hcore_kpt
+    apply_jk_kpt = apply_jk_kpt
     apply_Fock_kpt = apply_Fock_kpt
     energy_elec = energy_elec
     energy_tot = energy_tot
@@ -1259,14 +1157,13 @@ if __name__ == "__main__":
             [1.78339987, 0.        , 1.78339987],
             [1.78339987, 1.78339987, 0.        ]]),
         basis="gth-szv",
-        ke_cutoff=100,
+        ke_cutoff=50,
         pseudo="gth-pade",
     )
     cell.build()
-    cell.verbose = 5
+    cell.verbose = 6
 
-    nk = 2
-    kmesh = (nk,)*3
+    kmesh = [2,1,1]
     kpts = cell.make_kpts(kmesh)
 
     mf = PWKRHF(cell, kpts)
@@ -1274,4 +1171,4 @@ if __name__ == "__main__":
     mf.kernel()
     mf.dump_scf_summary()
 
-    assert(abs(mf.e_tot - -11.0411939355984) < 1.e-5)
+    assert(abs(mf.e_tot - -10.673452914596) < 1.e-5)

@@ -17,6 +17,7 @@
 #
 
 import h5py
+import numpy as np
 from pyscf.lib.chkfile import load, save, save_mol
 from pyscf.pbc.lib.chkfile import load_cell
 
@@ -41,6 +42,18 @@ def dump_scf(mol, chkfile, e_tot, mo_energy, mo_occ, mo_coeff,
 
     # save mo_coeff only if incore mode
     if isinstance(mo_coeff, list):
-        nkpts = len(mo_coeff)
-        for k in range(nkpts):
-            save(chkfile, 'mo_coeff/%d'%k, mo_coeff[k])
+        with h5py.File(chkfile, "a") as f:
+            if "mo_coeff" in f: del f["mo_coeff"]
+            C_ks = f.create_group("mo_coeff")
+
+            if isinstance(mo_coeff[0], np.ndarray):
+                nkpts = len(mo_coeff)
+                for k in range(nkpts):
+                    C_ks["%d"%k] = mo_coeff[k]
+            else:
+                ncomp = len(mo_coeff)
+                nkpts = len(mo_coeff[0])
+                for comp in range(ncomp):
+                    C_ks_comp = C_ks.create_group("%d"%comp)
+                    for k in range(nkpts):
+                        C_ks_comp["%d"%k] = mo_coeff[comp][k]

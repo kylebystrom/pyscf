@@ -14,7 +14,7 @@ import pyscf.lib.parameters as param
 
 if __name__ == "__main__":
     nk = 2
-    kmesh = (nk,) * 3
+    kmesh = [2,1,1]
     ke_cutoff = 150
     pseudo = "gth-pade"
     exxdiv = None
@@ -57,37 +57,36 @@ if __name__ == "__main__":
 
 # PW (both vanilla and ACE)
     pmf = pwscf.KRHF(cell, kpts)
+    pmf.init_pp()
+    pmf.init_jk()
     pmf.exxdiv = exxdiv
     no_ks = pw_helper.get_nocc_ks_from_mocc(gmf.mo_occ)
     C_ks = pw_helper.get_C_ks_G(cell, kpts, gmf.mo_coeff, no_ks)
     mocc_ks = khf.get_mo_occ(cell, C_ks=C_ks)
+    pmf.update_pp(C_ks)
+    vj_R = pmf.get_vj_R(C_ks, mocc_ks)
     mesh = cell.mesh
     Gv = cell.get_Gv(mesh)
-    vpplocR = pmf.get_vpplocR()
-    vj_R = pmf.get_vj_R(C_ks, mocc_ks)
-    # init ACE
-    swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
-    facexi = lib.H5TmpFile(swapfile.name)
-    swapfile = None
-    ace_xi_ks = facexi.create_group("ace_xi_ks")
-    pmf.initialize_ACE(C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks=ace_xi_ks)
 
+    pmf.with_jk.ace_exx = False
+    pmf.update_k(C_ks, mocc_ks)
     moe_comp_ks_pw = np.zeros((4, nkpts), dtype=np.complex128)
-    ace_moe_comp_ks_pw = np.zeros((4, nkpts), dtype=np.complex128)
     for k in range(nkpts):
         C_k = C_ks[k]
         kpt = kpts[k]
-        moe = pmf.apply_Fock_kpt(C_k, kpt, mocc_ks, mesh, Gv,
-                                 vpplocR, vj_R, exxdiv,
-                                 C_ks_exx=C_ks, ace_xi_k=None, ret_E=True)[1]
+        moe = pmf.apply_Fock_kpt(C_k, kpt, mocc_ks, mesh, Gv, vj_R, exxdiv,
+                                 ret_E=True)[1]
         moe_comp_ks_pw[0,k] = moe[0]
         moe_comp_ks_pw[1,k] = moe[1] + moe[2]
         moe_comp_ks_pw[2:,k] = moe[3:]
 
-        ace_xi_k = ace_xi_ks["%d"%k][()]
-        moe = pmf.apply_Fock_kpt(C_k, kpt, mocc_ks, mesh, Gv,
-                                 vpplocR, vj_R, exxdiv,
-                                 C_ks_exx=None, ace_xi_k=ace_xi_k,
+    pmf.with_jk.ace_exx = True
+    pmf.update_k(C_ks, mocc_ks)
+    ace_moe_comp_ks_pw = np.zeros((4, nkpts), dtype=np.complex128)
+    for k in range(nkpts):
+        C_k = C_ks[k]
+        kpt = kpts[k]
+        moe = pmf.apply_Fock_kpt(C_k, kpt, mocc_ks, mesh, Gv, vj_R, exxdiv,
                                  ret_E=True)[1]
         ace_moe_comp_ks_pw[0,k] = moe[0]
         ace_moe_comp_ks_pw[1,k] = moe[1] + moe[2]

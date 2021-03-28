@@ -9,23 +9,13 @@ import numpy as np
 
 from pyscf.pbc import gto, scf
 from pyscf.pbc.pwscf import khf, pw_helper
+from pyscf.pbc.pwscf.pw_helper import get_kcomp, set_kcomp
 from pyscf.lib import logger
 from pyscf import __config__
 
 
 def get_spin_component(C_ks, s):
-    if isinstance(C_ks, list):
-        return C_ks[s]
-    else:
-        return C_ks["%d"%s]
-
-
-def remove_extra_virbands(mf, C_ks, moe_ks, mocc_ks, nbandv_extra):
-    if isinstance(nbandv_extra, int): nbandv_extra = [nbandv_extra] * 2
-    for s in [0,1]:
-        C_ks_s = get_spin_component(C_ks, s)
-        khf.remove_extra_virbands(mf, C_ks_s, moe_ks[s], mocc_ks[s],
-                                   nbandv_extra[s])
+    return get_kcomp(C_ks, s, load=False)
 
 
 def get_nband(mf, nbandv, nbandv_extra):
@@ -40,28 +30,6 @@ def get_nband(mf, nbandv, nbandv_extra):
     return nbando, nbandv_tot, nband, nband_tot
 
 
-def get_band_err(mf, moe_ks, last_hf_moe, nband):
-    return max([khf.get_band_err(mf, moe_ks[s], last_hf_moe[s], nband[s])
-               for s in [0,1]])
-
-
-def copy_C_ks(mf, C_ks, C_ks_exx):
-    if C_ks_exx is None:
-        return None
-    else:
-        for s in [0,1]:
-            key = "%s" % s
-            C_ks_s = C_ks[s] if isinstance(C_ks, list) else C_ks[key]
-            if isinstance(C_ks_exx, list):
-                if key in C_ks_exx: del C_ks_exx[key]
-                C_ks_exx_s = C_ks_exx.create_group(key)
-            else:
-                C_ks_exx_s = C_ks_exx[s]
-            khf.copy_C_ks(mf, C_ks_s, C_ks_exx_s)
-
-        return C_ks_s
-
-
 def dump_moe(mf, moe_ks, mocc_ks, nband=None, trigger_level=logger.DEBUG):
     if nband is None: nband = [None,None]
     if isinstance(nband, int): nband = [nband,nband]
@@ -71,19 +39,13 @@ def dump_moe(mf, moe_ks, mocc_ks, nband=None, trigger_level=logger.DEBUG):
 
 
 def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
-                  C_ks_exx=None, ace_xi_ks=None, vj_R=None):
+                  vj_R=None, ret_mocc=True):
 
     moe_ks = [None] * 2
     for s in [0,1]:
-        C_ks_ = get_spin_component(C_ks, s)
-        C_ks_exx_ = None if C_ks_exx is None else \
-                                            get_spin_component(C_ks_exx, s)
-        ace_xi_ks_ = None if ace_xi_ks is None else \
-                                            get_spin_component(ace_xi_ks, s)
-        moe_ks[s] = khf.get_mo_energy(mf, C_ks_, mocc_ks[s],
-                                      mesh=mesh, Gv=Gv, exxdiv=exxdiv,
-                                      C_ks_exx=C_ks_exx_,
-                                      ace_xi_ks=ace_xi_ks_,
+        C_ks_s = get_spin_component(C_ks, s)
+        moe_ks[s] = khf.get_mo_energy(mf, C_ks_s, mocc_ks[s],
+                                      mesh=mesh, Gv=Gv, exxdiv="none",
                                       vj_R=vj_R, comp=s,
                                       ret_mocc=False)
 
@@ -96,7 +58,10 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
             for k in range(nkpts):
                 moe_ks[s][k][mocc_ks[s][k] > khf.THR_OCC] -= mf._madelung
 
-    return moe_ks, mocc_ks
+    if ret_mocc:
+        return moe_ks, mocc_ks
+    else:
+        return moe_ks
 
 
 def get_mo_occ(cell, moe_ks=None, C_ks=None):
@@ -226,33 +191,24 @@ def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None):
 
 
 def update_pp(mf, C_ks):
-    # mf.with_pp.update_vppnloc_support_vec(C_ks, comp=[0,1])
     mf.with_pp.update_vppnloc_support_vec(C_ks, ncomp=2)
 
 
-def initialize_ACE(mf, C_ks, mocc_ks, kpts, mesh, Gv, ace_xi_ks, Ct_ks=None):
+def update_k(mf, C_ks, mocc_ks):
     tick = np.asarray([time.clock(), time.time()])
     if not "t-ace" in mf.scf_summary:
         mf.scf_summary["t-ace"] = np.zeros(2)
 
-    if not ace_xi_ks is None:
-        cell = mf.cell
-        for s in [0,1]:
-            C_ks_ = get_spin_component(C_ks, s)
-            Ct_ks_ = None if Ct_ks is None else get_spin_component(Ct_ks, s)
-            key = "%s" % s
-            if key in ace_xi_ks: del ace_xi_ks[key]
-            ace_xi_ks_spin = ace_xi_ks.create_group(key)
-            pw_helper.initialize_ACE(cell, C_ks_, mocc_ks[s], kpts, mesh, Gv,
-                                     ace_xi_ks_spin, Ct_ks=Ct_ks_)
+    for s in [0,1]:
+        C_ks_s = get_kcomp(C_ks, s, load=False)
+        mf.with_jk.update_k_support_vec(C_ks_s, mocc_ks[s], mf.kpts, comp=s)
 
     tock = np.asarray([time.clock(), time.time()])
     mf.scf_summary["t-ace"] += tock - tick
 
 
 def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
-                C_ks_exx=None, ace_xi_ks=None, vj_R=None,
-                exxdiv=None):
+                vj_R=None, exxdiv=None):
     cell = mf.cell
     if mesh is None: mesh = cell.mesh
     if Gv is None: Gv = cell.get_Gv(mesh)
@@ -271,20 +227,12 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
         e_comp = np.zeros(5)
         for s in [0,1]:
             C_ks_s = get_spin_component(C_ks, s)
-            C_ks_exx_s = None if C_ks_exx is None else \
-                                                get_spin_component(C_ks_exx, s)
-            ace_xi_ks_s = None if ace_xi_ks is None else \
-                                                get_spin_component(ace_xi_ks, s)
             for k in range(nkpts):
                 kpt = kpts[k]
                 nocc_k = nocc_ks[s][k]
                 Co_k = C_ks_s[k][:nocc_k] if C_incore else C_ks_s["%d"%k][:nocc_k]
-                ace_xi_k = None if ace_xi_ks_s is None else \
-                                                        ace_xi_ks_s["%d"%k][()]
                 e_comp_k = mf.apply_Fock_kpt(Co_k, kpt, mocc_ks, mesh, Gv,
-                                             vj_R, exxdiv,
-                                             C_ks_exx=C_ks_exx_s, ace_xi_k=ace_xi_k,
-                                             comp=s,
+                                             vj_R, exxdiv, comp=s,
                                              ret_E=True)[1]
                 e_comp_k *= 0.5
                 e_ks[k] += np.sum(e_comp_k)
@@ -305,8 +253,8 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
                 kpt = kpts[k]
                 nocc_k = nocc_ks[s][k]
                 Co_k = C_ks_s[k][:nocc_k] if C_incore else C_ks_s["%d"%k][:nocc_k]
-                e1_comp = mf.apply_h1e_kpt(Co_k, kpt, mesh, Gv,
-                                           comp=s, ret_E=True)[1]
+                e1_comp = mf.apply_hcore_kpt(Co_k, kpt, mesh, Gv, mf.with_pp,
+                                             comp=s, ret_E=True)[1]
                 e1_comp *= 0.5
                 e_ks[k] += np.sum(e1_comp) * 0.5 + np.sum(moe_ks_s[k][:nocc_k]) * 0.5
     e_scf = np.sum(e_ks) / nkpts
@@ -320,7 +268,6 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
 
 def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None,
                   mesh=None, Gv=None,
-                  C_ks_exx=None, ace_xi_ks=None,
                   vj_R=None,
                   conv_tol_davidson=1e-6,
                   max_cycle_davidson=100,
@@ -337,13 +284,8 @@ def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None,
         Cout_ks = C_ks
     for s in [0,1]:
         C_ks_s = get_spin_component(C_ks, s)
-        C_ks_exx_s = None if C_ks_exx is None else \
-                                            get_spin_component(C_ks_exx, s)
-        ace_xi_ks_s = None if ace_xi_ks is None else \
-                                            get_spin_component(ace_xi_ks, s)
         conv_ks[s], moeout_ks[s], Cout_ks_s, fc_ks[s] = khf.converge_band(
                             mf, C_ks_s, mocc_ks[s], kpts, mesh=mesh, Gv=Gv,
-                            C_ks_exx=C_ks_exx_s, ace_xi_ks=ace_xi_ks_s,
                             vj_R=vj_R, comp=s,
                             conv_tol_davidson=conv_tol_davidson,
                             max_cycle_davidson=max_cycle_davidson,
@@ -426,21 +368,12 @@ class PWKUHF(khf.PWKRHF):
         return get_mo_occ(mf.cell, moe_ks, C_ks)
 
     def get_vj_R(self, C_ks, mocc_ks, mesh=None, Gv=None):
-        vj_R = 0. + 0.j
-        for s in [0,1]:
-            C_ks_ = get_spin_component(C_ks, s)
-            vj_R += pw_helper.get_vj_R(self.cell, C_ks_, mocc_ks[s],
-                                       mesh=mesh, Gv=Gv)
-        vj_R *= 0.5
-        return vj_R
+        return self.with_jk.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv, ncomp=2)
 
-    remove_extra_virbands = remove_extra_virbands
     get_nband = get_nband
-    get_band_err = get_band_err
     dump_moe = dump_moe
-    copy_C_ks = copy_C_ks
     update_pp = update_pp
-    initialize_ACE = initialize_ACE
+    update_k = update_k
     get_mo_energy = get_mo_energy
     energy_elec = energy_elec
     converge_band = converge_band
@@ -464,7 +397,6 @@ if __name__ == "__main__":
 
     umf = PWKUHF(cell, kpts)
     umf.nvir = [0,2]
-    umf.chkfile = "mf.chk"
     umf.kernel()
 
     umf.dump_scf_summary()
