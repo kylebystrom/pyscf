@@ -7,7 +7,7 @@ import numpy as np
 import scipy.linalg
 from scipy.special import dawsn
 
-from pyscf.pbc.pwscf.pw_helper import get_kcomp, set_kcomp
+from pyscf.pbc.pwscf.pw_helper import get_kcomp, set_kcomp, get_C_ks_G, orth
 from pyscf.pbc.gto import pseudo as gth_pseudo
 from pyscf.pbc import tools
 from pyscf.pbc.lib.kpts_helper import member
@@ -68,9 +68,36 @@ def apply_vppnl_kpt(cell, C_k, kpt, mesh=None, Gv=None):
 
 """ PW-PP class implementation goes here
 """
-def pseudopotential(mf, with_pp=None, mesh=None):
+def get_pp_type(cell):
+    hasecp = len(cell._ecp) > 0
+    haspp = len(cell._pseudo) > 0
+    if not (hasecp or haspp):
+        return "alle"
+    elif haspp:
+        if isinstance(cell.pseudo, str):
+            assert("GTH" in cell.pseudo.upper())
+        elif isinstance(cell.pseudo, dict):
+            for key,pp in cell.pseudo.items():
+                assert("GTH" in pp.upper())
+        else:
+            raise RuntimeError("Unknown pseudo type %s" % (str(cell.pseudo)))
+        return "gth"
+    else:
+        if isinstance(cell.ecp, str):
+            assert("CCECP" in cell.ecp.upper())
+        elif isinstance(cell.ecp, dict):
+            for key,pp in cell.ecp.items():
+                assert("CCECP" in pp.upper())
+        else:
+            raise RuntimeError("Unknown ecp type %s" % (str(cell.ecp)))
+        return "ccecp"
+
+
+def pseudopotential(mf, with_pp=None, mesh=None, **kwargs):
     if with_pp is None:
         with_pp = PWPP(mf.cell, mf.kpts, mesh=mesh)
+        with_pp.ecpnloc_method = kwargs.get("ecpnloc_method", "direct")
+        with_pp.ecpnloc_kbbas = kwargs.get("ecpnloc_kbbas", "ccecp-cc-pvdz")
 
     mf.with_pp = with_pp
 
@@ -79,7 +106,10 @@ def pseudopotential(mf, with_pp=None, mesh=None):
 
 class PWPP:
 
-    direct_nloc = getattr(__config__, "pbc_pwscf_pseudo_PWPP_direct_nloc", True)
+    ecpnloc_method = getattr(__config__, "pbc_pwscf_pseudo_PWPP_ecpnloc_method",
+                             "direct")  # other options: "full", "kb"
+    ecpnloc_kbbas = getattr(__config__, "pbc_pwscf_pseudo_PWPP_ecpnloc_method",
+                            "ccecp-cc-pvdz")
 
     def __init__(self, cell, kpts, mesh=None):
         self.cell = cell
@@ -91,16 +121,24 @@ class PWPP:
         self.Gv = cell.get_Gv(mesh)
         lib.logger.debug(self, "Initializing PP local part")
         self.vpplocR = get_vpplocR(cell, self.mesh, self.Gv)
-        if len(cell._ecp) > 0:
+
+        self.pptype = get_pp_type(cell)
+        self._ecp = None
+        self.vppnlocGG = None
+        self.vppnlocWks = None
+        self._ecpnloc_initialized = False
+
+    def initialize_ecpnloc(self):
+        if self.pptype == "ccecp":
             lib.logger.debug(self, "Initializing ccECP non-local part")
+            cell = self.cell
             dtype = np.complex128
             self._ecp = format_ccecp_param(cell)
             self.swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
             self.fswap = lib.H5TmpFile(self.swapfile.name)
-            if self.direct_nloc:
-                self.vppnlocGG = None
+            if self.ecpnloc_method in ["direct", "kb"]:
                 self.vppnlocWks = self.fswap.create_group("vppnlocWks")
-            else:
+            elif self.ecpnloc_method == "full":
                 nkpts = len(self.kpts)
                 ngrids = self.Gv.shape[0]
                 self.vppnlocGG = self.fswap.create_dataset(
@@ -108,50 +146,92 @@ class PWPP:
                                                     dtype=dtype)
                 fill_vppnlocGG_ccecp(cell, self.kpts, self.Gv, _ecp=self._ecp,
                                      out=self.vppnlocGG)
-        else:
-            self._ecp = None
-            self.vppnlocGG = None
+            else:
+                raise RuntimeError("Unknown ecpnloc_method %s" %
+                                   (self.ecp_nloc_item))
+        self._ecpnloc_initialized = True
 
-    def update_vppnloc_support_vec(self, C_ks, ncomp=1):
-        if not self._ecp is None:
-            out = self.vppnlocWks
-            if ncomp > 1:
-                for comp in range(ncomp):
-                    key = "%d"%comp
-                    if key in out: del out[key]
-                    out.create_group(key)
+    def update_vppnloc_support_vec(self, C_ks, ncomp=1, out=None):
+        if self.pptype == "ccecp":
+            if not self._ecpnloc_initialized:
+                self.initialize_ecpnloc()
             nkpts = len(self.kpts)
             cell = self.cell
-            for k in range(nkpts):
+            if self.ecpnloc_method == "kb":
+                if len(self.vppnlocWks) > 0:
+                    return
                 if ncomp == 1:
-                    C_k = get_kcomp(C_ks, k)
+                    out = self.vppnlocWks
                 else:
-                    comp_loc = [0] * (ncomp+1)
-                    C_k = [None] * ncomp
-                    for comp in range(ncomp):
-                        C_k[comp] = get_kcomp(C_ks["%d"%comp], k)
-                        comp_loc[comp+1] = comp_loc[comp] + C_k[comp].shape[0]
-                    C_k = np.vstack(C_k)
-                if self.vppnlocGG is None:
-                    kpt = self.kpts[k]
-                    Gv = self.Gv
-                    W_k = apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv,
-                                                    _ecp=self._ecp)
-                else:
-                    W_k = apply_vppnlocGG_kpt_ccecp_precompute(cell, C_k, k,
-                                                               self.vppnlocGG)
-                if ncomp == 1:
-                    W_k = get_support_vec(C_k, W_k, method="eig")
-                    set_kcomp(W_k, out, k)
-                else:
-                    for comp in range(ncomp):
-                        p0, p1 = comp_loc[comp:comp+2]
-                        w_k = get_support_vec(C_k[p0:p1], W_k[p0:p1],
-                                              method="eig")
-                        set_kcomp(w_k, out["%d"%comp], k)
-                        w_k = None
+                    out = self.vppnlocWks.create_group("0")
+                cell_kb = cell.copy()
+                cell_kb.basis = self.ecpnloc_kbbas
+                cell_kb.ke_cutoff = cell.ke_cutoff
+                cell_kb.ecp = "ccecp"
+                cell_kb.build()
+                nao = cell_kb.nao_nr()
+                Cg_ks = [np.eye(nao) + 0.j for k in range(nkpts)]
+                n_ks = [nao] * nkpts
+                Cg_ks = get_C_ks_G(cell_kb, self.kpts, Cg_ks, n_ks, verbose=0)
+                for k in range(nkpts):
+                    Cg_ks[k] = orth(cell_kb, Cg_ks[k])
+                self.ecpnloc_method = "direct"
+                self.update_vppnloc_support_vec(Cg_ks, out=out, ncomp=1)
+                self.ecpnloc_method = "kb"
+                if ncomp > 1:
+                    for comp in range(1,ncomp):
+                        self.vppnlocWks["%d"%comp] = out
 
-                C_k = W_k = None
+                # # if len(self.vppnlocWks) == 0:
+                # if True:
+                #     if ncomp == 1:
+                #         out = self.vppnlocWks
+                #     else:
+                #         out = self.vppnlocWks.create_group("0")
+                #     kb_basis = self.ecpnloc_kbbas
+                #     kpts = self.kpts
+                #     get_ccecp_kb_support_vec(cell, kb_basis, kpts, out=out)
+                #     if ncomp > 1:
+                #         for comp in range(1,ncomp):
+                #             self.vppnlocWks["%d"%comp] = outl
+                #     W_ = get_kcomp(self.vppnlocWks, 0)
+            else:
+                if out is None: out = self.vppnlocWks
+                if ncomp > 1:
+                    for comp in range(ncomp):
+                        key = "%d"%comp
+                        if key in out: del out[key]
+                        out.create_group(key)
+                for k in range(nkpts):
+                    if ncomp == 1:
+                        C_k = get_kcomp(C_ks, k)
+                    else:
+                        comp_loc = [0] * (ncomp+1)
+                        C_k = [None] * ncomp
+                        for comp in range(ncomp):
+                            C_k[comp] = get_kcomp(C_ks["%d"%comp], k)
+                            comp_loc[comp+1] = comp_loc[comp] + C_k[comp].shape[0]
+                        C_k = np.vstack(C_k)
+                    if self.vppnlocGG is None:
+                        kpt = self.kpts[k]
+                        Gv = self.Gv
+                        W_k = apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv,
+                                                        _ecp=self._ecp)
+                    else:
+                        W_k = apply_vppnlocGG_kpt_ccecp_full(cell, C_k, k,
+                                                             self.vppnlocGG)
+                    if ncomp == 1:
+                        W_k = get_support_vec(C_k, W_k, method="eig")
+                        set_kcomp(W_k, out, k)
+                    else:
+                        for comp in range(ncomp):
+                            p0, p1 = comp_loc[comp:comp+2]
+                            w_k = get_support_vec(C_k[p0:p1], W_k[p0:p1],
+                                                  method="eig")
+                            set_kcomp(w_k, out["%d"%comp], k)
+                            w_k = None
+
+                    C_k = W_k = None
 
     def apply_vppl_kpt(self, C_k, mesh=None, vpplocR=None, C_k_R=None):
         if mesh is None: mesh = self.mesh
@@ -161,7 +241,7 @@ class PWPP:
 
     def apply_vppnl_kpt(self, C_k, kpt, mesh=None, Gv=None, comp=None):
         cell = self.cell
-        if len(cell._ecp) > 0:
+        if self.pptype == "ccecp":
             k = member(kpt, self.kpts)[0]
             if self.vppnlocWks is None:
                 return lib.dot(C_k.conj(), self.vppnlocGG[k]).conj()
@@ -173,13 +253,12 @@ class PWPP:
                 else:
                     raise RuntimeError("comp must be None or int")
                 return lib.dot(lib.dot(C_k, W_k.T.conj()), W_k)
-        elif not cell.pseudo is None:
-            if "GTH" in cell.pseudo.upper():
-                return apply_vppnl_kpt_gth(cell, C_k, kpt, Gv)
-            else:
-                raise NotImplementedError("Pseudopotential %s is currently not supported." % (str(cell.pseudo)))
-        else:
+        elif self.pptype == "gth":
+            return apply_vppnl_kpt_gth(cell, C_k, kpt, Gv)
+        elif self.pptype == "alle":
             return apply_vppnl_kpt_alle(cell, C_k, kpt, Gv)
+        else:
+            raise NotImplementedError("Pseudopotential %s is currently not supported." % (str(cell.pseudo)))
 
 
 """ All-electron implementation starts here
@@ -519,7 +598,7 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv, _ecp=None):
     return Cbar_k
 
 
-def apply_vppnlocGG_kpt_ccecp_precompute(cell, C_k, k, vppnlocGG):
+def apply_vppnlocGG_kpt_ccecp_full(cell, C_k, k, vppnlocGG):
     ngrids = C_k.shape[1]
     max_memory = (cell.max_memory - lib.current_memory()[0]) * 0.8
     Gblksize = min(int(np.floor(max_memory*1e6/16/ngrids)), ngrids)
@@ -534,6 +613,53 @@ def apply_vppnl_kpt_ccecp(cell, C_k, kpt, Gv, _ecp=None):
     """
     vppnlocGG = get_vppnlocGG_kpt_ccecp(cell, kpt, Gv, _ecp=_ecp)
     return lib.dot(C_k, vppnlocGG)
+
+
+def get_ccecp_kb_support_vec(cell0, kb_basis, kpts, out=None, thr=1e-12):
+    from pyscf.pbc.gto import ecp
+    cell = cell0.copy()
+    cell.basis = kb_basis
+    cell.pseudo = "ccecp"   # make sure
+    cell.verbose = 0
+    cell.build()
+
+# remove local part of the ecp
+    cell = cell.copy()
+    for bas in cell._ecpbas:
+        if bas[1] == -1:
+            idx = list(range(bas[5],bas[6]+1))
+            cell._env[idx] = 0.
+
+    nkpts = len(kpts)
+    if out is None: out = [None] * nkpts
+
+    ovlp = cell.pbc_intor("int1e_ovlp", kpts=kpts)
+    vecp = ecp.ecp_int(cell, kpts)
+
+    nao = cell.nao_nr()
+    Cg_ks = [np.eye(nao)+0.j for k in range(nkpts)]
+    n_ks = [nao] * nkpts
+    out = get_C_ks_G(cell, kpts, Cg_ks, n_ks, out=out)
+
+    r"""
+    Math:
+        W(G) = \sum_{G'} v(G,G') C(G')
+             = \sum_{G'} <G|mu> (S^-1)_{mu,la} v_{la,si} *
+                                        (S^{-1})_{si,nu} <nu|G'> C(G')
+             = (D S^-1 v S^-1 D^dagger C)(G)
+    where D is FFT of raw AOs, and C is FFT of symmetrically orthogonalized AOs. Remember that all vectors are stored as row vectors (i.e., transposed)
+        W(G) = (C D^dagger (S^-1 v S^-1)^T D)(G)
+    """
+    for k in range(nkpts):
+        e, u = scipy.linalg.eigh(ovlp[k])
+        Sinv = lib.dot(u*e**-1.,u.conj().T)
+        U = lib.dot(lib.dot(Sinv, vecp[k]), Sinv).T
+        D = get_kcomp(out, k)
+        C = orth(cell0, D, thr_lindep=1e-12)
+        W = lib.dot(lib.dot(lib.dot(C, D.conj().T), U), D)
+        W = get_support_vec(C, W, method="eig")
+        set_kcomp(W, out, k)
+        W = D = C = None
 
 
 def get_support_vec(C, W, method="cd", thr_eig=1e-12):

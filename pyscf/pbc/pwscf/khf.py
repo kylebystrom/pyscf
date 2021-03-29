@@ -333,16 +333,12 @@ def get_mo_occ(cell, moe_ks=None, C_ks=None, nocc=None):
             mocc_k[moe_ks[k] < e_fermi+EPSILON] = 2
             mocc_ks[k] = mocc_k
     elif not C_ks is None:
-        if isinstance(C_ks, list):
-            mocc_ks = [np.asarray([2 if i < nocc else 0
-                       for i in range(C_k.shape[0])]) for C_k in C_ks]
-        elif isinstance(C_ks, h5py.Group):
-            nkpts = len(C_ks)
-            mocc_ks = [np.asarray([2 if i < nocc else 0
-                       for i in range(C_ks["%d"%k].shape[0])])
-                       for k in range(nkpts)]
-        else:
-            raise RuntimeError
+        nkpts = len(C_ks)
+        mocc_ks = [None] * nkpts
+        for k in range(nkpts):
+            C_k = get_kcomp(C_ks, k, load=False)
+            mocc_ks[k] = np.asarray([2 if i < nocc else 0
+                                     for i in range(C_k.shape[0])])
     else:
         raise RuntimeError
 
@@ -420,39 +416,33 @@ def orth_mo1(cell, C, mocc, thr_nonorth=1e-6, thr_lindep=1e-8, follow=True):
 
 def orth_mo(cell, C_ks, mocc_ks, thr=1e-3):
     nkpts = len(mocc_ks)
-    if isinstance(C_ks, list):
-        for k in range(nkpts):
-            C_ks[k] = orth_mo1(cell, C_ks[k], mocc_ks[k], thr)
-    elif isinstance(C_ks, h5py.Group):
-        for k in range(nkpts):
-            key = "%d"%k
-            C_k = C_ks[key][()]
-            del C_ks[key]
-            C_ks[key] = orth_mo1(cell, C_k, mocc_ks[k], thr)
-    else:
-        raise RuntimeError
+    for k in range(nkpts):
+        C_k = get_kcomp(C_ks, k)
+        C_k = orth_mo1(cell, C_k, mocc_ks[k], thr)
+        set_kcomp(C_k, C_ks, k)
+        C_k = None
 
     return C_ks
 
 
 def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
-                   key="hcore", fC_ks=None):
+                   key="hcore", out=None):
     """
         Args:
             nvir (int):
                 Number of virtual bands to be evaluated. Default is zero.
-            fC_ks (h5py group):
+            out (h5py group):
                 If provided, the orbitals are written to it.
     """
 
-    if not fC_ks is None:
-        assert(isinstance(fC_ks, h5py.Group))
+    if not out is None:
+        assert(isinstance(out, h5py.Group))
 
     nkpts = len(kpts)
 
     if basis is None: basis = cell0.basis
     if pseudo is None: pseudo = cell0.pseudo
-    cell = copy.copy(cell0)
+    cell = cell0.copy()
     cell.basis = basis
     if len(cell._ecp) > 0:  # use GTH to avoid the slow init time of ECP
         cell.pseudo = "gth-pade"
@@ -495,7 +485,7 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
     ntot_ks = [min(ntot,nmo_ks[k]) for k in range(nkpts)]
 
     logger.debug1(cell0, "converting init MOs from GTO basis to PW basis")
-    C_ks = pw_helper.get_C_ks_G(cell, kpts, mo_coeff, ntot_ks, fC_ks=fC_ks,
+    C_ks = pw_helper.get_C_ks_G(cell, kpts, mo_coeff, ntot_ks, out=out,
                                 verbose=cell0.verbose)
     mocc_ks = [mo_occ[k][:ntot_ks[k]] for k in range(nkpts)]
 
@@ -510,23 +500,20 @@ def add_random_mo(cell, n_ks, C_ks, mocc_ks):
     """ Add random MOs if C_ks[k].shape[0] < n_ks[k] for any k
     """
     nkpts = len(n_ks)
-    incore = isinstance(C_ks, list)
     for k in range(nkpts):
         n = n_ks[k]
-        n0 = C_ks[k].shape[0] if incore else C_ks["%d"%k].shape[0]
+        C0 = get_kcomp(C_ks, k)
+        n0 = C0.shape[0]
         if n0 < n:
             n1 = n - n0
             logger.warn(cell, "Requesting more orbitals than currently have (%d > %d) for kpt %d. Adding %d random orbitals.", n, n0, k, n1)
-            C0 = C_ks[k] if incore else C_ks["%d"%k][()]
             C = add_random_mo1(cell, n, C0)
-            if incore:
-                C_ks[k] = C
-            else:
-                del C_ks["%d"%k]
-                C_ks["%d"%k] = C
+            set_kcomp(C, C_ks, k)
+            C = None
 
             mocc = mocc_ks[k]
             mocc_ks[k] = np.concatenate([mocc, np.zeros(n1,dtype=mocc.dtype)])
+        C0 = None
 
     return C_ks, mocc_ks
 
@@ -567,7 +554,6 @@ def init_guess_from_C0(cell, C0_ks, ntot_ks, C_ks=None, mocc_ks=None):
 
     # discarded high-energy orbitals if chkfile has more than requested
     for k in range(nkpts):
-        key = "%d"%k
         ntot = ntot_ks[k]
         C0_k = get_kcomp(C0_ks, k)
         if C0_k.shape[0] > ntot:
@@ -721,17 +707,16 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
     if Gv is None: Gv = cell.get_Gv(mesh)
     if exxdiv is None: exxdiv = mf.exxdiv
 
-    C_incore = isinstance(C_ks, list)
-
     kpts = mf.kpts
     nkpts = len(kpts)
     moe_ks = [None] * nkpts
     for k in range(nkpts):
         kpt = kpts[k]
-        C_k = C_ks[k] if C_incore else C_ks["%d"%k][()]
+        C_k = get_kcomp(C_ks, k)
         Cbar_k = mf.apply_Fock_kpt(C_k, kpt, mocc_ks, mesh, Gv, vj_R,
                                    exxdiv, comp=comp, ret_E=False)
         moe_k = np.einsum("ig,ig->i", C_k.conj(), Cbar_k)
+        C_k = Cbar_k = None
         if (moe_k.imag > 1e-6).any():
             logger.warn(mf, "MO energies have imaginary part %s for kpt %d",
                         moe_k, k)
@@ -763,16 +748,14 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
     kpts = mf.kpts
     nkpts = len(kpts)
 
-    nocc_ks = [np.sum(mocc_ks[k] > 0) for k in range(nkpts)]
-
     e_ks = np.zeros(nkpts)
     if moe_ks is None:
         if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks)
         e_comp = np.zeros(5)
         for k in range(nkpts):
             kpt = kpts[k]
-            nocc_k = nocc_ks[k]
-            Co_k = C_ks[k][:nocc_k] if C_incore else C_ks["%d"%k][:nocc_k]
+            occ = np.where(mocc_ks[k] > THR_OCC)[0]
+            Co_k = get_kcomp(C_ks, k, occ=occ)
             e_comp_k = mf.apply_Fock_kpt(Co_k, kpt, mocc_ks, mesh, Gv,
                                          vj_R, exxdiv, ret_E=True)[1]
             e_ks[k] = np.sum(e_comp_k)
@@ -788,12 +771,11 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
     else:
         for k in range(nkpts):
             kpt = kpts[k]
-            nocc_k = nocc_ks[k]
-            Co_k = C_ks[k][:nocc_k] if C_incore else C_ks["%d"%k][:nocc_k]
-            # e1_comp = mf.apply_h1e_kpt(Co_k, kpt, mesh, Gv, ret_E=True)[1]
+            occ = np.where(mocc_ks[k] > THR_OCC)[0]
+            Co_k = get_kcomp(C_ks, k, occ=occ)
             e1_comp = mf.apply_hcore_kpt(Co_k, kpt, mesh, Gv, mf.with_pp,
                                          ret_E=True)[1]
-            e_ks[k] = np.sum(e1_comp) * 0.5 + np.sum(moe_ks[k][:nocc_k])
+            e_ks[k] = np.sum(e1_comp) * 0.5 + np.sum(moe_ks[k][occ])
     e_scf = np.sum(e_ks) / nkpts
 
     if moe_ks is None and exxdiv == "ewald":
@@ -861,20 +843,15 @@ def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None,
                   verbose_davidson=0):
     if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks)
 
-    C_incore = isinstance(C_ks, list)
-
     nkpts = len(kpts)
-    if C_incore:
-        if Cout_ks is None: Cout_ks = [None] * nkpts
-    else:
-        Cout_ks = C_ks
+    if Cout_ks is None: Cout_ks = C_ks
     conv_ks = [None] * nkpts
     moeout_ks = [None] * nkpts
     fc_ks = [None] * nkpts
 
     for k in range(nkpts):
         kpt = kpts[k]
-        C_k = C_ks[k] if C_incore else C_ks["%d"%k][()]
+        C_k = get_kcomp(C_ks, k)
         conv_, moeout_ks[k], Cout_k, fc_ks[k] = \
                     mf.converge_band_kpt(C_k, kpt, mocc_ks,
                                          mesh=mesh, Gv=Gv,
@@ -882,10 +859,7 @@ def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None,
                                          conv_tol_davidson=conv_tol_davidson,
                                          max_cycle_davidson=max_cycle_davidson,
                                          verbose_davidson=verbose_davidson)
-        if C_incore:
-            Cout_ks[k] = Cout_k
-        else:
-            Cout_ks["%d"%k][()] = Cout_k
+        set_kcomp(Cout_k, Cout_ks, k)
         conv_ks[k] = np.prod(conv_)
 
     return conv_ks, moeout_ks, Cout_ks, fc_ks
@@ -1044,7 +1018,7 @@ class PWKRHF(mol_hf.SCF):
         return get_mo_occ(mf.cell, moe_ks, C_ks, nocc)
 
     def get_init_guess_key(self, cell=None, kpts=None, basis=None, pseudo=None,
-                           nvir=None, key="hcore", fC_ks=None):
+                           nvir=None, key="hcore", out=None):
         if cell is None: cell = self.cell
         if kpts is None: kpts = self.kpts
         if nvir is None: nvir = self.nvir
@@ -1052,7 +1026,7 @@ class PWKRHF(mol_hf.SCF):
         if key in ["h1e","hcore","cycle1","scf"]:
             C_ks, mocc_ks = get_init_guess(cell, kpts,
                                            basis=basis, pseudo=pseudo,
-                                           nvir=nvir, key=key, fC_ks=fC_ks)
+                                           nvir=nvir, key=key, out=out)
         else:
             logger.warn(self, "Unknown init guess %s", key)
             raise RuntimeError
@@ -1082,23 +1056,23 @@ class PWKRHF(mol_hf.SCF):
             if C0 is None:
                 C_ks, mocc_ks = self.get_init_guess_key(nvir=nvir,
                                                         key=init_guess,
-                                                        fC_ks=C_ks)
+                                                        out=C_ks)
             else:
-                C_ks, mocc_ks = self.get_init_guess_C0(C0, nvir=nvir, fC_ks=C_ks)
+                C_ks, mocc_ks = self.get_init_guess_C0(C0, nvir=nvir, out=C_ks)
 
         return C_ks, mocc_ks, fchk, dump_chk
 
-    def get_init_guess_C0(self, C0, nvir=None, fC_ks=None):
+    def get_init_guess_C0(self, C0, nvir=None, out=None):
         if nvir is None: nvir = self.nvir
         nocc = self.cell.nelectron // 2
         ntot_ks = [nocc+nvir] * len(self.kpts)
-        return init_guess_from_C0(self.cell, C0, ntot_ks, fC_ks)
+        return init_guess_from_C0(self.cell, C0, ntot_ks, out)
 
     def get_vj_R(self, C_ks, mocc_ks, mesh=None, Gv=None):
         return self.with_jk.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
 
-    def init_pp(self, with_pp=None):
-        return pw_pseudo.pseudopotential(self, with_pp=with_pp)
+    def init_pp(self, with_pp=None, **kwargs):
+        return pw_pseudo.pseudopotential(self, with_pp=with_pp, **kwargs)
 
     def init_jk(self, with_jk=None, ace_exx=None):
         if ace_exx is None: ace_exx = self.ace_exx

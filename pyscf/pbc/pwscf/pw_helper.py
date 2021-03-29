@@ -90,7 +90,7 @@ def timing_call(func, args, tdict, tname):
     return res
 
 
-def orth(cell, C, thr_nonorth=1e-6, thr_lindep=1e-8, follow=True):
+def orth(cell, C, thr_nonorth=1e-6, thr_lindep=1e-12, follow=True):
     n = C.shape[0]
     S = lib.dot(C.conj(), C.T)
     nonorth_err = np.max(np.abs(S - np.eye(S.shape[0])))
@@ -124,20 +124,13 @@ def get_nocc_ks_from_mocc(mocc_ks):
     return np.asarray([np.sum(np.asarray(mocc) > 0) for mocc in mocc_ks])
 
 
-def get_C_ks_G(cell, kpts, mo_coeff_ks, n_ks, fC_ks=None, verbose=0):
+def get_C_ks_G(cell, kpts, mo_coeff_ks, n_ks, out=None, verbose=0):
     """ Return Cik(G) for input MO coeff. The normalization convention is such that Cik(G).conj()@Cjk(G) = delta_ij.
     """
     log = logger.new_logger(cell, verbose)
 
     nkpts = len(kpts)
-
-    if not fC_ks is None:
-        assert(isinstance(fC_ks, h5py.Group))
-        C_ks_G = fC_ks
-        incore = False
-    else:
-        C_ks_G = [None] * nkpts
-        incore = True
+    if out is None: out = [None] * nkpts
 
     dtype = np.complex128
     dsize = 16
@@ -182,16 +175,11 @@ def get_C_ks_G(cell, kpts, mo_coeff_ks, n_ks, fC_ks=None, verbose=0):
                         kpt)) * lib.dot(ao, C_k)
             ao = ao_ks = None
 
-        if incore:
-            for krel in range(nk):
-                C_k_R = C_ks_R[krel].T * fac
-                C_ks_G[krel+k0] = tools.fft(C_k_R, mesh)
-        else:
-            for krel in range(nk):
-                C_k_R = C_ks_R[krel].T * fac
-                C_ks_G["%d"%(krel+k0)] = tools.fft(C_k_R, mesh)
+        for krel in range(nk):
+            C_k_R = tools.fft(C_ks_R[krel].T * fac, mesh)
+            set_kcomp(C_k_R, out, krel+k0)
 
-    return C_ks_G
+    return out
 
 
 """ kinetic energy
