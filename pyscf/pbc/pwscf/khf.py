@@ -73,7 +73,9 @@ def kernel_doubleloop(mf, kpts, C0=None,
     vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
     mf.update_pp(C_ks)
     mf.update_k(C_ks, mocc_ks)
-    moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks, vj_R=vj_R)
+    C_ks, moe_ks, mocc_ks = mf.eig_subspace(C_ks, mocc_ks)
+    # moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks, vj_R=vj_R)
+    # C_ks, moe_ks, mocc_ks = sort_mo(C_ks, moe_ks, mocc_ks)
     e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks)
     logger.info(mf, 'init E= %.15g', e_tot)
     mf.dump_moe(moe_ks, mocc_ks, nband=nband)
@@ -123,6 +125,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
         mf.update_k(C_ks, mocc_ks)
         last_hf_moe = moe_ks
         moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks, vj_R=vj_R)
+        # C_ks, moe_ks, mocc_ks = sort_mo(C_ks, moe_ks, mocc_ks)
         de_band = get_band_err(moe_ks, last_hf_moe, nband)
         last_hf_e = e_tot
         e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
@@ -171,6 +174,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
         mf.update_k(C_ks, mocc_ks)
         last_hf_moe = moe_ks
         moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks, vj_R=vj_R)
+        # C_ks, moe_ks, mocc_ks = sort_mo(C_ks, moe_ks, mocc_ks)
         de_band = get_band_err(moe_ks, last_hf_moe, nband)
         last_hf_e = e_tot
         e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
@@ -213,6 +217,31 @@ def get_nband(mf, nbandv, nbandv_extra):
     nband_tot = nbando + nbandv_tot
 
     return nbando, nbandv_tot, nband, nband_tot
+
+
+# def sort_mo(C_ks, moe_ks, mocc_ks, occ0=None):
+#     if occ0 is None: occ0 = 2
+#     if isinstance(moe_ks[0], np.ndarray):
+#         nkpts = len(moe_ks)
+#         for k in range(nkpts):
+#             idxocc = np.where(mocc_ks[k]>THR_OCC)[0]
+#             idxvir = np.where(mocc_ks[k]<THR_OCC)[0]
+#             order = np.concatenate([idxocc, idxvir])
+#             mocc_ks[k] = np.asarray([occ0 if i < len(idxocc) else 0
+#                                     for i in range(len(order))])
+#             moe_ks[k] = moe_ks[k][order]
+#             set_kcomp(get_kcomp(C_ks, k)[order], C_ks, k)
+#         return C_ks, moe_ks, mocc_ks
+#     else:
+#         ncomp = len(moe_ks)
+#         for comp in range(ncomp):
+#             C_ks_comp = get_kcomp(C_ks, comp, load=False)
+#             C_ks_comp, moe_ks[comp], mocc_ks[comp] = sort_mo(C_ks_comp,
+#                                                              moe_ks[comp],
+#                                                              mocc_ks[comp],
+#                                                              occ0=1)
+#             if isinstance(C_ks, list): C_ks[comp] = C_ks_comp
+#         return C_ks, moe_ks, mocc_ks
 
 
 def get_band_err(moe_ks, last_hf_moe, nband):
@@ -445,7 +474,15 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
     cell = cell0.copy()
     cell.basis = basis
     if len(cell._ecp) > 0:  # use GTH to avoid the slow init time of ECP
-        cell.pseudo = "gth-pade"
+        gth_pseudo = {}
+        for iatm in range(cell0.natm):
+            atm = cell0.atom_symbol(iatm)
+            if atm in gth_pseudo:
+                continue
+            q = cell0.atom_charge(iatm)
+            gth_pseudo[atm] = "gth-pade-q%d"%q
+        logger.debug(cell0, "Using the GTH-PP for init guess: %s", gth_pseudo)
+        cell.pseudo = gth_pseudo
         cell.ecp = cell._ecp = cell._ecpbas = None
     else:
         cell.pseudo = pseudo
@@ -479,7 +516,7 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
 
     # TODO: support specifying nvir for each kpt (useful for e.g., metals)
     assert(isinstance(nvir, int) and nvir >= 0)
-    nocc = cell.nelectron // 2
+    nocc = cell0.nelectron // 2
     nmo_ks = [len(mo_occ[k]) for k in range(nkpts)]
     ntot = nocc + nvir
     ntot_ks = [min(ntot,nmo_ks[k]) for k in range(nkpts)]
@@ -587,6 +624,38 @@ def update_k(mf, C_ks, mocc_ks):
 
     tock = np.asarray([time.clock(), time.time()])
     mf.scf_summary["t-ace"] += tock - tick
+
+
+def eig_subspace(mf, C_ks, mocc_ks, mesh=None, Gv=None, vj_R=None, exxdiv=None,
+                 comp=None):
+
+    cell = mf.cell
+    if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks)
+    if mesh is None: mesh = cell.mesh
+    if Gv is None: Gv = cell.get_Gv(mesh)
+    if exxdiv is None: exxdiv = mf.exxdiv
+
+    kpts = mf.kpts
+    nkpts = len(kpts)
+    moe_ks = [None] * nkpts
+    for k in range(nkpts):
+        kpt = kpts[k]
+        C_k = get_kcomp(C_ks, k)
+        Cbar_k = mf.apply_Fock_kpt(C_k, kpt, mocc_ks, mesh, Gv, vj_R, exxdiv,
+                                   comp=comp, ret_E=False)
+        F_k = lib.dot(C_k.conj(), Cbar_k.T)
+        e, u = scipy.linalg.eigh(F_k)
+        moe_ks[k] = e
+        C_k = lib.dot(u.T, C_k)
+        set_kcomp(C_k, C_ks, k)
+        C_k = Cbar_k = None
+
+    mocc_ks = get_mo_occ(cell, moe_ks=moe_ks)
+    if exxdiv == "ewald":
+        for k in range(nkpts):
+            moe_ks[k][mocc_ks[k] > THR_OCC] -= mf._madelung
+
+    return C_ks, moe_ks, mocc_ks
 
 
 def apply_hcore_kpt(mf, C_k, kpt, mesh, Gv, with_pp, C_k_R=None, comp=None,
@@ -1113,6 +1182,7 @@ class PWKRHF(mol_hf.SCF):
     dump_moe = dump_moe
     update_pp = update_pp
     update_k = update_k
+    eig_subspace = eig_subspace
     get_mo_energy = get_mo_energy
     apply_hcore_kpt = apply_hcore_kpt
     apply_jk_kpt = apply_jk_kpt

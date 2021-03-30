@@ -102,7 +102,15 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
     cell = cell0.copy()
     cell.basis = basis
     if len(cell._ecp) > 0:  # use GTH to avoid the slow init time of ECP
-        cell.pseudo = "gth-pade"
+        gth_pseudo = {}
+        for iatm in range(cell0.natm):
+            atm = cell0.atom_symbol(iatm)
+            if atm in gth_pseudo:
+                continue
+            q = cell0.atom_charge(iatm)
+            gth_pseudo[atm] = "gth-pade-q%d"%q
+        logger.debug(cell0, "Using the GTH-PP for init guess: %s", gth_pseudo)
+        cell.pseudo = gth_pseudo
         cell.ecp = cell._ecp = cell._ecpbas = None
     else:
         cell.pseudo = pseudo
@@ -199,6 +207,31 @@ def update_k(mf, C_ks, mocc_ks):
 
     tock = np.asarray([time.clock(), time.time()])
     mf.scf_summary["t-ace"] += tock - tick
+
+
+def eig_subspace(mf, C_ks, mocc_ks, mesh=None, Gv=None, vj_R=None, exxdiv=None,
+                 comp=None):
+    if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks)
+    moe_ks = [None] * 2
+    for s in [0,1]:
+        C_ks_s = get_spin_component(C_ks, s)
+        mocc_ks_s = mocc_ks[s]
+        C_ks_s, moe_ks[s], mocc_ks[s] = khf.eig_subspace(mf, C_ks_s, mocc_ks_s,
+                                                         mesh=mesh, Gv=Gv,
+                                                         vj_R=vj_R,
+                                                         exxdiv="none", comp=s)
+        if isinstance(C_ks, list): C_ks[s] = C_ks_s
+
+    # determine mo occ and apply ewald shift if requested
+    mocc_ks = mf.get_mo_occ(moe_ks)
+    if exxdiv is None: exxdiv = mf.exxdiv
+    if exxdiv == "ewald":
+        nkpts = len(mf.kpts)
+        for s in [0,1]:
+            for k in range(nkpts):
+                moe_ks[s][k][mocc_ks[s][k] > khf.THR_OCC] -= mf._madelung
+
+    return C_ks, moe_ks, mocc_ks
 
 
 def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
@@ -359,6 +392,7 @@ class PWKUHF(khf.PWKRHF):
     dump_moe = dump_moe
     update_pp = update_pp
     update_k = update_k
+    eig_subspace = eig_subspace
     get_mo_energy = get_mo_energy
     energy_elec = energy_elec
     converge_band = converge_band
