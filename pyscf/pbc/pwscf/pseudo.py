@@ -158,6 +158,8 @@ class PWPP:
             nkpts = len(self.kpts)
             cell = self.cell
             if self.ecpnloc_method == "kb":
+                logger.debug(self, "Using basis %s for KB-ccECP",
+                             self.ecpnloc_kbbas)
                 if len(self.vppnlocWks) > 0:
                     return
                 if ncomp == 1:
@@ -550,9 +552,9 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv, _ecp=None):
 
     dtype = np.complex128
     dsize = 16
-    max_memory = (cell.max_memory - lib.current_memory()[0]) * 0.9
+    max_memory = (cell.max_memory - lib.current_memory()[0]) * 0.8
     Gblksize = min(int(np.floor((max_memory*1e6/dsize/ngrids -
-                                 ((2*lmax+1)*natmmax+4+nmo))*0.3)), ngrids)
+                                 ((2*lmax+1)*natmmax+10+nmo))*0.2)), ngrids)
     buf = np.empty(Gblksize*ngrids, dtype=dtype)
     buf2 = np.empty(Gblksize*ngrids, dtype=dtype)
     buf3 = np.empty(Gblksize*ngrids, dtype=dtype)
