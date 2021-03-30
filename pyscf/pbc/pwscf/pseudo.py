@@ -158,7 +158,7 @@ class PWPP:
             nkpts = len(self.kpts)
             cell = self.cell
             if self.ecpnloc_method == "kb":
-                logger.debug(self, "Using basis %s for KB-ccECP",
+                lib.logger.debug(self, "Using basis %s for KB-ccECP",
                              self.ecpnloc_kbbas)
                 if len(self.vppnlocWks) > 0:
                     return
