@@ -92,6 +92,8 @@ def timing_call(func, args, tdict, tname):
 
 def orth(cell, C, thr_nonorth=1e-6, thr_lindep=1e-12, follow=True):
     n = C.shape[0]
+    norm = lib.einsum("ig,ig->i", C.conj(), C).real**0.5
+    C *= 1./norm.reshape(-1,1)
     S = lib.dot(C.conj(), C.T)
     nonorth_err = np.max(np.abs(S - np.eye(S.shape[0])))
     if nonorth_err < thr_nonorth:
