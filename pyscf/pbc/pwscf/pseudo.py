@@ -136,7 +136,7 @@ class PWPP:
             self._ecp = format_ccecp_param(cell)
             self.swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
             self.fswap = lib.H5TmpFile(self.swapfile.name)
-            if self.ecpnloc_method in ["direct", "kb"]:
+            if self.ecpnloc_method in ["direct", "kb", "kb2"]:
                 self.vppnlocWks = self.fswap.create_group("vppnlocWks")
             elif self.ecpnloc_method == "full":
                 nkpts = len(self.kpts)
@@ -181,20 +181,19 @@ class PWPP:
                 if ncomp > 1:
                     for comp in range(1,ncomp):
                         self.vppnlocWks["%d"%comp] = out
-
-                # # if len(self.vppnlocWks) == 0:
-                # if True:
-                #     if ncomp == 1:
-                #         out = self.vppnlocWks
-                #     else:
-                #         out = self.vppnlocWks.create_group("0")
-                #     kb_basis = self.ecpnloc_kbbas
-                #     kpts = self.kpts
-                #     get_ccecp_kb_support_vec(cell, kb_basis, kpts, out=out)
-                #     if ncomp > 1:
-                #         for comp in range(1,ncomp):
-                #             self.vppnlocWks["%d"%comp] = outl
-                #     W_ = get_kcomp(self.vppnlocWks, 0)
+            elif self.ecpnloc_method == "kb2":
+                if len(self.vppnlocWks) > 0:
+                    return
+                if ncomp == 1:
+                    out = self.vppnlocWks
+                else:
+                    out = self.vppnlocWks.create_group("0")
+                kb_basis = self.ecpnloc_kbbas
+                kpts = self.kpts
+                get_ccecp_kb_support_vec(cell, kb_basis, kpts, out=out)
+                if ncomp > 1:
+                    for comp in range(1,ncomp):
+                        self.vppnlocWks["%d"%comp] = out
             else:
                 if out is None: out = self.vppnlocWks
                 if ncomp > 1:
@@ -638,30 +637,37 @@ def get_ccecp_kb_support_vec(cell0, kb_basis, kpts, out=None, thr=1e-12):
     ovlp = cell.pbc_intor("int1e_ovlp", kpts=kpts)
     vecp = ecp.ecp_int(cell, kpts)
 
-    nao = cell.nao_nr()
-    Cg_ks = [np.eye(nao)+0.j for k in range(nkpts)]
-    n_ks = [nao] * nkpts
-    out = get_C_ks_G(cell, kpts, Cg_ks, n_ks, out=out)
-
-    r"""
-    Math:
-        W(G) = \sum_{G'} v(G,G') C(G')
-             = \sum_{G'} <G|mu> (S^-1)_{mu,la} v_{la,si} *
-                                        (S^{-1})_{si,nu} <nu|G'> C(G')
-             = (D S^-1 v S^-1 D^dagger C)(G)
-    where D is FFT of raw AOs, and C is FFT of symmetrically orthogonalized AOs. Remember that all vectors are stored as row vectors (i.e., transposed)
-        W(G) = (C D^dagger (S^-1 v S^-1)^T D)(G)
-    """
+# get Sinv and gto bas vecs (SOAO)
+    c = [None] * nkpts
+    Sinv = [None] * nkpts
     for k in range(nkpts):
         e, u = scipy.linalg.eigh(ovlp[k])
-        Sinv = lib.dot(u*e**-1.,u.conj().T)
-        U = lib.dot(lib.dot(Sinv, vecp[k]), Sinv).T
-        D = get_kcomp(out, k)
-        C = orth(cell0, D, thr_lindep=1e-12)
-        W = lib.dot(lib.dot(lib.dot(C, D.conj().T), U), D)
-        W = get_support_vec(C, W, method="eig")
-        set_kcomp(W, out, k)
-        W = D = C = None
+        c[k] = lib.dot(u*e**-0.5, u.T.conj())
+        Sinv[k] = lib.dot(u*e**-1, u.T.conj())
+
+# gto -> pw
+    swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+    fswap = lib.H5TmpFile(swapfile.name)
+    swapfile = None
+    C = fswap.create_group("C")
+    D = fswap.create_group("D")
+
+    n_ks = [c[k].shape[1] for k in range(nkpts)]
+    get_C_ks_G(cell, kpts, c, n_ks, out=C)
+    n_ks = [Sinv[k].shape[1] for k in range(nkpts)]
+    get_C_ks_G(cell, kpts, Sinv, n_ks, out=D)
+
+# get W
+    for k in range(nkpts):
+        C_k = get_kcomp(C, k)
+        D_k = get_kcomp(D, k)
+        DC_k = lib.dot(D_k.conj(), C_k.T)
+        w_k = lib.dot(Sinv[k], lib.dot(vecp[k], DC_k))
+        W_k = get_C_ks_G(cell, [kpts[k]], [w_k], [w_k.shape[1]])[0]
+        C_k = get_kcomp(C, k)
+        W_k = get_support_vec(C_k, W_k, method="eig")
+        set_kcomp(W_k, out, k)
+        C_k = D_k = W_k = None
 
 
 def get_support_vec(C, W, method="cd", thr_eig=1e-12):
