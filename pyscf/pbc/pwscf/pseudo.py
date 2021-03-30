@@ -545,14 +545,15 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv, _ecp=None):
         uniq_atm_map[atm].append(iatm)
 
     nmo = C_k.shape[0]
-    lmax = np.max([_ecpitem[1][0] for _ecpitem in _ecp.values()])
+    lmax = np.max([_ecpnlitem[0] for _ecpitem in _ecp.values()
+                  for _ecpnlitem in _ecpitem[1]])
     natmmax = np.max([len(iatm_lst) for iatm_lst in uniq_atm_map.values()])
 
     dtype = np.complex128
     dsize = 16
     max_memory = (cell.max_memory - lib.current_memory()[0]) * 0.9
     Gblksize = min(int(np.floor((max_memory*1e6/dsize/ngrids -
-                                 ((2*lmax+1)*natmmax+3+nmo))*0.3)), ngrids)
+                                 ((2*lmax+1)*natmmax+4+nmo))*0.3)), ngrids)
     buf = np.empty(Gblksize*ngrids, dtype=dtype)
     buf2 = np.empty(Gblksize*ngrids, dtype=dtype)
     buf3 = np.empty(Gblksize*ngrids, dtype=dtype)
@@ -562,6 +563,7 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, Gv, _ecp=None):
     Gk = Gv + kpt
     G_rad = lib.norm(Gk, axis=1)
     if abs(kpt).sum() < 1e-8: G_rad += 1e-40    # avoid inverting zero
+    if lmax > 0: invG_rad = 1./G_rad
 
     Cbar_k = np.zeros_like(C_k)
     for atm,iatm_lst in uniq_atm_map.items():
