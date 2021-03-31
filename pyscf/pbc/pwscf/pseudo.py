@@ -151,15 +151,14 @@ class PWPP:
                                    (self.ecp_nloc_item))
         self._ecpnloc_initialized = True
 
-    def update_vppnloc_support_vec(self, C_ks, ncomp=1, out=None):
+    def update_vppnloc_support_vec(self, C_ks, ncomp=1, thr_eig=1e-12,
+                                   out=None):
         if self.pptype == "ccecp":
             if not self._ecpnloc_initialized:
                 self.initialize_ecpnloc()
             nkpts = len(self.kpts)
             cell = self.cell
             if self.ecpnloc_method == "kb":
-                lib.logger.debug(self, "Using basis %s for KB-ccECP",
-                             self.ecpnloc_kbbas)
                 if len(self.vppnlocWks) > 0:
                     return
                 if ncomp == 1:
@@ -174,11 +173,22 @@ class PWPP:
                 nao = cell_kb.nao_nr()
                 Cg_ks = [np.eye(nao) + 0.j for k in range(nkpts)]
                 n_ks = [nao] * nkpts
-                Cg_ks = get_C_ks_G(cell_kb, self.kpts, Cg_ks, n_ks, verbose=0)
+                Cg_ks = get_C_ks_G(cell_kb, self.kpts, Cg_ks, n_ks, out=out,
+                                   verbose=0)
+                ng_ks = [get_kcomp(Cg_ks, k, load=False).shape[0]
+                          for k in range(nkpts)]
+                lib.logger.debug(self, "Using basis %s for KB-ccECP (%d AOs)",
+                                 self.ecpnloc_kbbas, cell_kb.nao_nr())
+                lib.logger.debug(self, "keeping %s SOAOs", ng_ks)
                 for k in range(nkpts):
-                    Cg_ks[k] = orth(cell_kb, Cg_ks[k])
+                    Cg_k = get_kcomp(Cg_ks, k)
+                    Cg_k = orth(cell_kb, Cg_k)
+                    set_kcomp(Cg_k, Cg_ks, k)
                 self.ecpnloc_method = "direct"
                 self.update_vppnloc_support_vec(Cg_ks, out=out, ncomp=1)
+                nsv_ks = [get_kcomp(out, k, load=False).shape[0]
+                          for k in range(nkpts)]
+                lib.logger.debug(self, "keeping %s KB support vectors", nsv_ks)
                 self.ecpnloc_method = "kb"
                 if ncomp > 1:
                     for comp in range(1,ncomp):
@@ -228,7 +238,7 @@ class PWPP:
                         for comp in range(ncomp):
                             p0, p1 = comp_loc[comp:comp+2]
                             w_k = get_support_vec(C_k[p0:p1], W_k[p0:p1],
-                                                  method="eig")
+                                                  method="eig", thr_eig=thr_eig)
                             set_kcomp(w_k, out["%d"%comp], k)
                             w_k = None
 
