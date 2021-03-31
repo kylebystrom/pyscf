@@ -353,17 +353,20 @@ def apply_vppnl_kpt_gth(cell, C_k, kpt, Gv):
 """
 def fast_SphBslin(n, xs, thr_switch=20, thr_overflow=700, out=None):
     if out is None: out = np.zeros_like(xs)
-    if n == 0:
-        out[:] = np.sinh(xs) / xs
-    elif n == 1:
-        out[:] = (xs * np.cosh(xs) - np.sinh(xs)) / xs**2.
-    elif n == 2:
-        out[:] = ((xs**2.+3.)*np.sinh(xs) - 3.*xs*np.cosh(xs)) / xs**3.
-    elif n == 3:
-        out[:] = ((xs**3.+15.*xs)*np.cosh(xs) -
-                (6.*xs**2.+15.)*np.sinh(xs)) / xs**4.
-    else:
-        raise NotImplementedError("fast_SphBslin with n=%d is not implemented." % n)
+    with np.errstate(over="ignore", invalid="ignore"):
+        if n == 0:
+            out[:] = np.sinh(xs) / xs
+        elif n == 1:
+            out[:] = (xs * np.cosh(xs) - np.sinh(xs)) / xs**2.
+        elif n == 2:
+            out[:] = ((xs**2.+3.)*np.sinh(xs) - 3.*xs*np.cosh(xs)) / xs**3.
+        elif n == 3:
+            out[:] = ((xs**3.+15.*xs)*np.cosh(xs) -
+                    (6.*xs**2.+15.)*np.sinh(xs)) / xs**4.
+        else:
+            raise NotImplementedError("fast_SphBslin with n=%d is not implemented." % n)
+
+    np.nan_to_num(out, copy=False, nan=0., posinf=0., neginf=0.)
 
     return out
 
