@@ -184,6 +184,25 @@ def get_C_ks_G(cell, kpts, mo_coeff_ks, n_ks, out=None, verbose=0):
     return out
 
 
+""" Contracted PW
+"""
+def get_mesh_map(cell, ke_cutoff, ke_cutoff2):
+    """ Input ke_cutoff > ke_cutoff2, hence define a dense grid "mesh" and a sparse grid "mesh2" where mesh2 is rigorously a subset of mesh. This function returns the indices of grid points in mesh2 in mesh.
+    """
+
+    latvec = cell.lattice_vectors()
+    mesh = tools.cutoff_to_mesh(latvec, ke_cutoff)
+    mesh2 = tools.cutoff_to_mesh(latvec, ke_cutoff2)
+    rs = [np.fft.fftfreq(mesh[i], 1./mesh[i]) for i in range(3)]
+    rs2 = [np.fft.fftfreq(mesh2[i], 1./mesh2[i]) for i in range(3)]
+    idxr = [np.where(abs(rs[i][:,None]-rs2[i])<1e-3)[0] for i in range(3)]
+    nr = [len(rs[i]) for i in range(3)]
+    mesh_map = np.ravel(((idxr[0]*nr[1]*nr[2])[:,None] + idxr[1]*nr[2]
+                        )[:,:,None] + idxr[2])
+
+    return mesh_map
+
+
 """ kinetic energy
 """
 def apply_kin_kpt(C_k, kpt, mesh, Gv):

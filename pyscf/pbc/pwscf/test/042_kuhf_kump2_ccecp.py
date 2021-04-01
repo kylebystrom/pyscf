@@ -45,7 +45,7 @@ if __name__ == "__main__":
     pwmf.chkfile = chkfile
     pwmf.kernel()
 
-    assert(abs(pwmf.e_tot - -5.353419724479592) < 1.e-6)
+    assert(abs(pwmf.e_tot - -5.35340814056703) < 1.e-6)
 
 # krhf init from chkfile
     pwmf.init_guess = "chkfile"
@@ -61,4 +61,4 @@ if __name__ == "__main__":
     pwmp = pwscf.KUMP2(pwmf)
     pwmp.kernel()
 
-    assert(abs(pwmp.e_corr - -0.00668294448263389) < 1.e-6)
+    assert(abs(pwmp.e_corr - -0.00666865692322997) < 1.e-6)
