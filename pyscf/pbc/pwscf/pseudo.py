@@ -354,6 +354,22 @@ def fast_SphBslin_numexpr(n, xs, thr_switch=20, thr_overflow=700, out=None):
     return out
 
 
+def fast_SphBslin_c(n, xs, out=None):
+    if out is None: out = np.zeros_like(xs)
+
+    import ctypes
+    libpw = lib.load_library("libpwscf")
+    libpw.fast_SphBslin(
+        xs.ctypes.data_as(ctypes.c_void_p),
+        ctypes.c_int(xs.size),
+        ctypes.c_int(n),
+        out.ctypes.data_as(ctypes.c_void_p),
+    )
+    np.nan_to_num(out, copy=False, nan=0., posinf=0., neginf=0.)
+
+    return out
+
+
 def format_ccecp_param(cell):
     r""" Format the ecp data into the following dictionary:
         _ecp = {
@@ -489,7 +505,8 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
     TICK = np.array([time.clock(), time.time()])
 
     if use_numexpr:
-        fSBin = fast_SphBslin_numexpr
+        # fSBin = fast_SphBslin_numexpr
+        fSBin = fast_SphBslin_c
     else:
         fast_SphBslin
 
