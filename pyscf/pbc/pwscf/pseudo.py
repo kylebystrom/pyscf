@@ -355,6 +355,9 @@ def fast_SphBslin_numexpr(n, xs, thr_switch=20, thr_overflow=700, out=None):
 
 
 def fast_SphBslin_c(n, xs, out=None):
+    if n > 3:
+        raise NotImplementedError("fast_SphBslin with n=%d is not implemented." % n)
+
     if out is None: out = np.zeros_like(xs)
 
     import ctypes
@@ -485,14 +488,15 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
                   for _ecpnlitem in _ecpitem[1]])
     natmmax = np.max([len(iatm_lst) for iatm_lst in uniq_atm_map.values()])
 
+    dtype0 = np.float64
     dtype = np.complex128
     dsize = 16
     max_memory = (cell.max_memory - lib.current_memory()[0]) * 0.8
     Gblksize = min(int(np.floor((max_memory*1e6/dsize/ngrids -
                                  ((2*lmax+1)*natmmax+10+nmo))*0.2)), ngrids)
     buf = np.empty(Gblksize*ngrids, dtype=dtype)
-    buf2 = np.empty(Gblksize*ngrids, dtype=dtype)
-    buf3 = np.empty(Gblksize*ngrids, dtype=dtype)
+    buf2 = np.empty(Gblksize*ngrids, dtype=dtype0)
+    buf3 = np.empty(Gblksize*ngrids, dtype=dtype0)
     lib.logger.debug1(cell, "Computing v^nl*C_k in %d segs with blksize %d",
                       (ngrids-1)//Gblksize+1, Gblksize)
 
@@ -504,11 +508,12 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
     tspans = np.zeros((4,2))
     TICK = np.array([time.clock(), time.time()])
 
-    if use_numexpr:
-        # fSBin = fast_SphBslin_numexpr
-        fSBin = fast_SphBslin_c
-    else:
-        fast_SphBslin
+    # if use_numexpr:
+    #     fSBin = fast_SphBslin_c
+    # else:
+    #     fSBin = fast_SphBslin
+    fSBin = fast_SphBslin_c
+    # fSBin = fast_SphBslin
 
     Cbar_k = np.zeros_like(C_k)
     for atm,iatm_lst in uniq_atm_map.items():
@@ -529,9 +534,10 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
                     pYlm_part[:] *= (invG_rad**l)[:,None]
                 G_red = G_rad * (0.5 / al)
                 for p0,p1 in lib.prange(0,ngrids,Gblksize):
-                    G_rad2 = np.ndarray((p1-p0,ngrids), dtype=dtype, buffer=buf)
-                    vnlGG = np.ndarray((p1-p0,ngrids), dtype=dtype, buffer=buf2)
-                    SBin = np.ndarray((p1-p0,ngrids), dtype=dtype, buffer=buf3)
+                    vnlGG = np.ndarray((p1-p0,ngrids), dtype=dtype, buffer=buf)
+                    G_rad2 = np.ndarray((p1-p0,ngrids), dtype=dtype0,
+                                        buffer=buf2)
+                    SBin = np.ndarray((p1-p0,ngrids), dtype=dtype0, buffer=buf3)
                     np.multiply(G_rad[p0:p1,None], G_red, out=G_rad2)
                     # use np.dot since a slice is neither F nor C-contiguous
                     vnlGG = np.dot(pYlm_part[p0:p1], pYlm_part.conj().T,
