@@ -2,6 +2,7 @@
     The wrapper for calling the functions here go to pw_helper.py
 """
 
+import time
 import tempfile
 import numpy as np
 import scipy.linalg
@@ -104,6 +105,7 @@ def pseudopotential(mf, with_pp=None, mesh=None, **kwargs):
         set_kw(with_pp, "ecpnloc_method")
         set_kw(with_pp, "ecpnloc_kbbas")
         set_kw(with_pp, "ecpnloc_ke_cutoff")
+        set_kw(with_pp, "ecpnloc_use_numexpr")
 
     mf.with_pp = with_pp
 
@@ -138,6 +140,9 @@ class PWPP:
         self.vppnlocWks = None
         self._ecpnloc_initialized = False
 
+        # debug options
+        self.ecpnloc_use_numexpr = False
+
     def initialize_ecpnloc(self):
         if self.pptype == "ccecp":
             lib.logger.debug(self, "Initializing ccECP non-local part")
@@ -168,7 +173,8 @@ class PWPP:
                                          out,
                                          ke_cutoff_nloc=self.ecpnloc_ke_cutoff,
                                          ncomp=ncomp, _ecp=self._ecp,
-                                         thr_eig=self.threshold_svec)
+                                         thr_eig=self.threshold_svec,
+                                         use_numexpr=self.ecpnloc_use_numexpr)
             elif self.ecpnloc_method == "kb2":
                 if len(self.vppnlocWks) > 0:
                     return
@@ -187,7 +193,8 @@ class PWPP:
                 get_ccecp_support_vec(cell, C_ks, self.kpts, out,
                                       _ecp=self._ecp,
                                       ke_cutoff_nloc=self.ecpnloc_ke_cutoff,
-                                      ncomp=ncomp, thr_eig=self.threshold_svec)
+                                      ncomp=ncomp, thr_eig=self.threshold_svec,
+                                      use_numexpr=self.ecpnloc_use_numexpr)
 
     def apply_vppl_kpt(self, C_k, mesh=None, vpplocR=None, C_k_R=None):
         if mesh is None: mesh = self.mesh
@@ -326,6 +333,27 @@ def fast_SphBslin(n, xs, thr_switch=20, thr_overflow=700, out=None):
     return out
 
 
+def fast_SphBslin_numexpr(n, xs, thr_switch=20, thr_overflow=700, out=None):
+    import numexpr
+    if out is None: out = np.zeros_like(xs)
+    with np.errstate(over="ignore", invalid="ignore"):
+        if n == 0:
+            numexpr.evaluate("sinh(xs)/xs", out=out)
+        elif n == 1:
+            numexpr.evaluate("(xs * cosh(xs) - sinh(xs)) / xs**2.", out=out)
+        elif n == 2:
+            numexpr.evaluate("((xs**2.+3.)*sinh(xs) - 3.*xs*cosh(xs)) / xs**3.",
+                             out=out)
+        elif n == 3:
+            numexpr.evaluate("((xs**3.+15.*xs)*cosh(xs) -(6.*xs**2.+15.)*sinh(xs)) / xs**4.", out=out)
+        else:
+            raise NotImplementedError("fast_SphBslin with n=%d is not implemented." % n)
+
+    np.nan_to_num(out, copy=False, nan=0., posinf=0., neginf=0.)
+
+    return out
+
+
 def format_ccecp_param(cell):
     r""" Format the ecp data into the following dictionary:
         _ecp = {
@@ -412,7 +440,7 @@ def get_vpplocG_ccecp(cell, Gv, _ecp=None):
     return vlocG
 
 
-def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None):
+def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
     if _ecp is None: _ecp = format_ccecp_param(cell)
     Gv = cell.get_Gv()
     SI = cell.get_SI(Gv)
@@ -457,6 +485,14 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None):
     if abs(kpt).sum() < 1e-8: G_rad += 1e-40    # avoid inverting zero
     if lmax > 0: invG_rad = 1./G_rad
 
+    tspans = np.zeros((4,2))
+    TICK = np.array([time.clock(), time.time()])
+
+    if use_numexpr:
+        fSBin = fast_SphBslin_numexpr
+    else:
+        fast_SphBslin
+
     Cbar_k = np.zeros_like(C_k)
     for atm,iatm_lst in uniq_atm_map.items():
         _ecpnl_lst = _ecp[atm][1]
@@ -483,12 +519,28 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None):
                     # use np.dot since a slice is neither F nor C-contiguous
                     vnlGG = np.dot(pYlm_part[p0:p1], pYlm_part.conj().T,
                                    out=vnlGG)
-                    SBin = fast_SphBslin(l, G_rad2, out=SBin)
+                    tick = np.array([time.clock(), time.time()])
+                    SBin = fSBin(l, G_rad2, out=SBin)
+                    tock = np.array([time.clock(), time.time()])
+                    tspans[0] += tock - tick
                     np.multiply(vnlGG, SBin, out=vnlGG)
+                    tick = np.array([time.clock(), time.time()])
                     Cbar_k[:,p0:p1] += lib.dot(vnlGG, C_k.T).T
+                    tock = np.array([time.clock(), time.time()])
+                    tspans[1] += tock - tick
                     G_rad2 = vnlGG = SBin = None
                 G_red = pYlm_part = None
     Cbar_k /= cell.vol
+
+    TOCK = np.array([time.clock(), time.time()])
+    tspans[3] += TOCK - TICK
+    tspans[2] = tspans[3] - np.sum(tspans[:2], axis=0)
+
+    tnames = ["SBin", "dot", "other", "total"]
+    for tname, tspan in zip(tnames, tspans):
+        tc, tw = tspan
+        rc, rw = tspan / tspans[-1] * 100
+        lib.logger.debug1(cell, 'CPU time for %10s %9.2f  ( %6.2f%% ), wall time %9.2f  ( %6.2f%% )', tname.ljust(10), tc, rc, tw, rw)
 
     return Cbar_k
 
@@ -511,7 +563,7 @@ def apply_vppnl_kpt_ccecp(cell, C_k, kpt, Gv, _ecp=None):
 
 
 def get_ccecp_support_vec(cell, C_ks, kpts, out, _ecp=None, ke_cutoff_nloc=None,
-                          ncomp=1, thr_eig=1e-12):
+                          ncomp=1, thr_eig=1e-12, use_numexpr=False):
 
     if _ecp is None: _ecp = format_ccecp_param(cell0)
 
@@ -547,12 +599,14 @@ def get_ccecp_support_vec(cell, C_ks, kpts, out, _ecp=None, ke_cutoff_nloc=None,
 
         kpt = kpts[k]
         if cell_nloc is None:
-            W_k = apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=_ecp)
+            W_k = apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=_ecp,
+                                            use_numexpr=use_numexpr)
         else:
             W_k = np.zeros_like(C_k)
             W_k[:,mesh_map] = apply_vppnlocGG_kpt_ccecp(cell_nloc,
                                                         C_k[:,mesh_map],
-                                                        kpt, _ecp=_ecp)
+                                                        kpt, _ecp=_ecp,
+                                                        use_numexpr=use_numexpr)
 
         if ncomp == 1:
             W_k = get_support_vec(C_k, W_k, method="eig", thr_eig=thr_eig)
@@ -570,7 +624,8 @@ def get_ccecp_support_vec(cell, C_ks, kpts, out, _ecp=None, ke_cutoff_nloc=None,
 
 
 def get_ccecp_kb_support_vec(cell, kb_basis, kpts, out, ke_cutoff_nloc=None,
-                             ncomp=1, _ecp=None, thr_eig=1e-12):
+                             ncomp=1, _ecp=None, thr_eig=1e-12,
+                             use_numexpr=False):
 
     if ncomp == 1:
         W_ks = out
@@ -595,8 +650,8 @@ def get_ccecp_kb_support_vec(cell, kb_basis, kpts, out, ke_cutoff_nloc=None,
     lib.logger.debug(cell, "keeping %s SOAOs", ng_ks)
 
     get_ccecp_support_vec(cell, Cg_ks, kpts, W_ks, _ecp=_ecp,
-                          ke_cutoff_nloc=ke_cutoff_nloc,
-                          ncomp=1, thr_eig=thr_eig)
+                          ke_cutoff_nloc=ke_cutoff_nloc, ncomp=1,
+                          thr_eig=thr_eig, use_numexpr=use_numexpr)
     nsv_ks = [get_kcomp(W_ks, k, load=False).shape[0]
               for k in range(nkpts)]
     lib.logger.debug(cell, "keeping %s KB support vectors", nsv_ks)
