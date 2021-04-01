@@ -17,12 +17,12 @@ THR_OCC = 1e-10
 
 def get_rho_R(C_ks, mocc_ks, mesh):
     nkpts = len(C_ks)
-    rho_R = 0. + 0.j
+    rho_R = 0.
     for k in range(nkpts):
         occ = np.where(mocc_ks[k] > THR_OCC)[0].tolist()
         Co_k = get_kcomp(C_ks, k, occ=occ)
         Co_k_R = tools.ifft(Co_k, mesh)
-        rho_R += np.einsum("ig,ig->g", Co_k_R.conj(), Co_k_R)
+        rho_R += np.einsum("ig,ig->g", Co_k_R.conj(), Co_k_R).real
     return rho_R
 
 
@@ -267,7 +267,7 @@ class PWJK:
         if ncomp == 1:
             rho_R = get_rho_R(C_ks, mocc_ks, mesh)
         else:
-            rho_R = 0. + 0.j
+            rho_R = 0.
             for comp in range(ncomp):
                 C_ks_comp = get_kcomp(C_ks, comp, load=False)
                 rho_R += get_rho_R(C_ks_comp, mocc_ks[comp], mesh)
@@ -278,7 +278,7 @@ class PWJK:
         ngrids = Gv.shape[0]
         fac = ngrids**2 / (cell.vol*nkpts)
         vj_R = tools.ifft(tools.fft(rho_R, mesh) * tools.get_coulG(cell, Gv=Gv),
-                          mesh) * fac
+                          mesh).real * fac
 
         return vj_R
 

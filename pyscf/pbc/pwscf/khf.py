@@ -752,12 +752,14 @@ def apply_Fock_kpt(mf, C_k, kpt, mocc_ks, mesh, Gv, vj_R, exxdiv,
     kpts = mf.kpts
     with_pp = mf.with_pp
     with_jk = mf.with_jk
+    C_k_R = tools.ifft(C_k, mesh)
 # 1e part
     res_1e = mf.apply_hcore_kpt(C_k, kpt, mesh, Gv, with_pp, comp=comp,
-                                ret_E=ret_E)
+                                C_k_R=C_k_R, ret_E=ret_E)
 # 2e part
     res_2e = mf.apply_jk_kpt(C_k, kpt, mocc_ks, kpts, mesh, Gv, vj_R, with_jk,
-                             exxdiv, comp=comp, ret_E=ret_E)
+                             exxdiv, C_k_R=C_k_R, comp=comp, ret_E=ret_E)
+    C_k_R = None
 
     if ret_E:
         Cbar_k = res_1e[0] + res_2e[0]
