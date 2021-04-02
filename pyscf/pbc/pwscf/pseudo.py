@@ -380,13 +380,18 @@ def format_ccecp_param(cell):
                     atm2: [_ecpl_atm2, _ecpnl_atm2],
                     ...
                 }
-        _ecpl  = [alp_1, c_1=Zeff, alp_2, c_2, alp1_3, c1_3, alp2_3, c2_3, ...]
+        _ecpl  = [
+                    [alp1_1, c1_1, alp2_1, c2_1, ...],
+                    [alp1_2, c1_2, alp2_2, c2_2, ...],
+                    [alp1_3, c1_3, alp2_3, c2_3, ...],
+                ]
         _ecpnl = [
                     [l1, alp1_l1, c1_l1, alp2_l1, c2_l1, ...],
                     [l2, alp1_l2, c1_l2, alp2_l2, c2_l2, ...],
                     ...
                 ]
         where
+            Zeff = \sum_k ck_1
             Vl(r)  = -Zeff/r + c_1/r*exp(-alp_1*r^2) + c_2*r*exp(-alp_2*r^2) +
                         \sum_{k} ck_3*exp(-alpk_3*r^2)
             Vnl(r) = \sum_l \sum_k ck_l * exp(-alpk_l*r^2) \sum_m |lm><lm|
@@ -401,8 +406,7 @@ def format_ccecp_param(cell):
         ecp_loc = ecp_dic[0]
         _ecp_loc = []
         ecp_loc_item = ecp_loc[1]
-        _ecp_loc = np.concatenate([ecp_loc_item[1][0], ecp_loc_item[3][0],
-                                  *ecp_loc_item[2]])
+        _ecp_loc = [np.concatenate([*ecp_loc_item[iloc]]) for iloc in [1,3,2]]
 # non-local part
         _ecp_nloc = []
         for ecp_nloc_litem in ecp_dic[1:]:
@@ -432,24 +436,28 @@ def get_vpplocG_ccecp(cell, Gv, _ecp=None):
         atm = cell.atom_symbol(iatm)
         _ecpi = _ecp[atm][0]
 # Zeff / r
-        Zeff = _ecpi[1]
+        Zeff = sum(_ecpi[0][1::2])
         vlocG[iatm] += -coulG * Zeff
         v0 = -coulG[G0_idx] * Zeff
 # c1 / r * exp(-a1 * r^2)
-        a1, c1 = _ecpi[:2]
-        vlocG[iatm] += c1 * invG * a1**-0.5 * dawsn(G_rad*(0.5/a1**0.5))
-        v0 += 2*np.pi / a1 * c1
+        n1 = len(_ecpi[0]) // 2
+        for i1 in range(n1):
+            a1, c1 = _ecpi[0][i1*2:(i1+1)*2]
+            vlocG[iatm] += c1 * invG * a1**-0.5 * dawsn(G_rad*(0.5/a1**0.5))
+            v0 += 2*np.pi / a1 * c1
 # c2 * r * exp(-a2 * r^2)
-        a2, c2 = _ecpi[2:4]
-        vlocG[iatm] += c2 * (np.pi/a2**2. + ((0.5/a2**1.5) * invG -
-                                             (np.pi/a2**2.5)*G_rad) *
-                             dawsn(G_rad*(0.5/a2**0.5)))
-        v0 += 2*np.pi / a2**2 * c2
+        n2 = len(_ecpi[1]) // 2
+        for i2 in range(n2):
+            a2, c2 = _ecpi[1][i2*2:(i2+1)*2]
+            vlocG[iatm] += c2 * (np.pi/a2**2. + ((0.5/a2**1.5) * invG -
+                                                 (np.pi/a2**2.5)*G_rad) *
+                                 dawsn(G_rad*(0.5/a2**0.5)))
+            v0 += 2*np.pi / a2**2 * c2
 # \sum_k c3_k * exp(-a3_k * r^2)
-        n3 = (len(_ecpi) - 4) // 2
+        n3 = len(_ecpi[2]) // 2
         if n3 > 0:
             for i3 in range(n3):
-                a3, c3 = _ecpi[(4+i3*2):(6+i3*2)]
+                a3, c3 = _ecpi[2][i3*2:(i3+1)*2]
                 vlocG[iatm] += c3 * (np.pi/a3)**1.5 * np.exp(-G_rad**2.*
                                                              (0.25/a3))
                 v0 += (np.pi/a3)**1.5 * c3
