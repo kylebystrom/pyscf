@@ -169,27 +169,36 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
     return out, mocc_ks_spin
 
 
-def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None):
-    fchk = h5py.File(chkfile_name, "a")
-    C_ks = fchk["mo_coeff"]
-
+def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None, out=None):
     if isinstance(nvir, int): nvir = [nvir] * 2
 
     from pyscf.pbc.scf import chkfile
     scf_dict = chkfile.load_scf(chkfile_name)[1]
     mocc_ks = scf_dict["mo_occ"]
     nkpts = len(mocc_ks[0])
+    if out is None: out = [[None] * nkpts for s in [0,1]]
+    if isinstance(out, h5py.Group):
+        for s in [0,1]:
+            key = "%d"%s
+            if key in out: del out[key]
+            out.create_group(key)
+    C_ks = out
     for s in [0,1]:
         ntot_ks = [None] * nkpts
         C_ks_s = get_spin_component(C_ks, s)
+        with h5py.File(chkfile_name, "r") as f:
+            C0_ks_s = f["mo_coeff/%d"%s]
+            for k in range(nkpts):
+                set_kcomp(get_kcomp(C0_ks_s, k), C_ks_s, k)
         for k in range(nkpts):
             nocc = np.sum(mocc_ks[s][k]>khf.THR_OCC)
             ntot_ks[k] = max(nocc+nvir[s], len(mocc_ks[s][k]))
 
         C_ks_s, mocc_ks[s] = khf.init_guess_from_C0(cell, C_ks_s, ntot_ks,
-                                                    C_ks_s, mocc_ks[s])
+                                                    out=C_ks_s,
+                                                    mocc_ks=mocc_ks[s])
 
-    return fchk, C_ks, mocc_ks
+    return C_ks, mocc_ks
 
 
 def update_pp(mf, C_ks):
@@ -374,11 +383,12 @@ class PWKUHF(khf.PWKRHF):
 
         return C_ks, mocc_ks
 
-    def init_guess_by_chkfile(self, chk=None, nvir=None, project=None):
+    def init_guess_by_chkfile(self, chk=None, nvir=None, project=None,
+                              out=None):
         if chk is None: chk = self.chkfile
         if nvir is None: nvir = self.nvir
-        # return init_guess_by_chkfile(self.cell, chk, project)
-        return init_guess_by_chkfile(self.cell, chk, nvir, project=project)
+        return init_guess_by_chkfile(self.cell, chk, nvir, project=project,
+                                     out=out)
     def from_chk(self, chk=None, project=None, kpts=None):
         return self.init_guess_by_chkfile(chk, project, kpts)
 

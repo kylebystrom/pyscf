@@ -12,10 +12,10 @@ from pyscf import lib
 
 if __name__ == "__main__":
     nk = 1
-    ke_cutoff = 50
+    ke_cutoff = 30
     pseudo = "gth-pade"
     atom = "C 0 0 0"
-    a = np.eye(3) * 6   # atom in a cubic box
+    a = np.eye(3) * 4   # atom in a cubic box
 
 # cell
     cell = gto.Cell(
@@ -27,7 +27,7 @@ if __name__ == "__main__":
         ke_cutoff=ke_cutoff
     )
     cell.build()
-    cell.verbose = 5
+    cell.verbose = 6
 
 # kpts
     kmesh = [nk]*3
@@ -45,20 +45,21 @@ if __name__ == "__main__":
     pwmf.chkfile = chkfile
     pwmf.kernel()
 
-    assert(abs(pwmf.e_tot - -5.36567883224574) < 1.e-4)
+    assert(abs(pwmf.e_tot - -5.39794638922015) < 1.e-6)
 
 # krhf init from chkfile
     pwmf.init_guess = "chkfile"
     pwmf.kernel()
 
+    assert(abs(pwmf.e_tot - -5.39794638922015) < 1.e-6)
+
 # input C0
-    with h5py.File(pwmf.chkfile, "r") as f:
-        C0 = [[f["mo_coeff/%d/%s"%(s,k)][()] for k in range(nkpts)]
-              for s in [0,1]]
-    pwmf.kernel(C0=C0)
+    pwmf.kernel(C0=pwmf.mo_coeff)
+
+    assert(abs(pwmf.e_tot - -5.39794638922015) < 1.e-6)
 
 # krmp2
     pwmp = pwscf.KUMP2(pwmf)
     pwmp.kernel()
 
-    assert(abs(pwmp.e_corr - -0.00427971975119727) < 1.e-4)
+    assert(abs(pwmp.e_corr - -0.0067920847863142) < 1.e-6)

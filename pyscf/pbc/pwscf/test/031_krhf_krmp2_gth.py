@@ -12,7 +12,7 @@ from pyscf import lib
 
 if __name__ == "__main__":
     kmesh = [2,1,1]
-    ke_cutoff = 50
+    ke_cutoff = 30
     pseudo = "gth-pade"
     atom = "C 0 0 0; C 0.89169994 0.89169994 0.89169994"
     a = np.asarray(
@@ -46,19 +46,21 @@ if __name__ == "__main__":
     pwmf.chkfile = chkfile
     pwmf.kernel()
 
-    assert(abs(pwmf.e_tot - -10.6734529315486) < 1.e-4)
+    assert(abs(pwmf.e_tot - -10.6755239422105) < 1.e-6)
 
 # krhf init from chkfile
     pwmf.init_guess = "chkfile"
     pwmf.kernel()
 
+    assert(abs(pwmf.e_tot - -10.6755239422105) < 1.e-6)
+
 # input C0
-    with h5py.File(pwmf.chkfile, "r") as f:
-        C0 = [f["mo_coeff/%d"%k][()] for k in range(nkpts)]
-    pwmf.kernel(C0=C0)
+    pwmf.kernel(C0=pwmf.mo_coeff)
+
+    assert(abs(pwmf.e_tot - -10.6755239422105) < 1.e-6)
 
 # krmp2
     pwmp = pwscf.KMP2(pwmf)
     pwmp.kernel()
 
-    assert(abs(pwmp.e_corr - -0.139053546581699) < 1.e-4)
+    assert(abs(pwmp.e_corr - -0.139309030515543) < 1.e-6)

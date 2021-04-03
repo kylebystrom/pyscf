@@ -51,11 +51,12 @@ if __name__ == "__main__":
     pwmf.init_guess = "chkfile"
     pwmf.kernel()
 
+    assert(abs(pwmf.e_tot - -5.35340814056703) < 1.e-6)
+
 # input C0
-    with h5py.File(pwmf.chkfile, "r") as f:
-        C0 = [[f["mo_coeff/%d/%s"%(s,k)][()] for k in range(nkpts)]
-              for s in [0,1]]
-    pwmf.kernel(C0=C0)
+    pwmf.kernel(C0=pwmf.mo_coeff)
+
+    assert(abs(pwmf.e_tot - -5.35340814056703) < 1.e-6)
 
 # krmp2
     pwmp = pwscf.KUMP2(pwmf)

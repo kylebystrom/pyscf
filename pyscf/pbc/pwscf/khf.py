@@ -35,7 +35,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
             conv_tol=1.E-6, conv_tol_davidson=1.E-6, conv_tol_band=1e-4,
             max_cycle=100, max_cycle_davidson=10, verbose_davidson=0,
             ace_exx=True, damp_type="anderson", damp_factor=0.3,
-            conv_check=True, callback=None, **kwargs):
+            dump_chk=True, conv_check=True, callback=None, **kwargs):
     ''' Kernel function for SCF in a PW basis
         Note:
             This double-loop implementation follows closely the implementation in Quantum ESPRESSO.
@@ -62,7 +62,16 @@ def kernel_doubleloop(mf, kpts, C0=None,
 
     # init guess and SCF chkfile
     tick = np.asarray([time.clock(), time.time()])
-    C_ks, mocc_ks, fchk, dump_chk = mf.get_init_guess(nvir=nbandv_tot, C0=C0)
+
+    if mf.outcore:
+        swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+        fswap = lib.H5TmpFile(swapfile.name)
+        swapfile = None
+        C_ks = fswap.create_group("C_ks")
+    else:
+        fswap = None
+        C_ks = None
+    C_ks, mocc_ks = mf.get_init_guess(nvir=nbandv_tot, C0=C0, out=C_ks)
 
     tock = np.asarray([time.clock(), time.time()])
     mf.scf_summary["t-init"] = tock - tick
@@ -74,7 +83,6 @@ def kernel_doubleloop(mf, kpts, C0=None,
     mf.update_pp(C_ks)
     mf.update_k(C_ks, mocc_ks)
     C_ks, moe_ks, mocc_ks = mf.eig_subspace(C_ks, mocc_ks)
-    # moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks, vj_R=vj_R)
     # C_ks, moe_ks, mocc_ks = sort_mo(C_ks, moe_ks, mocc_ks)
     e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks)
     logger.info(mf, 'init E= %.15g', e_tot)
@@ -86,7 +94,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
         remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra)
         return scf_conv, e_tot, moe_ks, C_ks, mocc_ks
 
-    if dump_chk:
+    if dump_chk and mf.chkfile:
         # Explicit overwrite the mol object in chkfile
         # Note in pbc.scf, mf.mol == mf.cell, cell is saved under key "mol"
         mol_chkfile.save_mol(cell, mf.chkfile)
@@ -198,7 +206,9 @@ def kernel_doubleloop(mf, kpts, C0=None,
     if callable(callback):
         callback(locals())
 
-    if dump_chk: fchk.close()
+    if mf.outcore:
+        C_ks = chkfile.load_mo_coeff(C_ks)
+        fswap.close()
 
     cput1 = (time.clock(), time.time())
     mf.scf_summary["t-tot"] = np.asarray(cput1) - np.asarray(cput0)
@@ -567,7 +577,7 @@ def add_random_mo1(cell, n, C0):
     return np.vstack([C0,C1])
 
 
-def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None):
+def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None, out=None):
     from pyscf.pbc.scf import chkfile
     scf_dict = chkfile.load_scf(chkfile_name)[1]
     mocc_ks = scf_dict["mo_occ"]
@@ -577,17 +587,23 @@ def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None):
         nocc = np.sum(mocc_ks[k]>THR_OCC)
         ntot_ks[k] = max(nocc+nvir, len(mocc_ks[k]))
 
-    fchk = h5py.File(chkfile_name, "a")
-    C_ks = fchk["mo_coeff"]
+    if out is None: out = [None] * nkpts
+    C_ks = out
+    with h5py.File(chkfile_name, "r") as f:
+        C0_ks = f["mo_coeff"]
+        for k in range(nkpts):
+            set_kcomp(get_kcomp(C0_ks, k), C_ks, k)
 
-    C_ks, mocc_ks = init_guess_from_C0(cell, C_ks, ntot_ks, C_ks, mocc_ks)
+    C_ks, mocc_ks = init_guess_from_C0(cell, C_ks, ntot_ks, out=C_ks,
+                                       mocc_ks=mocc_ks)
 
-    return fchk, C_ks, mocc_ks
+    return C_ks, mocc_ks
 
 
-def init_guess_from_C0(cell, C0_ks, ntot_ks, C_ks=None, mocc_ks=None):
+def init_guess_from_C0(cell, C0_ks, ntot_ks, out=None, mocc_ks=None):
     nkpts = len(C0_ks)
-    if C_ks is None: C_ks = [None] * nkpts
+    if out is None: out = [None] * nkpts
+    C_ks = out
 
     # discarded high-energy orbitals if chkfile has more than requested
     for k in range(nkpts):
@@ -941,6 +957,7 @@ class PWKRHF(mol_hf.SCF):
     '''PWKRHF base class. non-relativistic RHF using PW basis.
     '''
 
+    outcore = getattr(__config__, 'pbc_pwscf_khf_PWKRHF_outcore', True)
     conv_tol = getattr(__config__, 'pbc_pwscf_khf_PWKRHF_conv_tol', 1e-6)
     conv_tol_davidson = getattr(__config__,
                                 'pbc_pwscf_khf_PWKRHF_conv_tol_davidson', 1e-7)
@@ -952,8 +969,6 @@ class PWKRHF(mol_hf.SCF):
                                  100)
     verbose_davidson = getattr(__config__,
                                'pbc_pwscf_khf_PWKRHF_verbose_davidson', 0)
-    double_loop_scf = getattr(__config__,
-                              'pbc_pwscf_khf_PWKRHF_double_loop_scf', True)
     ace_exx = getattr(__config__, 'pbc_pwscf_khf_PWKRHF_ace_exx', True)
     damp_type = getattr(__config__, 'pbc_pwscf_khf_PWKRHF_damp_type',
                         "anderson")
@@ -1004,12 +1019,10 @@ class PWKRHF(mol_hf.SCF):
         logger.info(self, "Band energy conv_tol = %s", self.conv_tol_band)
         logger.info(self, "Davidson conv_tol = %s", self.conv_tol_davidson)
         logger.info(self, "Davidson max_cycle = %d", self.max_cycle_davidson)
-        logger.info(self, "Use double-loop scf = %s", self.double_loop_scf)
-        if self.double_loop_scf:
-            logger.info(self, "Use ACE = %s", self.ace_exx)
-            logger.info(self, "Damping method = %s", self.damp_type)
-            if self.damp_type.lower() == "simple":
-                logger.info(self, "Damping factor = %s", self.damp_factor)
+        logger.info(self, "Use ACE = %s", self.ace_exx)
+        logger.info(self, "Damping method = %s", self.damp_type)
+        if self.damp_type.lower() == "simple":
+            logger.info(self, "Damping factor = %s", self.damp_factor)
         if self.chkfile:
             logger.info(self, 'chkfile to save SCF result = %s', self.chkfile)
         logger.info(self, 'max_memory %d MB (current use %d MB)',
@@ -1027,20 +1040,6 @@ class PWKRHF(mol_hf.SCF):
             logger.info(self, '    Total energy shift due to Ewald probe charge'
                         ' = -1/2 * Nelec*madelung = %.12g',
                         madelung*cell.nelectron * -.5)
-
-    def init_guess_by_chkfile(self, chk=None, nvir=None, project=None):
-        if chk is None: chk = self.chkfile
-        if nvir is None: nvir = self.nvir
-        return init_guess_by_chkfile(self.cell, chk, nvir, project=project)
-    def from_chk(self, chk=None, project=None, kpts=None):
-        return self.init_guess_by_chkfile(chk, project, kpts)
-
-    def dump_chk(self, envs):
-        if self.chkfile:
-            chkfile.dump_scf(self.mol, self.chkfile,
-                             envs['e_tot'], envs['moe_ks'],
-                             envs['mocc_ks'], envs['C_ks'])
-        return self
 
     def dump_scf_summary(self, verbose=logger.DEBUG):
         log = logger.new_logger(self, verbose)
@@ -1088,6 +1087,38 @@ class PWKRHF(mol_hf.SCF):
     def get_mo_occ(mf, moe_ks=None, C_ks=None, nocc=None):
         return get_mo_occ(mf.cell, moe_ks, C_ks, nocc)
 
+    def get_init_guess(self, init_guess=None, nvir=None, chkfile=None, C0=None,
+                       out=None):
+        if init_guess is None: init_guess = self.init_guess
+        if nvir is None: nvir = self.nvir
+        if chkfile is None: chkfile = self.chkfile
+        if init_guess[:3] == "chk" and C0 is None:
+            C_ks, mocc_ks = self.init_guess_by_chkfile(chk=chkfile, nvir=nvir,
+                                                       out=out)
+            dump_chk = True
+        else:
+            # if isinstance(chkfile, str):
+            #     fchk = h5py.File(chkfile, "w")
+            #     dump_chk = True
+            # else:
+            #     # tempfile (discarded after SCF)
+            #     swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+            #     fchk = lib.H5TmpFile(swapfile.name)
+            #     swapfile = None
+            #     dump_chk = False
+
+            # C_ks = fchk.create_group("mo_coeff")
+            C_ks = out
+
+            if C0 is None:
+                C_ks, mocc_ks = self.get_init_guess_key(nvir=nvir,
+                                                        key=init_guess,
+                                                        out=C_ks)
+            else:
+                C_ks, mocc_ks = self.get_init_guess_C0(C0, nvir=nvir, out=C_ks)
+
+        return C_ks, mocc_ks
+
     def get_init_guess_key(self, cell=None, kpts=None, basis=None, pseudo=None,
                            nvir=None, key="hcore", out=None):
         if cell is None: cell = self.cell
@@ -1104,40 +1135,27 @@ class PWKRHF(mol_hf.SCF):
 
         return C_ks, mocc_ks
 
-    def get_init_guess(self, init_guess=None, nvir=None, chkfile=None, C0=None):
-        if init_guess is None: init_guess = self.init_guess
+    def init_guess_by_chkfile(self, chk=None, nvir=None, project=None,
+                              out=None):
+        if chk is None: chk = self.chkfile
         if nvir is None: nvir = self.nvir
-        if chkfile is None: chkfile = self.chkfile
-        if init_guess[:3] == "chk" and C0 is None:
-            fchk, C_ks, mocc_ks = self.init_guess_by_chkfile(chk=chkfile, nvir=nvir)
-            dump_chk = True
-        else:
-            if isinstance(chkfile, str):
-                fchk = h5py.File(chkfile, "w")
-                dump_chk = True
-            else:
-                # tempfile (discarded after SCF)
-                swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
-                fchk = lib.H5TmpFile(swapfile.name)
-                swapfile = None
-                dump_chk = False
+        return init_guess_by_chkfile(self.cell, chk, nvir, project=project,
+                                     out=out)
+    def from_chk(self, chk=None, project=None, kpts=None):
+        return self.init_guess_by_chkfile(chk, project, kpts)
 
-            C_ks = fchk.create_group("mo_coeff")
-
-            if C0 is None:
-                C_ks, mocc_ks = self.get_init_guess_key(nvir=nvir,
-                                                        key=init_guess,
-                                                        out=C_ks)
-            else:
-                C_ks, mocc_ks = self.get_init_guess_C0(C0, nvir=nvir, out=C_ks)
-
-        return C_ks, mocc_ks, fchk, dump_chk
+    def dump_chk(self, envs):
+        if self.chkfile:
+            chkfile.dump_scf(self.mol, self.chkfile,
+                             envs['e_tot'], envs['moe_ks'],
+                             envs['mocc_ks'], envs['C_ks'])
+        return self
 
     def get_init_guess_C0(self, C0, nvir=None, out=None):
         if nvir is None: nvir = self.nvir
         nocc = self.cell.nelectron // 2
         ntot_ks = [nocc+nvir] * len(self.kpts)
-        return init_guess_from_C0(self.cell, C0, ntot_ks, out)
+        return init_guess_from_C0(self.cell, C0, ntot_ks, out=out)
 
     def get_vj_R(self, C_ks, mocc_ks, mesh=None, Gv=None):
         return self.with_jk.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
