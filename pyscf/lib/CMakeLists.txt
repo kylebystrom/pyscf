@@ -29,7 +29,7 @@ if (CMAKE_COMPILER_IS_GNUCC) # Does it skip the link flag on old OsX?
     set(CMAKE_SHARED_LINKER_FLAGS "-Wl,--no-as-needed")
   endif()
 endif()
-set(CMAKE_C_FLAGS "-Wall ${CMAKE_C_FLAGS}")
+set(CMAKE_C_FLAGS "-march=native -O2 -Wall ${CMAKE_C_FLAGS}")
 
 if (${CMAKE_MAJOR_VERSION}.${CMAKE_MINOR_VERSION}.${CMAKE_PATCH_VERSION} VERSION_GREATER 3.0.0)
   cmake_policy(SET CMP0042 NEW)
@@ -88,8 +88,8 @@ option(WITH_F12 "Compling F12 integrals" ON)
 if(BUILD_LIBCINT)
 if(NOT EXISTS "${PROJECT_SOURCE_DIR}/deps/include/cint.h")
   ExternalProject_Add(libcint
-    GIT_REPOSITORY https://github.com/sunqm/libcint.git
-    GIT_TAG v4.0.7
+    GIT_REPOSITORY https://github.com/kylebystrom/qcint.git
+    GIT_TAG fast_grid_int
     PREFIX ${PROJECT_BINARY_DIR}/deps
     INSTALL_DIR ${PROJECT_SOURCE_DIR}/deps
     CMAKE_ARGS -DWITH_F12=${WITH_F12} -DWITH_RANGE_COULOMB=1

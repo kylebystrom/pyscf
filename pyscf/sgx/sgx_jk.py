@@ -72,7 +72,7 @@ def get_jk_favork(sgx, dm, hermi=1, with_j=True, with_k=True,
         batch_nuc = _gen_batch_nuc(mol)
     else:
         batch_jk = _gen_jk_direct(mol, 's2', with_j, with_k, direct_scf_tol,
-                                  sgx._opt, sgx.pjs)
+                                  sgx._opt, sgx.pjs, sgx.simd)
     t1 = logger.timer_debug1(mol, "sgX initialziation", *t0)
 
     sn = numpy.zeros((nao,nao))
@@ -161,7 +161,7 @@ def get_jk_favorj(sgx, dm, hermi=1, with_j=True, with_k=True,
         batch_nuc = _gen_batch_nuc(mol)
     else:
         batch_jk = _gen_jk_direct(mol, 's2', with_j, with_k, direct_scf_tol,
-                                  sgx._opt, sgx.pjs)
+                                  sgx._opt, sgx.pjs, sgx.simd)
 
     sn = numpy.zeros((nao,nao))
     ngrids = grids.coords.shape[0]
@@ -249,7 +249,7 @@ def _gen_batch_nuc(mol):
     return batch_nuc
 
 def _gen_jk_direct(mol, aosym, with_j, with_k, direct_scf_tol,
-                   sgxopt=None, pjs=False):
+                   sgxopt=None, pjs=False, simd=False):
     '''Contraction between sgX Coulomb integrals and density matrices
     J: einsum('guv,xg->xuv', gbn, dms) if dms == rho at grid
        einsum('gij,xij->xg', gbn, dms) if dms are density matrices
@@ -262,9 +262,14 @@ def _gen_jk_direct(mol, aosym, with_j, with_k, direct_scf_tol,
 
     ncomp = 1
     nao = mol.nao
-    cintor = _vhf._fpointer(sgxopt._intor)
-    fdot = _vhf._fpointer('SGXdot_nr'+aosym)
-    drv = _vhf.libcvhf.SGXnr_direct_drv
+    if simd:
+        cintor = _vhf._fpointer('int1e1r_rinv_sph')
+        fdot = _vhf._fpointer('SGXdot_mm_nr'+aosym)
+        drv = _vhf.libcvhf.SGXnr_direct_simd_drv
+    else:
+        cintor = _vhf._fpointer(sgxopt._intor)
+        fdot = _vhf._fpointer('SGXdot_nr'+aosym)
+        drv = _vhf.libcvhf.SGXnr_direct_drv
 
     def jk_part(mol, grid_coords, dms, fg, weights):
         if pjs:
@@ -288,19 +293,28 @@ def _gen_jk_direct(mol, aosym, with_j, with_k, direct_scf_tol,
                 for i, dm in enumerate(dms):
                     dmsptr.append(dm.ctypes.data_as(ctypes.c_void_p))
                     vjkptr.append(vj[i].ctypes.data_as(ctypes.c_void_p))
-                    fjk.append(_vhf._fpointer('SGXnr'+aosym+'_ijg_g_ij'))
+                    if simd:
+                        fjk.append(_vhf._fpointer('SGXnr'+aosym+'_ijg_g_ij_simd'))
+                    else:
+                        fjk.append(_vhf._fpointer('SGXnr'+aosym+'_ijg_g_ij'))
             else:
                 vj = numpy.zeros((len(dms),ncomp,ngrids))[:,0]
                 for i, dm in enumerate(dms):
                     dmsptr.append(dm.ctypes.data_as(ctypes.c_void_p))
                     vjkptr.append(vj[i].ctypes.data_as(ctypes.c_void_p))
-                    fjk.append(_vhf._fpointer('SGXnr'+aosym+'_ijg_ji_g'))
+                    if simd:
+                        fjk.append(_vhf._fpointer('SGXnr'+aosym+'_ijg_ji_g_simd'))
+                    else:
+                        fjk.append(_vhf._fpointer('SGXnr'+aosym+'_ijg_ji_g'))
         if with_k:
             vk = numpy.zeros((len(fg),ncomp,ngrids,nao))[:,0]
             for i, dm in enumerate(fg):
                 dmsptr.append(dm.ctypes.data_as(ctypes.c_void_p))
                 vjkptr.append(vk[i].ctypes.data_as(ctypes.c_void_p))
-                fjk.append(_vhf._fpointer('SGXnr'+aosym+'_ijg_gj_gi'))
+                if simd:
+                    fjk.append(_vhf._fpointer('SGXnr'+aosym+'_ijg_gj_gi_simd'))
+                else:
+                    fjk.append(_vhf._fpointer('SGXnr'+aosym+'_ijg_gj_gi'))
 
         n_dm = len(fjk)
         fjk = (ctypes.c_void_p*(n_dm))(*fjk)
@@ -314,6 +328,8 @@ def _gen_jk_direct(mol, aosym, with_j, with_k, direct_scf_tol,
             atm.ctypes.data_as(ctypes.c_void_p), ctypes.c_int(mol.natm),
             bas.ctypes.data_as(ctypes.c_void_p), ctypes.c_int(mol.nbas),
             env.ctypes.data_as(ctypes.c_void_p))
+        #print("ISNAN", vk.shape, numpy.sum(numpy.isnan(vk)))
+        #print(vk[:,:8,:8])
         return vj, vk
     return jk_part
 

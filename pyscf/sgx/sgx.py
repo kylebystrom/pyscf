@@ -33,7 +33,8 @@ from pyscf.df import df_jk
 from pyscf import __config__
 
 
-def sgx_fit(mf, auxbasis=None, with_df=None, pjs=False):
+def sgx_fit(mf, auxbasis=None, with_df=None,
+            pjs=False, simd=False):
     '''For the given SCF object, update the J, K matrix constructor with
     corresponding SGX or density fitting integrals.
 
@@ -64,9 +65,10 @@ def sgx_fit(mf, auxbasis=None, with_df=None, pjs=False):
     -100.00978770951018
     '''
     assert(isinstance(mf, scf.hf.SCF))
+    assert (not (pjs and simd)), "P-junction screening not compatible with SIMD"
 
     if with_df is None:
-        with_df = SGX(mf.mol, pjs=pjs)
+        with_df = SGX(mf.mol, pjs=pjs, simd=simd)
         with_df.max_memory = mf.max_memory
         with_df.stdout = mf.stdout
         with_df.verbose = mf.verbose
@@ -95,6 +97,8 @@ def sgx_fit(mf, auxbasis=None, with_df=None, pjs=False):
             self.direct_scf = False
 
             self._last_dm = 0
+            self._last_vj = 0
+            self._last_vk = 0
             self._in_scf = False
             self._keys = self._keys.union(['auxbasis', 'with_df'])
 
@@ -125,11 +129,23 @@ def sgx_fit(mf, auxbasis=None, with_df=None, pjs=False):
                     with_df.build(level=with_df.grids_level_f)
                     self._in_scf = False
                     self._last_dm = 0
-                else:
-                    self._last_dm = numpy.asarray(dm)
+                    self._last_vj = 0
+                    self._last_vk = 0
 
-            return with_df.get_jk(dm, hermi, with_j, with_k,
-                                  self.direct_scf_tol, omega)
+            vj, vk = with_df.get_jk(dm-self._last_dm, hermi, with_j, with_k,
+                                    self.direct_scf_tol, omega)
+
+            #vj, vk = with_df.get_jk(dm, hermi, with_j, with_k,
+            #                        self.direct_scf_tol, omega)
+
+            vj += self._last_vj
+            vk += self._last_vk
+
+            self._last_dm = numpy.asarray(dm)
+            self._last_vj = vj.copy()
+            self._last_vk = vk.copy()
+
+            return vj, vk
 
         def post_kernel(self, envs):
             self._in_scf = False
@@ -188,7 +204,7 @@ def _make_opt_pjs(mol):
 
 
 class SGX(lib.StreamObject):
-    def __init__(self, mol, auxbasis=None, pjs=False):
+    def __init__(self, mol, auxbasis=None, pjs=False, simd=False):
         self.mol = mol
         self.stdout = mol.stdout
         self.verbose = mol.verbose
@@ -202,6 +218,7 @@ class SGX(lib.StreamObject):
         self.dfj = False
         self._auxbasis = auxbasis
         self.pjs = pjs
+        self.simd = simd
 
         # debug=True generates a dense tensor of the Coulomb integrals at each
         # grids. debug=False utilizes the sparsity of the integral tensor and

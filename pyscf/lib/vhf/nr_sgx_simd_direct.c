@@ -31,6 +31,7 @@
 #include <mm_malloc.h>
 
 #define MAX(I,J)        ((I) > (J) ? (I) : (J))
+#define MIN(I,J)        ((I) < (J) ? (I) : (J))
 
 typedef struct {
         int ncomp;
@@ -69,7 +70,7 @@ int GTOmax_cache_size(int (*intor)(), int *shls_slice, int ncenter,
         const int ioff = ao_loc[ish0]; \
         const int joff = ao_loc[jsh0]; \
         int i0, j0, i1, j1, ish, jsh, idm; \
-        int shls[3]; \
+        int shls[4]; \
         int (*fprescreen)(); \
         if (vhfopt) { \
                 fprescreen = vhfopt->fprescreen; \
@@ -81,12 +82,13 @@ int GTOmax_cache_size(int (*intor)(), int *shls_slice, int ncenter,
  * for given ksh, lsh, loop all ish, jsh
  */
 void SGXdot_mm_nrs1(int (*intor)(), SGXJKOperatorM **jkop, SGXJKArrayM **vjk,
-                    double **dms, double *buf, double *cache, int n_dm, int ksh,
+                    double **dms, __MD *buf, double *cache, int n_dm, int ksh,
                     CVHFOpt *vhfopt, IntorEnvs *envs)
 {
         DECLARE_ALL;
 
         shls[2] = ksh0 + ksh;
+        shls[3] = shls_slice[5];
 
         for (ish = ish0; ish < ish1; ish++) {
         for (jsh = jsh0; jsh < jsh1; jsh++) {
@@ -111,12 +113,13 @@ void SGXdot_mm_nrs1(int (*intor)(), SGXJKOperatorM **jkop, SGXJKArrayM **vjk,
  * ish >= jsh
  */
 void SGXdot_mm_nrs2(int (*intor)(), SGXJKOperatorM **jkop, SGXJKArrayM **vjk,
-                   double **dms, double *buf, double *cache, int n_dm, int ksh,
+                   double **dms, __MD *buf, double *cache, int n_dm, int ksh,
                    CVHFOpt *vhfopt, IntorEnvs *envs)
 {
         DECLARE_ALL;
 
         shls[2] = ksh0 + ksh;
+        shls[3] = shls_slice[5];
 
         for (ish = ish0; ish < ish1; ish++) {
         for (jsh = jsh0; jsh <= ish; jsh++) {
@@ -142,11 +145,17 @@ void double_to_simd_dm(double* out, double* in, int ng, int nao) {
     // mk * nao * SIMDD + SIMDD * i + ik
     int nm = (ng - 1) / SIMDD + 1;
     int k, i, mk, ik;
-    for (k = 0; k < nao; k++) {
+    for (k = 0; k < ng; k++) {
         mk = k / SIMDD;
         ik = k % SIMDD;
         for (i = 0; i < nao; i++) {
             out[(mk * nao + i) * SIMDD + ik] = in[k * nao + i];
+        }
+    } for (; k < nm * SIMDD; k++) {
+        mk = k / SIMDD;
+        ik = k % SIMDD;
+        for (i = 0; i < nao; i++) {
+            out[(mk * nao + i) * SIMDD + ik] = 0;
         }
     }
 }
@@ -156,7 +165,7 @@ void simd_to_double_dm(double* out, double* in, int ng, int nao) {
     // mk * nao * SIMDD + SIMDD * i + ik
     int nm = (ng - 1) / SIMDD + 1;
     int k, i, mk, ik;
-    for (k = 0; k < nao; k++) {
+    for (k = 0; k < ng; k++) {
         mk = k / SIMDD;
         ik = k % SIMDD;
         for (i = 0; i < nao; i++) {
@@ -188,19 +197,15 @@ void SGXnr_direct_simd_drv(int (*intor)(), void (*fdot)(), SGXJKOperatorM **jkop
         int cache_size = GTOmax_cache_size(intor, shls_slice, 2,
                                            atm, natm, bas, nbas, env);
 
-        int nao = ao_loc[nbas];
+        int nao = ao_loc[shls_slice[1]] - ao_loc[shls_slice[0]];
         int nmm = ((nksh - 1) / SIMDD + 1) * SIMDD;
         int dm_size = nao * nmm;
 
         double *new_dms[n_dm];
-        double *backup_vjk[n_dm];
         for (int i = 0; i < n_dm; i++) {
                 if (1) {
                         new_dms[i] = (double*) _mm_malloc(dm_size * sizeof(double),
                                                           SIMDD * sizeof(double));
-                        backup_vjk[i] = vjk[i];
-                        vjk[i] = (double*) _mm_malloc(dm_size * sizeof(double),
-                                                      SIMDD * sizeof(double));
                         double_to_simd_dm(new_dms[i], dms[i], nksh, nao);
                 } else {
                         new_dms[i] = dms[i];
@@ -217,18 +222,16 @@ void SGXnr_direct_simd_drv(int (*intor)(), void (*fdot)(), SGXJKOperatorM **jkop
         for (i = 0; i < n_dm; i++) {
                 v_priv[i] = jkop[i]->allocate(shls_slice, ao_loc, ncomp);
         }
-        // TODO check that these are correct size
-        // TODO should these be aligned???
-        double *buf = _mm_malloc(SIMDD*di*di*ncomp*sizeof(double),
-                                 SIMDD*sizeof(double));
-        set_double_vec_zero(buf, SIMDD*di*di*ncomp);
+        __MD *buf = _mm_malloc(SIMDD*di*di*ncomp*sizeof(double),
+                               SIMDD*sizeof(double));
+        set_double_vec_zero((double*) buf, SIMDD*di*di*ncomp);
         double *cache = calloc(SIMDD*cache_size, sizeof(double));
 #pragma omp for nowait schedule(dynamic, 1)
         for (ksh = 0; ksh < nksh; ksh+=SIMDD) {
                 for (i = 0; i < n_dm; i++) {
                         jkop[i]->set0(v_priv[i], ksh);
                 }
-                (*fdot)(intor, jkop, v_priv, dms, buf, cache, n_dm, ksh,
+                (*fdot)(intor, jkop, v_priv, new_dms, buf, cache, n_dm, ksh,
                         vhfopt, &envs);
                 for (i = 0; i < n_dm; i++) {
                         jkop[i]->send(v_priv[i], ksh, vjk[i]);
@@ -247,9 +250,6 @@ void SGXnr_direct_simd_drv(int (*intor)(), void (*fdot)(), SGXJKOperatorM **jkop
         for (int i = 0; i < n_dm; i++) {
                 if (1) { // TODO condition
                         _mm_free(new_dms[i]);
-                        simd_to_double_dm(backup_vjk[i], vjk[i], nksh, nao);
-                        _mm_free(vjk[i]);
-                        vjk[i] = backup_vjk[i];
                 }
         }
 }
@@ -295,21 +295,25 @@ static void SGXJKOperatorM_set0_##label(SGXJKArrayM *jkarray, int k) \
 static void SGXJKOperatorM_send_##label(SGXJKArrayM *jkarray, int k, double *out) \
 { \
         int ncomp = jkarray->ncomp; \
-        int i, icomp; \
+        int i, icomp, j; \
         double *data = jkarray->data; \
         int ni = jkarray->v_dims[0]; \
         int nk = jkarray->v_dims[2]; \
         if (task == JTYPE1) { \
-                for (i = 0; i < ncomp; i++) { \
-                        out[i*nk+k] = data[i]; \
+                for (j = 0; j < MIN(SIMDD, nk-k); j++) { \
+                        for (i = 0; i < ncomp; i++) { \
+                                out[i*nk+k+j] = data[i*SIMDD+j]; \
+                        } \
                 } \
         } else if (task == KTYPE1) { \
                 for (icomp = 0; icomp < ncomp; icomp++) { \
-                        for (i = 0; i < ni; i++) { \
-                                out[k*ni+i] = data[i]; \
+                        for (j = 0; j < MIN(SIMDD, nk-k); j++) { \
+                                for (i = 0; i < ni; i++) { \
+                                        out[(k+j)*ni+i] = data[i*SIMDD+j]; \
+                                } \
                         } \
                         out += nk * ni; \
-                        data += ni; \
+                        data += ni * SIMDD; \
                 } \
         } \
 } \
@@ -360,7 +364,7 @@ static void nrs1_ijg_ji_g_simd(__MD *eri, double *dm, SGXJKArrayM *out,
 
         int ij = 0;
         for (icomp = 0; icomp < out->ncomp; icomp++) {
-                g = MM_SET0();
+                g = MM_SET1(0.);
                 for (j = j0; j < j1; j++) {
                 for (i = i0; i < i1; i++, ij++) {
                         g += eri[ij] * MM_SET1(dm[j*ncol+i]);
@@ -384,7 +388,7 @@ static void nrs2_ijg_ji_g_simd(__MD *eri, double *dm, SGXJKArrayM *out,
 
         int ij = 0;
         for (icomp = 0; icomp < out->ncomp; icomp++) {
-                g = MM_SET0();
+                g = MM_SET1(0.);
                 for (j = j0; j < j1; j++) {
                 for (i = i0; i < i1; i++, ij++) {
                         g += eri[ij] * MM_SET1(dm[j*ncol+i] + dm[i*ncol+j]);
@@ -435,7 +439,7 @@ static void nrs1_ijg_gj_gi_simd(__MD *eri, double *dm, SGXJKArrayM *out,
                 for (j = j0; j < j1; j++) {
                 for (i = i0; i < i1; i++, ij++) {
                         //data[i] += eri[ij] * MM_LOAD(dm+(k0*ncol+j])*SIMDD);
-MM_STORE(data+i*SIMDD, MM_FMA(eri[ij], MM_LOAD(dm+(k0*ncol+j)*SIMDD), MM_LOAD(data+i*SIMDD)));
+MM_STORE(data+i*SIMDD, MM_FMA(eri[ij], MM_LOAD(dm+k0*ncol+j*SIMDD), MM_LOAD(data+i*SIMDD)));
                 } }
                 //data += out->v_dims[0];
                 data += out->v_dims[0] * SIMDD;
@@ -460,8 +464,8 @@ static void nrs2_ijg_gj_gi_simd(__MD *eri, double *dm, SGXJKArrayM *out,
                 for (i = i0; i < i1; i++, ij++) {
                         //data[i] += eri[ij] * dm[k0*ncol+j];
                         //data[j] += eri[ij] * dm[k0*ncol+i];
-MM_STORE(data+i*SIMDD, MM_FMA(eri[ij], MM_LOAD(dm+(k0*ncol+j)*SIMDD), MM_LOAD(data+i*SIMDD)));
-MM_STORE(data+j*SIMDD, MM_FMA(eri[ij], MM_LOAD(dm+(k0*ncol+i)*SIMDD), MM_LOAD(data+j*SIMDD)));
+MM_STORE(data+i*SIMDD, MM_FMA(eri[ij], MM_LOAD(dm+k0*ncol+j*SIMDD), MM_LOAD(data+i*SIMDD)));
+MM_STORE(data+j*SIMDD, MM_FMA(eri[ij], MM_LOAD(dm+k0*ncol+i*SIMDD), MM_LOAD(data+j*SIMDD)));
                 } }
                 //data += out->v_dims[0];
                 data += out->v_dims[0] * SIMDD;

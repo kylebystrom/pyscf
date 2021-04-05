@@ -42,7 +42,6 @@
 #define MM_FMA          _mm512_fmadd_pd
 #define MM_FNMA         _mm512_fnmadd_pd
 #define MM_CMP          _mm512_cmp_pd_mask
-#define MM_SET0         _mm512_setzero_pd
 //#define MM_EXPN(y,x,rx) _mm512_store_pd(y, _mm512_exp_pd(rx))
 #define MM_EXPN(y,x,rx) y[0] = exp(-x[0]); y[1] = exp(-x[1]); y[2] = exp(-x[2]); y[3] = exp(-x[3]); \
                         y[4] = exp(-x[4]); y[5] = exp(-x[5]); y[6] = exp(-x[6]); y[7] = exp(-x[7])
@@ -69,7 +68,6 @@
 #define MM_FNMA(a,b,c)  _mm256_sub_pd(c, _mm256_mul_pd(a, b))
 #endif
 #define MM_CMP(a,b,c)   _mm256_movemask_pd(_mm256_cmp_pd(a,b,c))
-#define MM_SET0         _mm256_setzero_pd
 #define MM_EXPN(y,x,rx) y[0] = exp(-x[0]); y[1] = exp(-x[1]); y[2] = exp(-x[2]); y[3] = exp(-x[3])
 
 #elif __SSE3__
@@ -97,7 +95,6 @@
 #define MM_CMP(a,b,c)   _mm_movemask_pd(_mm_cmp_pd(a,b,c))
 #endif
 #define MM_EXPN(y,x,rx) y[0] = exp(-x[0]); y[1] = exp(-x[1])
-#define MM_SET0         _mm_setzero
 
 #endif
 
