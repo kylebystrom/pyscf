@@ -400,6 +400,7 @@ def format_ccecp_param(cell):
     _ecp = {}
     for iatm in range(cell.natm):
         atm = cell.atom_symbol(iatm)
+        if not atm in cell._ecp: continue
         if atm in _ecp: continue
         ncore, ecp_dic = cell._ecp[atm]
 # local part
@@ -434,6 +435,8 @@ def get_vpplocG_ccecp(cell, Gv, _ecp=None):
     vlocG = np.zeros((cell.natm,ngrids))
     for iatm in range(cell.natm):
         atm = cell.atom_symbol(iatm)
+        if not atm in _ecp:
+            continue
         _ecpi = _ecp[atm][0]
 # Zeff / r
         Zeff = sum(_ecpi[0][1::2])
@@ -525,6 +528,8 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
 
     Cbar_k = np.zeros_like(C_k)
     for atm,iatm_lst in uniq_atm_map.items():
+        if not atm in _ecp:
+            continue
         _ecpnl_lst = _ecp[atm][1]
         for _ecpnl in _ecpnl_lst:
             l = _ecpnl[0]

@@ -108,7 +108,10 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
             if atm in gth_pseudo:
                 continue
             q = cell0.atom_charge(iatm)
-            gth_pseudo[atm] = "gth-pade-q%d"%q
+            if q == 0:  # Ghost atom
+                continue
+            else:
+                gth_pseudo[atm] = "gth-pade-q%d"%q
         logger.debug(cell0, "Using the GTH-PP for init guess: %s", gth_pseudo)
         cell.pseudo = gth_pseudo
         cell.ecp = cell._ecp = cell._ecpbas = None
@@ -202,7 +205,14 @@ def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None, out=None):
 
 
 def update_pp(mf, C_ks):
+    tick = np.asarray([time.clock(), time.time()])
+    if not "t-ppnl" in mf.scf_summary:
+        mf.scf_summary["t-ppnl"] = np.zeros(2)
+
     mf.with_pp.update_vppnloc_support_vec(C_ks, ncomp=2)
+
+    tock = np.asarray([time.clock(), time.time()])
+    mf.scf_summary["t-ppnl"] += tock - tick
 
 
 def update_k(mf, C_ks, mocc_ks):
