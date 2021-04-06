@@ -176,9 +176,9 @@ scf.hf.SCF.COSX = sgx_fit
 mcscf.casci.CASCI.COSX = sgx_fit
 
 
-def _make_opt(mol):
+def _make_opt(mol, simd=False):
     '''Optimizer to genrate 3-center 2-electron integrals'''
-    intor = mol._add_suffix('int3c2e')
+    intor = mol._add_suffix('int1e1r_rinv' if simd else 'int3c2e')
     cintopt = gto.moleintor.make_cintopt(mol._atm, mol._bas, mol._env, intor)
     # intor 'int1e_ovlp' is used by the prescreen method
     # 'SGXnr_ovlp_prescreen' only. Not used again in other places.
@@ -268,7 +268,7 @@ class SGX(lib.StreamObject):
         if self.pjs:
             self._opt = _make_opt_pjs(self.mol)
         else:
-            self._opt = _make_opt(self.mol)
+            self._opt = _make_opt(self.mol, self.simd)
 
         # In the RSH-integral temporary treatment, recursively rebuild SGX
         # objects in _rsh_df.
