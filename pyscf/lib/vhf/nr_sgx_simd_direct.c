@@ -202,13 +202,14 @@ void SGXnr_direct_simd_drv(int (*intor)(), void (*fdot)(), SGXJKOperatorM **jkop
         int dm_size = nao * nmm;
 
         double *new_dms[n_dm];
-        for (int i = 0; i < n_dm; i++) {
+        int idm;
+        for (idm = 0; idm < n_dm; idm++) {
                 if (1) {
-                        new_dms[i] = (double*) _mm_malloc(dm_size * sizeof(double),
+                        new_dms[idm] = (double*) _mm_malloc(dm_size * sizeof(double),
                                                           SIMDD * sizeof(double));
-                        double_to_simd_dm(new_dms[i], dms[i], nksh, nao);
+                        double_to_simd_dm(new_dms[idm], dms[idm], nksh, nao);
                 } else {
-                        new_dms[i] = dms[i];
+                        new_dms[idm] = dms[idm];
                 }
         }
 
@@ -247,9 +248,9 @@ void SGXnr_direct_simd_drv(int (*intor)(), void (*fdot)(), SGXJKOperatorM **jkop
         free(cache);
 
 }
-        for (int i = 0; i < n_dm; i++) {
+        for (idm = 0; idm < n_dm; idm++) {
                 if (1) { // TODO condition
-                        _mm_free(new_dms[i]);
+                        _mm_free(new_dms[idm]);
                 }
         }
 }
