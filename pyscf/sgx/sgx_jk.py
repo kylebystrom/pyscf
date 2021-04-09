@@ -257,7 +257,7 @@ def _gen_jk_direct(mol, aosym, with_j, with_k, direct_scf_tol,
     '''
     if sgxopt is None:
         from pyscf.sgx import sgx
-        sgxopt = sgx._make_opt(mol)
+        sgxopt = sgx._make_opt(mol, simd=simd)
     sgxopt.direct_scf_tol = direct_scf_tol
 
     ncomp = 1
