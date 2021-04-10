@@ -17,6 +17,9 @@ from pyscf import lib
 from pyscf import __config__
 
 
+IOBLK = getattr(__config__, "pbc_pwscf_pseudo_IOBLK", 4000) # unit MB
+
+
 """ Wrapper functions
 """
 def get_vpplocR(cell, mesh=None, Gv=None):
@@ -176,6 +179,7 @@ class PWPP:
                                          thr_eig=self.threshold_svec,
                                          use_numexpr=self.ecpnloc_use_numexpr)
             elif self.ecpnloc_method == "kb2":
+                raise NotImplementedError
                 if len(self.vppnlocWks) > 0:
                     return
                 if ncomp == 1:
@@ -665,7 +669,7 @@ def get_ccecp_support_vec(cell, C_ks, kpts, out, _ecp=None, ke_cutoff_nloc=None,
 
 def get_ccecp_kb_support_vec(cell, kb_basis, kpts, out, ke_cutoff_nloc=None,
                              ncomp=1, _ecp=None, thr_eig=1e-12,
-                             use_numexpr=False):
+                             use_numexpr=False, ioblk=IOBLK):
 
     if ncomp == 1:
         W_ks = out
@@ -680,20 +684,43 @@ def get_ccecp_kb_support_vec(cell, kb_basis, kpts, out, ke_cutoff_nloc=None,
                      cell_kb.nao_nr())
 
     nao = cell_kb.nao_nr()
-    Cg_ks = [np.eye(nao) + 0.j for k in range(nkpts)]
-    ng_ks = [nao] * nkpts
-    Cg_ks = get_C_ks_G(cell_kb, kpts, Cg_ks, ng_ks, out=W_ks)
-    for k in range(nkpts):
-        Cg_k = get_kcomp(Cg_ks, k)
-        Cg_k = orth(cell_kb, Cg_k)
-        set_kcomp(Cg_k, Cg_ks, k)
-    lib.logger.debug(cell, "keeping %s SOAOs", ng_ks)
 
-    get_ccecp_support_vec(cell, Cg_ks, kpts, W_ks, _ecp=_ecp,
-                          ke_cutoff_nloc=ke_cutoff_nloc, ncomp=1,
-                          thr_eig=thr_eig, use_numexpr=use_numexpr)
+# batching kpts to avoid high peak disk usage
+    ngrids = np.prod(cell_kb.mesh)
+    kblk = min(int(np.floor(ioblk/(ngrids*nao*16/1024**2.))), nkpts)
+    nblk = int(np.ceil(nkpts / kblk))
+    lib.logger.debug(cell, "Calculating KB support vec for all kpts in %d segments with kptblk size %d", nblk, kblk)
+
+    tmpgroupname = "tmp"
+    iblk = 0
+    for k0,k1 in lib.prange(0,nkpts,kblk):
+        lib.logger.debug1(cell, "BLK %d  kpt range %d ~ %d  kpts %s",
+                          iblk, k0, k1, kpts[k0:k1])
+        iblk += 1
+        nkpts01 = k1 - k0
+        kpts01 = kpts[k0:k1]
+        Cg_ks = [np.eye(nao) + 0.j for k in range(nkpts01)]
+        ng_ks = [nao] * nkpts01
+        W_ks_blk = W_ks.create_group(tmpgroupname)
+        Cg_ks = get_C_ks_G(cell_kb, kpts01, Cg_ks, ng_ks, out=W_ks_blk)
+        for k in range(nkpts01):
+            Cg_k = get_kcomp(Cg_ks, k)
+            Cg_k = orth(cell_kb, Cg_k)
+            set_kcomp(Cg_k, Cg_ks, k)
+        Cg_k = None
+        lib.logger.debug(cell, "keeping %s SOAOs", ng_ks)
+
+        get_ccecp_support_vec(cell, Cg_ks, kpts01, W_ks_blk, _ecp=_ecp,
+                              ke_cutoff_nloc=ke_cutoff_nloc, ncomp=1,
+                              thr_eig=thr_eig, use_numexpr=use_numexpr)
+
+        for k in range(k0,k1):
+            W_ks["%d"%k] = W_ks_blk["%d"%(k-k0)]
+        del W_ks[tmpgroupname]
+
     nsv_ks = [get_kcomp(W_ks, k, load=False).shape[0]
               for k in range(nkpts)]
+
     lib.logger.debug(cell, "keeping %s KB support vectors", nsv_ks)
 
     if ncomp > 1:
