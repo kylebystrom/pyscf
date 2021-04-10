@@ -546,7 +546,11 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
                 if l > 0:
                     pYlm_part[:] *= (invG_rad**l)[:,None]
                 G_red = G_rad * (0.5 / al)
+                iblk = 0
                 for p0,p1 in lib.prange(0,ngrids,Gblksize):
+                    lib.logger.debug2(cell, "Gblk [%d/%d], %d ~ %d", iblk,
+                            (ngrids-1)//Gblksize+1, p0, p1)
+                    iblk += 1
                     vnlGG = np.ndarray((p1-p0,ngrids), dtype=dtype, buffer=buf)
                     G_rad2 = np.ndarray((p1-p0,ngrids), dtype=dtype0,
                                         buffer=buf2)
