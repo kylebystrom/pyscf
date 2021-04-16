@@ -20,7 +20,7 @@ def read_fchk(chkfile_name):
     moe_ks = scf_dict["mo_energy"]
     scf_dict = None
 
-    fchk = h5py.File(chkfile_name, "a")
+    fchk = h5py.File(chkfile_name, "r")
     C_ks = fchk["mo_coeff"]
 
     return fchk, C_ks, moe_ks, mocc_ks
@@ -92,37 +92,58 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
     nnvir = len(nvir_lst)
     logger.info(cell, "Compute emp2 for these nvir's: %s", nvir_lst)
 
-    # estimate memory requirement
-    est_mem = nocc_max*nvir_max*ngrids      # for caching v_ia_R
-    est_mem += (nocc_max*nvir_max)**2*4     # for caching oovv_ka/kb, eijab, wijab
+    # estimate memory requirement if done outcore
+    est_mem = (nocc_max*nvir_max)**2*4      # for caching oovv_ka/kb, eijab, wijab
+    est_mem += nocc_max*nvir_max*ngrids     # for caching v_ia_R
     est_mem += (nocc_max+nvir_max)*ngrids*2 # for caching MOs
     est_mem *= dsize / 1e6
+    est_mem_outcore = est_mem
+    # estimate memory requirement if done incore
+    est_mem_incore = nkpts * (
+                nocc_max*nvir_max*ngrids +  # for caching v_ia_ks_R
+                (nocc_max+nvir_max)*ngrids  # for caching C_ks_R
+            ) * dsize / 1e6
+    est_mem_incore += est_mem
+    # get currently available memory
     frac = 0.6
     cur_mem = cell.max_memory - lib.current_memory()[0]
     safe_mem = cur_mem * frac
-    logger.debug(cell, "Currently available memory %9.2f MB, safe %9.2f MB",
+    # check if incore mode is possible
+    incore = est_mem_incore < cur_mem
+    est_mem = est_mem_incore if incore else est_mem_outcore
+
+    logger.debug(cell, "Currently available memory total   %9.2f MB, safe   %9.2f MB",
                  cur_mem, safe_mem)
-    logger.debug(cell, "Estimated required memory  %9.2f MB", est_mem)
+    logger.debug(cell, "Estimated required  memory outcore %9.2f MB, incore %9.2f MB",
+                 est_mem_outcore, est_mem_incore)
+    logger.debug(cell, "Incore mode: %r", incore)
     if est_mem > safe_mem:
         rec_mem = est_mem / frac + lib.current_memory()[0]
-        logger.warn(cell, "Estimate memory requirement (%.2f MB) exceeds %.0f%% of currently available memory (%.2f MB). Calculations may fail and `cell.max_memory = %.2f` is recommended.", est_mem, frac*100, safe_mem, rec_mem)
+        logger.warn(cell, "Estimate memory (%.2f MB) exceeds %.0f%% of currently available memory (%.2f MB). Calculations may fail and `cell.max_memory = %.2f` is recommended.", est_mem, frac*100, safe_mem, rec_mem)
 
     buf1 = np.empty(nocc_max*nvir_max*ngrids, dtype=dtype)
     buf2 = np.empty(nocc_max*nocc_max*nvir_max*nvir_max, dtype=dtype)
     buf3 = np.empty(nocc_max*nocc_max*nvir_max*nvir_max, dtype=dtype)
 
-    swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
-    fswap = lib.H5TmpFile(swapfile.name)
-    swapfile = None
+    if incore:
+        C_ks_R = [None] * nkpts
+        v_ia_ks_R = [None] * nkpts
+    else:
+        swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+        fswap = lib.H5TmpFile(swapfile.name)
+        swapfile = None
 
-    C_ks_R = fswap.create_group("C_ks_R")
+        C_ks_R = fswap.create_group("C_ks_R")
+        v_ia_ks_R = fswap.create_group("v_ia_ks_R")
+
     for k in range(nkpts):
         C_k = get_kcomp(C_ks, k)
         C_k = tools.ifft(C_k, mesh)
         set_kcomp(C_k, C_ks_R, k)
         C_k = None
 
-    v_ia_ks_R = fswap.create_group("v_ia_ks_R")
+    C_ks = None
+    fchk.close()
 
     cput1 = logger.timer(cell, 'initialize pwmp2', *cput0)
 
@@ -159,7 +180,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
                 v_ia = tools.fft(Co_ki_R[i].conj() * Cv_ka_R, mesh) * coulG
                 v_ia_R[i] = tools.ifft(v_ia, mesh)
 
-            set_kcomp(v_ia_R, v_ia_ks_R, ka)
+            set_kcomp(v_ia_R, v_ia_ks_R, ka, copy=incore)
             v_ia_R = Cv_ka_R = None
 
         Co_ki_R = None
@@ -207,7 +228,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
 
                 tick[:] = time.clock(), time.time()
                 Cv_kb_R = get_kcomp(C_ks_R, kb, occ=vir_b)
-                v_ia = get_kcomp(v_ia_ks_R, ka)
+                v_ia = get_kcomp(v_ia_ks_R, ka, copy=incore)
                 tock[:] = time.clock(), time.time()
                 tspans[3] += tock - tick
 
@@ -224,7 +245,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
 
                 if ka != kb:
                     Cv_ka_R = get_kcomp(C_ks_R, ka, occ=vir_a)
-                    v_ib = get_kcomp(v_ia_ks_R, kb)
+                    v_ib = get_kcomp(v_ia_ks_R, kb, copy=incore)
                     tock[:] = time.clock(), time.time()
                     tspans[3] += tock - tick
 
@@ -399,7 +420,7 @@ if __name__ == "__main__":
     cell = gto.Cell(atom=atom, a=a, basis=basis, pseudo=pseudo,
                     ke_cutoff=ke_cutoff)
     cell.build()
-    cell.verbose = 5
+    cell.verbose = 6
 
     nk = 2
     kmesh = [nk] * 3

@@ -16,13 +16,19 @@ from pyscf.lib import logger
 
 """ Helper functions
 """
-def get_kcomp(C_ks, k, load=True, occ=None):
+def get_kcomp(C_ks, k, load=True, occ=None, copy=False):
     if C_ks is None: return None
     if isinstance(C_ks, list):
         if occ is None:
-            return C_ks[k]
+            if copy:
+                return C_ks[k].copy()
+            else:
+                return C_ks[k]
         else:
-            return C_ks[k][occ]
+            if copy:
+                return C_ks[k][occ].copy()
+            else:
+                return C_ks[k][occ]
     else:
         key = "%d"%k
         if load:
@@ -46,12 +52,18 @@ def safe_write(h5grp, key, val, occ=None):
             h5grp[key][occ] = val
     else:
         h5grp[key] = val
-def set_kcomp(C_k, C_ks, k, occ=None):
+def set_kcomp(C_k, C_ks, k, occ=None, copy=False):
     if isinstance(C_ks, list):
         if occ is None:
-            C_ks[k] = C_k
+            if copy:
+                C_ks[k] = C_k.copy()
+            else:
+                C_ks[k] = C_k
         else:
-            C_ks[k][occ] = C_k
+            if copy:
+                C_ks[k][occ] = C_k.copy()
+            else:
+                C_ks[k][occ] = C_k
     else:
         key = "%d"%k
         safe_write(C_ks, key, C_k, occ)
