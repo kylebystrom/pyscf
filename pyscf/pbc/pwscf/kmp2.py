@@ -6,7 +6,8 @@ import h5py
 import tempfile
 import numpy as np
 
-from pyscf.pbc.pwscf import pw_helper
+from pyscf.pbc.pwscf.pw_helper import (get_nocc_ks_from_mocc, get_kcomp,
+                                       set_kcomp)
 from pyscf.pbc import tools
 from pyscf import lib
 from pyscf.lib import logger
@@ -74,13 +75,15 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
     fac = ngrids**2. / cell.vol
     fac_oovv = fac * ngrids / nkpts
 
-    nocc_ks = pw_helper.get_nocc_ks_from_mocc(mocc_ks)
+    nocc_ks = get_nocc_ks_from_mocc(mocc_ks)
     if nvir is None:
         n_ks = [len(mocc_ks[k]) for k in range(nkpts)]
         nvir_ks = [n_ks[k] - nocc_ks[k] for k in range(nkpts)]
     else:
         nvir_ks = [nvir] * nkpts
         n_ks = [nocc_ks[k] + nvir_ks[k] for k in range(nkpts)]
+    occ_ks = [list(range(nocc)) for nocc in nocc_ks]
+    vir_ks = [list(range(nocc,n)) for nocc,n in zip(nocc_ks,n_ks)]
     nocc_max = np.max(nocc_ks)
     nvir_max = np.max(nvir_ks)
     if nvir_lst is None:
@@ -114,8 +117,10 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
 
     C_ks_R = fswap.create_group("C_ks_R")
     for k in range(nkpts):
-        key = "%d"%k
-        C_ks_R[key] = tools.ifft(C_ks[key][()], mesh)
+        C_k = get_kcomp(C_ks, k)
+        C_k = tools.ifft(C_k, mesh)
+        set_kcomp(C_k, C_ks_R, k)
+        C_k = None
 
     v_ia_ks_R = fswap.create_group("v_ia_ks_R")
 
@@ -135,27 +140,26 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
     for ki in range(nkpts):
         kpti = kpts[ki]
         nocc_i = nocc_ks[ki]
+        occ_i = occ_ks[ki]
 
         tick[:] = time.clock(), time.time()
 
-        Co_ki_R = C_ks_R["%d"%ki][:nocc_i]
+        Co_ki_R = get_kcomp(C_ks_R, ki, occ=occ_i)
 
         for ka in range(nkpts):
             kpta = kpts[ka]
-            nocc_a = nocc_ks[ka]
             nvir_a = nvir_ks[ka]
+            vir_a = vir_ks[ka]
             coulG = tools.get_coulG(cell, kpta-kpti, exx=False, mesh=mesh)
 
-            Cv_ka_R = C_ks_R["%d"%ka][nocc_a:nocc_a+nvir_a]
+            Cv_ka_R = get_kcomp(C_ks_R, ka, occ=vir_a)
             v_ia_R = np.ndarray((nocc_i,nvir_a,ngrids), dtype=dtype, buffer=buf1)
 
             for i in range(nocc_i):
                 v_ia = tools.fft(Co_ki_R[i].conj() * Cv_ka_R, mesh) * coulG
                 v_ia_R[i] = tools.ifft(v_ia, mesh)
 
-            key = "%d"%ka
-            if key in v_ia_ks_R: del v_ia_ks_R[key]
-            v_ia_ks_R[key] = v_ia_R
+            set_kcomp(v_ia_R, v_ia_ks_R, ka)
             v_ia_R = Cv_ka_R = None
 
         Co_ki_R = None
@@ -165,11 +169,12 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
 
         for kj in range(nkpts):
             nocc_j = nocc_ks[kj]
+            occ_j = occ_ks[kj]
             kptij = kpti + kpts[kj]
 
             tick[:] = time.clock(), time.time()
 
-            Co_kj_R = C_ks_R["%d"%kj][:nocc_j]
+            Co_kj_R = get_kcomp(C_ks_R, kj, occ=occ_j)
 
             tock[:] = time.clock(), time.time()
             tspans[3] += tock - tick
@@ -193,14 +198,16 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
                 ka,kb = kab_lst[ikab]
                 kptijab = kptijab_lst[ikab]
 
-                nocc_a = nocc_ks[ka]
                 nvir_a = nvir_ks[ka]
-                nocc_b = nocc_ks[kb]
                 nvir_b = nvir_ks[kb]
+                occ_a = occ_ks[ka]
+                vir_a = vir_ks[ka]
+                occ_b = occ_ks[kb]
+                vir_b = vir_ks[kb]
 
                 tick[:] = time.clock(), time.time()
-                Cv_kb_R = C_ks_R["%d"%kb][nocc_b:nocc_b+nvir_b]
-                v_ia = v_ia_ks_R["%d"%ka][:]
+                Cv_kb_R = get_kcomp(C_ks_R, kb, occ=vir_b)
+                v_ia = get_kcomp(v_ia_ks_R, ka)
                 tock[:] = time.clock(), time.time()
                 tspans[3] += tock - tick
 
@@ -216,8 +223,8 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
                 Cv_kb_R = v_ia = None
 
                 if ka != kb:
-                    Cv_ka_R = C_ks_R["%d"%ka][nocc_a:nocc_a+nvir_a]
-                    v_ib = v_ia_ks_R["%d"%kb][:]
+                    Cv_ka_R = get_kcomp(C_ks_R, ka, occ=vir_a)
+                    v_ib = get_kcomp(v_ia_ks_R, kb)
                     tock[:] = time.clock(), time.time()
                     tspans[3] += tock - tick
 
@@ -234,13 +241,13 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
 
 # KMP2 energy evaluation starts here
                 tick[:] = time.clock(), time.time()
-                mo_e_o = moe_ks[ki][:nocc_i]
-                mo_e_v = moe_ks[ka][nocc_a:nocc_a+nvir_a]
+                mo_e_o = moe_ks[ki][occ_i]
+                mo_e_v = moe_ks[ka][vir_a]
                 eia = mo_e_o[:,None] - mo_e_v
 
                 if ka != kb:
-                    mo_e_o = moe_ks[kj][:nocc_j]
-                    mo_e_v = moe_ks[kb][nocc_b:nocc_b+nvir_b]
+                    mo_e_o = moe_ks[kj][occ_j]
+                    mo_e_v = moe_ks[kb][vir_b]
                     ejb = mo_e_o[:,None] - mo_e_v
                 else:
                     ejb = eia

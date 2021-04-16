@@ -6,7 +6,9 @@ import h5py
 import tempfile
 import numpy as np
 
-from pyscf.pbc.pwscf import kmp2, pw_helper
+from pyscf.pbc.pwscf import kmp2
+from pyscf.pbc.pwscf.pw_helper import (get_nocc_ks_from_mocc, get_kcomp,
+                                       set_kcomp)
 from pyscf.pbc.pwscf.kuhf import get_spin_component
 from pyscf.pbc import tools
 from pyscf import lib
@@ -58,8 +60,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
     fac = ngrids**2. / cell.vol
     fac_oovv = fac * ngrids / nkpts
 
-    nocc_ks = np.asarray([pw_helper.get_nocc_ks_from_mocc(mocc_ks[s])
-                       for s in [0,1]])
+    nocc_ks = np.asarray([get_nocc_ks_from_mocc(mocc_ks[s]) for s in [0,1]])
     if nvir is None:
         n_ks = np.asarray([[len(mocc_ks[s][k]) for k in range(nkpts)]
                           for s in [0,1]])
@@ -109,7 +110,9 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
         C_ks_s = get_spin_component(C_ks, s)
         for k in range(nkpts):
             key = "%d"%k
-            C_ks_R["%s/%d"%(key,s)] = tools.ifft(C_ks_s[key][()], mesh)
+            C_k = C_ks_s[key][()]
+            C_ks_R["%s/%d"%(key,s)] = tools.ifft(C_k, mesh)
+            C_k = None
 
     v_ia_ks_R = fswap.create_group("v_ia_ks_R")
 
