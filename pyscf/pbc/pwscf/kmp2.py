@@ -40,10 +40,16 @@ def fill_oovv(oovv, v_ia, Co_kj_R, Cv_kb_R, fac=None):
              = \sum_r v_ia^kika(r) * rho_jb^kjkb(r)
     """
     nocc_i, nocc_j = oovv.shape[:2]
+    rho_shape = Cv_kb_R.shape
+    rho_dtype = Cv_kb_R.dtype
+    buf = np.empty(rho_shape, dtype=rho_dtype)
     for j in range(nocc_j):
-        rho_jb_R = Co_kj_R[j].conj() * Cv_kb_R
+        # rho_jb_R = Co_kj_R[j].conj() * Cv_kb_R
+        rho_jb_R = np.ndarray(rho_shape, rho_dtype, buffer=buf)
+        np.multiply(Co_kj_R[j].conj(), Cv_kb_R, out=rho_jb_R)
         for i in range(nocc_i):
-            oovv[i,j] = lib.dot(v_ia[i], rho_jb_R.T)
+            # oovv[i,j] = lib.dot(v_ia[i], rho_jb_R.T)
+            lib.dot(v_ia[i], rho_jb_R.T, c=oovv[i,j])
     if not fac is None: oovv *= fac
 
     return oovv
@@ -174,13 +180,18 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
             coulG = tools.get_coulG(cell, kpta-kpti, exx=False, mesh=mesh)
 
             Cv_ka_R = get_kcomp(C_ks_R, ka, occ=vir_a)
-            v_ia_R = np.ndarray((nocc_i,nvir_a,ngrids), dtype=dtype, buffer=buf1)
+            if incore:
+                # if from buffer, an extra "copy" is needed in "set_kcomp" below, which can be 1000x slower than allocating new mem.
+                v_ia_R = np.empty((nocc_i,nvir_a,ngrids), dtype=dtype)
+            else:
+                v_ia_R = np.ndarray((nocc_i,nvir_a,ngrids), dtype=dtype,
+                                    buffer=buf1)
 
             for i in range(nocc_i):
                 v_ia = tools.fft(Co_ki_R[i].conj() * Cv_ka_R, mesh) * coulG
                 v_ia_R[i] = tools.ifft(v_ia, mesh)
 
-            set_kcomp(v_ia_R, v_ia_ks_R, ka, copy=incore)
+            set_kcomp(v_ia_R, v_ia_ks_R, ka)
             v_ia_R = Cv_ka_R = None
 
         Co_ki_R = None
@@ -228,13 +239,23 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
 
                 tick[:] = time.clock(), time.time()
                 Cv_kb_R = get_kcomp(C_ks_R, kb, occ=vir_b)
-                v_ia = get_kcomp(v_ia_ks_R, ka, copy=incore)
+                v_ia = get_kcomp(v_ia_ks_R, ka)
                 tock[:] = time.clock(), time.time()
                 tspans[3] += tock - tick
 
                 phase = np.exp(-1j*lib.dot(coords,
                                            kptijab.reshape(-1,1))).reshape(-1)
-                v_ia *= phase
+                if incore:
+                    # two possible schemes: 1) make a copy in "get_kcomp" above and use "a*=b" here. 2) (currently used) no copy in "get_kcomp", init v_ia from buf, and use multiply with "out".
+                    # numerical tests found that: a) copy is 2x expensive than "a*=b" and 1000x than init from buf. b) mutiply with "out" is as fast as "a*=b", which is half the cost of "a*b".
+                    # conclusion: scheme 2 will be >3x faster.
+                    v_ia_ = v_ia
+                    v_ia = np.ndarray((nocc_i,nvir_a,ngrids), dtype=dtype,
+                                      buffer=buf1)
+                    np.multiply(v_ia_, phase, out=v_ia)
+                    v_ia_ = None
+                else:
+                    v_ia *= phase
                 oovv_ka = np.ndarray((nocc_i,nocc_j,nvir_a,nvir_b), dtype=dtype,
                                      buffer=buf2)
                 fill_oovv(oovv_ka, v_ia, Co_kj_R, Cv_kb_R, fac_oovv)
@@ -245,11 +266,18 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
 
                 if ka != kb:
                     Cv_ka_R = get_kcomp(C_ks_R, ka, occ=vir_a)
-                    v_ib = get_kcomp(v_ia_ks_R, kb, copy=incore)
+                    v_ib = get_kcomp(v_ia_ks_R, kb)
                     tock[:] = time.clock(), time.time()
                     tspans[3] += tock - tick
 
-                    v_ib *= phase
+                    if incore:
+                        v_ib_ = v_ib
+                        v_ib = np.ndarray((nocc_j,nvir_b,ngrids), dtype=dtype,
+                                          buffer=buf1)
+                        np.multiply(v_ib_, phase, out=v_ib)
+                        v_ib_ = None
+                    else:
+                        v_ib *= phase
                     oovv_kb = np.ndarray((nocc_i,nocc_j,nvir_b,nvir_a), dtype=dtype,
                                          buffer=buf3)
                     fill_oovv(oovv_kb, v_ib, Co_kj_R, Cv_ka_R, fac_oovv)
