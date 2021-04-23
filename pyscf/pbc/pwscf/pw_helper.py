@@ -116,6 +116,7 @@ def orth(cell, C, thr_nonorth=1e-6, thr_lindep=1e-12, follow=True):
     idx_keep = np.where(e > thr_lindep)[0]
     nkeep = idx_keep.size
     if n == nkeep:  # symm orth
+        lib.logger.debug2(cell, "Cond nubmer = %.3e", e.max()/e.min())
         if follow:
             # reorder to maximally overlap original orbs
             idx = []
@@ -129,6 +130,8 @@ def orth(cell, C, thr_nonorth=1e-6, thr_lindep=1e-12, follow=True):
         else:
             U = lib.dot(u*e**-0.5, u.conj()).T
     else:   # cano orth
+        lib.logger.debug2(cell, "Cond nubmer = %.3e  Drop %d orbitals",
+                          e.max()/e.min(), n-nkeep)
         U = (u[:,idx_keep]*e[idx_keep]**-0.5).T
     C = lib.dot(U, C)
 
@@ -217,7 +220,7 @@ def get_mesh_map(cell, ke_cutoff, ke_cutoff2):
     return mesh_map
 
 
-def remove_pGTO_from_cGTO_(bdict, amax=None, amin=None):
+def remove_pGTO_from_cGTO_(bdict, amax=None, amin=None, verbose=0):
     """ Removing from input GTO basis all primitive GTOs whose exponents are >amax or <amin.
     """
     from pyscf import gto as mol_gto
@@ -243,7 +246,8 @@ def remove_pGTO_from_cGTO_(bdict, amax=None, amin=None):
 
     ang_map = ["S", "P", "D", "F", "G", "H", "I", "J"]
 
-    print("Generating basis...")
+    log = lib.logger.Logger(verbose=verbose)
+    log.debug1("Generating basis...")
     bdict_new = {}
     for atm,basis in bdict.items():
         if isinstance(basis, str):
@@ -255,10 +259,10 @@ def remove_pGTO_from_cGTO_(bdict, amax=None, amin=None):
         for lbs in bdict_new[atm]:
             l = lbs[0]
             bs = lbs[1:]
-            print("%s %s" % (atm, ang_map[l]))
+            log.debug1("%s %s", atm, ang_map[l])
             for b in bs:
-                print(("{:.10f} " * len(b)).format(*b))
-    print()
+                log.debug1("%.10f " * len(b), *b)
+    log.debug1("")
 
     return bdict_new
 

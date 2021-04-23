@@ -992,7 +992,7 @@ def get_cpw_virtual(mf, basis, amin=None, amax=None, thr_lindep=1e-14,
         raise TypeError("Input basis must be either a str or dict.")
 # pruning pGTOs that have unwanted exponents
     basisdict = pw_helper.remove_pGTO_from_cGTO_(basisdict, amax=amax,
-                                                 amin=amin)
+                                                 amin=amin, verbose=mf.verbose)
 # make a new cell with the modified GTO basis
     cell_cpw = cell.copy()
     cell_cpw.basis = basisdict
@@ -1042,9 +1042,8 @@ def get_cpw_virtual(mf, basis, amin=None, amax=None, thr_lindep=1e-14,
         F = lib.dot(C.conj(), Cbar.T)
         Fov = F[mocc_ks[k]>THR_OCC][:,mocc_ks[k]<THR_OCC]
         err_Fov = np.max(np.abs(Fov))
-        print("error Fov for kpt %d is %.3e" % (k, err_Fov))
+        logger.debug1(mf, "kpt %d [% .4f % .4f % .4f]  no = %2d  nv = %3d  ||Fov|| = %.3e", k, *kpts[k], sum(mocc_ks[k]>THR_OCC), sum(mocc_ks[k]<THR_OCC), err_Fov)
         e, u = scipy.linalg.eigh(F)
-        print(e)
         C = lib.dot(u.T, C)
         set_kcomp(C, C_ks, k)
         Cbar = C = None
