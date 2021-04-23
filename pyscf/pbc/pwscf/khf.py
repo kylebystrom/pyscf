@@ -25,6 +25,7 @@ import pyscf.lib.parameters as param
 
 # TODO
 # 1. fractional occupation (for metals)
+# 2. APIs for getting CPW and CPW virtuals
 
 
 THR_OCC = 1E-3
@@ -962,6 +963,103 @@ def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None,
     return conv_ks, moeout_ks, Cout_ks, fc_ks
 
 
+def get_cpw_virtual(mf, basis, amin=None, amax=None, thr_lindep=1e-14,
+                    erifile=None):
+    """ Turn input GTO basis into a set of contracted PWs, project out the occupied PW bands, and then diagonalize the vir-vir block of the Fock matrix.
+
+    Args:
+        basis/amin/amax:
+            see docs for gto2cpw in pyscf.pbc.pwscf.pw_helper
+        thr_lindep (float):
+            linear dependency threshold for canonicalization of the CPWs.
+        erifile (hdf5 file):
+            C_ks (PW occ + CPW vir), mo_energy, mo_occ will be written to this file. If not provided, mf.chkfile is used. A RuntimeError is raised if the latter is None.
+    """
+    assert(mf.converged)
+    if erifile is None: erifile = mf.chkfile
+    assert(erifile)
+    kpts = mf.kpts
+    nkpts = len(kpts)
+    cell = mf.cell
+# formating basis
+    atmsymbs = cell._basis.keys()
+    if isinstance(basis, str):
+        basisdict = {atmsymb: basis for atmsymb in atmsymbs}
+    elif isinstance(basis, dict):
+        assert(basis.keys() == atmsymbs)
+        basisdict = basis
+    else:
+        raise TypeError("Input basis must be either a str or dict.")
+# pruning pGTOs that have unwanted exponents
+    basisdict = pw_helper.remove_pGTO_from_cGTO_(basisdict, amax=amax,
+                                                 amin=amin)
+# make a new cell with the modified GTO basis
+    cell_cpw = cell.copy()
+    cell_cpw.basis = basisdict
+    cell_cpw.verbose = 0
+    cell_cpw.build()
+# make CPW for all kpts
+    nao = cell_cpw.nao_nr()
+    Cao = np.eye(nao)+0.j
+    Co_ks = mf.mo_coeff
+    mocc_ks0 = mf.mo_occ
+    # estimate memory usage and decide incore/outcore mode
+    max_memory = (cell.max_memory - lib.current_memory()[0]) * 0.8
+    nocc_max = np.max([sum(mocc_ks0[k]>THR_OCC) for k in range(nkpts)])
+    ngrids = Co_ks[0].shape[1]
+    est_memory = (nao+nocc_max) * ngrids * (nkpts+2) * 16 / 1024**2.
+    incore = est_memory < max_memory
+    if incore:
+        C_ks = [None] * nkpts
+    else:
+        swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+        fswap = lib.H5TmpFile(swapfile.name)
+        swapfile = None
+        C_ks = fswap.create_group("C_ks")
+    mocc_ks = [None] * nkpts
+    for k in range(nkpts):
+        Cv = pw_helper.get_C_ks_G(cell_cpw, [kpts[k]], [Cao], [nao])[0]
+        occ = np.where(mocc_ks0[k]>THR_OCC)[0]
+        Co = get_kcomp(Co_ks, k, occ=occ)
+        C = np.vstack([Co,Cv])
+        mocc = np.zeros(C.shape[0])
+        mocc[:len(occ)] = 2.
+        C = orth_mo1(cell, C, mocc, thr_lindep=thr_lindep, follow=False)
+        set_kcomp(C, C_ks, k)
+        mocc_ks[k] = mocc[:C.shape[0]]
+        C = Co = Cv = None
+# build and diagonalize fock vv
+    mf.update_pp(C_ks)
+    mf.update_k(C_ks, mocc_ks)
+    mesh = cell.mesh
+    Gv = cell.get_Gv(mesh)
+    vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
+    exxdiv = mf.exxdiv
+    moe_ks = [None] * nkpts
+    for k in range(nkpts):
+        C = get_kcomp(C_ks, k)
+        Cbar = mf.apply_Fock_kpt(C, kpts[k], mocc_ks, mesh, Gv, vj_R, exxdiv)
+        F = lib.dot(C.conj(), Cbar.T)
+        Fov = F[mocc_ks[k]>THR_OCC][:,mocc_ks[k]<THR_OCC]
+        err_Fov = np.max(np.abs(Fov))
+        print("error Fov for kpt %d is %.3e" % (k, err_Fov))
+        e, u = scipy.linalg.eigh(F)
+        print(e)
+        C = lib.dot(u.T, C)
+        set_kcomp(C, C_ks, k)
+        Cbar = C = None
+        if exxdiv == "ewald":
+            e[mocc_ks[k]>THR_OCC] -= mf._madelung
+        moe_ks[k] = e
+    e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
+# dump to chkfile
+    chkfile.dump_scf(cell, erifile, e_tot, moe_ks, mocc_ks, C_ks)
+
+    if not incore: fswap.close()
+
+    return moe_ks, mocc_ks
+
+
 # class PWKRHF(lib.StreamObject):
 class PWKRHF(mol_hf.SCF):
     '''PWKRHF base class. non-relativistic RHF using PW basis.
@@ -1221,6 +1319,7 @@ class PWKRHF(mol_hf.SCF):
     energy_tot = energy_tot
     converge_band_kpt = converge_band_kpt
     converge_band = converge_band
+    get_cpw_virtual = get_cpw_virtual
 
 
 if __name__ == "__main__":

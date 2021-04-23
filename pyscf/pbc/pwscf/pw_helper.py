@@ -10,6 +10,7 @@ import numpy as np
 import scipy.linalg
 
 from pyscf.pbc import tools, df
+from pyscf.pbc.lib.kpts_helper import gamma_point
 from pyscf import lib
 from pyscf.lib import logger
 
@@ -184,9 +185,10 @@ def get_C_ks_G(cell, kpts, mo_coeff_ks, n_ks, out=None, verbose=0):
                 kpt = kpts[k].reshape(-1,1)
                 C_k = mo_coeff_ks[k][:,:n_ks[k]]
                 C_ks_R[krel][p0:p1] = lib.dot(ao, C_k)
-                if k > 0:
-                    C_ks_R[krel][p0:p1] = np.exp(-1j * lib.dot(coords[p0:p1],
-                        kpt)) * lib.dot(ao, C_k)
+                if not gamma_point(kpt):
+                    phase = np.exp(-1j * lib.dot(coords[p0:p1], kpt))
+                    C_ks_R[krel][p0:p1] *= phase
+                    phase = None
             ao = ao_ks = None
 
         for krel in range(nk):
@@ -213,6 +215,107 @@ def get_mesh_map(cell, ke_cutoff, ke_cutoff2):
                         )[:,:,None] + idxr[2])
 
     return mesh_map
+
+
+def remove_pGTO_from_cGTO_(bdict, amax=None, amin=None):
+    """ Removing from input GTO basis all primitive GTOs whose exponents are >amax or <amin.
+    """
+    from pyscf import gto as mol_gto
+    def prune(blist):
+        if amin is None and amax is None:
+            return blist
+
+        amax_ = 1e10 if amax is None else amax
+        amin_ = -1 if amin is None else amin
+
+        blist_new = []
+        for lbs in blist:
+            l = lbs[0]
+            bs = []
+            for b in lbs[1:]:
+                e = b[0]
+                if amin_ < e < amax_:
+                    bs.append(b)
+            if len(bs) > 0:
+                blist_new.append([l] + bs)
+
+        return blist_new
+
+    ang_map = ["S", "P", "D", "F", "G", "H", "I", "J"]
+
+    print("Generating basis...")
+    bdict_new = {}
+    for atm,basis in bdict.items():
+        if isinstance(basis, str):
+            blist = mol_gto.basis.load(basis, atm)
+        else:
+            blist = basis
+        bdict_new[atm] = prune(blist)
+
+        for lbs in bdict_new[atm]:
+            l = lbs[0]
+            bs = lbs[1:]
+            print("%s %s" % (atm, ang_map[l]))
+            for b in bs:
+                print(("{:.10f} " * len(b)).format(*b))
+    print()
+
+    return bdict_new
+
+
+def cpw_from_cell(cell_cpw, out=None):
+    nao = cell_cpw.nao_nr()
+    nkpts = len(kpts)
+    Cao_ks = [np.eye(nao)+0j for k in range(nkpts)]
+    nao_ks = np.ones(nkpts,dtype=int) * nao
+    if out is None: out = [None] * nkpts
+    out = get_C_ks_G(cell_cpw, kpts, Cao_ks, nao_ks, out=out)
+    return out
+
+
+def gto2cpw(cell, basis, kpts, amin=None, amax=None, ke_or_mesh=None, out=None):
+    """ Get the contracted PWs for input GTO basis
+    Args:
+        basis:
+            Some examples:
+                basis = "ccecp-cc-pVDZ" (applies to all atoms in "cell")
+                basis = {"C": "ccecp-cc-pVDZ", "N": "gth-tzv2p"}
+                basis = {"C": [[0,[12,0.7],[5,0.3],[1,0.5]]], "N": "gth-szv"}
+        amin/amax:
+            If provided, all primitive GTOs from the basis that have exponents >amax or <amin will be removed.
+        ke_or_mesh:
+            If list/tuple/numpy array, interpreted as mesh
+            otherwise, interpreted as ke_cutoff.
+            Default is None which uses the same ke_cutoff/mesh from input "cell".
+        out:
+            None --> return a list of numpy arrays (incore mode)
+            hdf5 group --> saved to the hdf5 group (outcore mode)
+    """
+# formating basis
+    atmsymbs = cell._basis.keys()
+    if isinstance(basis, str):
+        basisdict = {atmsymb: basis for atmsymb in atmsymbs}
+    elif isinstance(basis, dict):
+        assert(basis.keys() == atmsymbs)
+        basisdict = basis
+    else:
+        raise TypeError("Input basis must be either a str or dict.")
+# pruning pGTOs that have unwanted exponents
+    basisdict = remove_pGTO_from_cGTO_(basisdict, amax=amax, amin=amin)
+# make a new cell with the modified GTO basis
+    cell_cpw = cell.copy()
+    cell_cpw.basis = basisdict
+    if not ke_or_mesh is None:
+        if isinstance(ke_or_mesh, (list,tuple,np.ndarray)):
+            cell_cpw.mesh = ke_or_mesh
+        else:
+            cell_cpw.ke_cutoff = ke_or_mesh
+    cell_cpw.verbose = 0
+    cell_cpw.build()
+# GTOs --> CPWs
+    out = cpw_from_cell(cell_cpw, out=out)
+
+    return out
 
 
 """ kinetic energy
