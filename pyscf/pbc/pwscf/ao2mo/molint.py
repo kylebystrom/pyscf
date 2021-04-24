@@ -26,7 +26,7 @@ def kconserv(kpt123, reduce_latvec, kdota):
     return np.where(abs(tmp - np.rint(tmp)).sum(axis=1)<1e-6)[0][0]
 
 
-def get_molint_from_C(cell, C_ks, mo_slices, kpts, exxdiv=None,
+def get_molint_from_C(cell, C_ks, kpts, mo_slices=None, exxdiv=None,
                       erifile=None, dataname="eris"):
     """
     Args:
@@ -61,6 +61,9 @@ def get_molint_from_C(cell, C_ks, mo_slices, kpts, exxdiv=None,
 
     dtype = np.complex128
     dsize = 16
+    if mo_slices is None:
+        nmo = get_kcomp(C_ks, 0, load=False).shape[0]
+        mo_slices = [(0,nmo)] * 4
     nmos = [mo_slice[1]-mo_slice[0] for mo_slice in mo_slices]
     buf = np.empty(nmos[0]*nmos[1]*ngrids, dtype=dtype)
     mo_ranges = [list(range(mo_slice[0],mo_slice[1])) for mo_slice in mo_slices]

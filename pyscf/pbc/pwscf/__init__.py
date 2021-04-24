@@ -27,3 +27,6 @@ PWKUHF = KUHF = kuhf.PWKUHF
 from pyscf.pbc.pwscf import kmp2, kump2
 PWKRMP2 = KRMP2 = PWKMP2 = KMP2 = kmp2.PWKRMP2
 PWKUMP2 = KUMP2 = kump2.PWKUMP2
+
+from pyscf.pbc.pwscf import kccsd_rhf
+PWKRCCSD = KRCCSD = PWKCCSD = KCCSD = kccsd_rhf.PWKRCCSD

@@ -1304,6 +1304,13 @@ class PWKRHF(mol_hf.SCF):
         return self.e_tot
     kernel = lib.alias(scf, alias_name='kernel')
 
+    def get_cpw_virtual(self, basis, amin=None, amax=None, thr_lindep=1e-14):
+        self.mo_energy, self.mo_occ = get_cpw_virtual(self, basis,
+                                                      amin=amin, amax=amax,
+                                                      thr_lindep=thr_lindep,
+                                                      erifile=None)
+        return self.mo_energy, self.mo_occ
+
     kernel_charge = kernel_charge
     get_nband = get_nband
     dump_moe = dump_moe
@@ -1318,7 +1325,6 @@ class PWKRHF(mol_hf.SCF):
     energy_tot = energy_tot
     converge_band_kpt = converge_band_kpt
     converge_band = converge_band
-    get_cpw_virtual = get_cpw_virtual
 
 
 if __name__ == "__main__":

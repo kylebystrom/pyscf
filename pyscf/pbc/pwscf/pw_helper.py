@@ -322,6 +322,39 @@ def gto2cpw(cell, basis, kpts, amin=None, amax=None, ke_or_mesh=None, out=None):
     return out
 
 
+def gtomf2pwmf(mf, chkfile=None):
+    """
+    Args:
+        chkfile (str):
+            A hdf5 file to store chk variables (mo_energy, mo_occ, etc.). If not provided, a temporary file is generated.
+    """
+    from pyscf.pbc import scf
+    assert(isinstance(mf, scf.khf.KRHF))
+
+    if chkfile is None:
+        swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+        chkfile = swapfile.name
+        swapfile = None
+
+    from pyscf.pbc import pwscf
+    cell = mf.cell
+    kpts = mf.kpts
+    nkpts = len(kpts)
+    pwmf = pwscf.KRHF(cell, kpts)
+    pwmf.chkfile = chkfile
+    Cgto_ks = mf.mo_coeff
+    nmo_ks = [Cgto_ks[k].shape[1] for k in range(nkpts)]
+    pwmf.mo_coeff = C_ks = get_C_ks_G(cell, kpts, Cgto_ks, nmo_ks)
+    pwmf.mo_energy = moe_ks = mf.mo_energy
+    pwmf.mo_occ = mocc_ks = mf.mo_occ
+    pwmf.e_tot = mf.e_tot
+    from pyscf.pbc.pwscf.chkfile import dump_scf
+    dump_scf(mf.cell, pwmf.chkfile, mf.e_tot, moe_ks, mocc_ks, C_ks)
+    pwmf.converged = True
+
+    return pwmf
+
+
 """ kinetic energy
 """
 def apply_kin_kpt(C_k, kpt, mesh, Gv):

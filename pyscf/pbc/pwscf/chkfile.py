@@ -42,22 +42,23 @@ def dump_scf(mol, chkfile, e_tot, mo_energy, mo_occ, mo_coeff,
     save(chkfile, 'scf', scf_dic)
 
     # save mo_coeff only if incore mode
-    with h5py.File(chkfile, "a") as f:
-        if "mo_coeff" in f: del f["mo_coeff"]
-        C_ks = f.create_group("mo_coeff")
+    if not mo_coeff is None:
+        with h5py.File(chkfile, "a") as f:
+            if "mo_coeff" in f: del f["mo_coeff"]
+            C_ks = f.create_group("mo_coeff")
 
-        if isinstance(mo_energy[0], np.ndarray):
-            nkpts = len(mo_coeff)
-            for k in range(nkpts):
-                C_ks["%d"%k] = get_kcomp(mo_coeff, k)
-        else:
-            ncomp = len(mo_energy)
-            nkpts = len(mo_energy[0])
-            for comp in range(ncomp):
-                C_ks_comp = C_ks.create_group("%d"%comp)
-                mo_coeff_comp = get_kcomp(mo_coeff, comp, load=False)
+            if isinstance(mo_energy[0], np.ndarray):
+                nkpts = len(mo_coeff)
                 for k in range(nkpts):
-                    C_ks_comp["%d"%k] = get_kcomp(mo_coeff_comp, k)
+                    C_ks["%d"%k] = get_kcomp(mo_coeff, k)
+            else:
+                ncomp = len(mo_energy)
+                nkpts = len(mo_energy[0])
+                for comp in range(ncomp):
+                    C_ks_comp = C_ks.create_group("%d"%comp)
+                    mo_coeff_comp = get_kcomp(mo_coeff, comp, load=False)
+                    for k in range(nkpts):
+                        C_ks_comp["%d"%k] = get_kcomp(mo_coeff_comp, k)
 
 
 def load_mo_coeff(C_ks):

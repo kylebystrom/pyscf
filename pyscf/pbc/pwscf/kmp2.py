@@ -62,7 +62,6 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
         nvir_lst (array-like of int):
             If given, the MP2 correlation energies using the number of virtual orbitals specified by the list will be returned.
     """
-
     cput0 = (time.clock(), time.time())
 
     dtype = np.complex128
@@ -353,6 +352,14 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
         summary["t-%s"%tcomp] = tspan
 
     return emp2[-1]
+
+
+def PWKRMP2_from_gtomf(mf, chkfile=None):
+    """ PWMP2 from a GTO-RHF object.
+    """
+    from pyscf.pbc.pwscf.pw_helper import gtomf2pwmf
+
+    return PWKRMP2(gtomf2pwmf(mf, chkfile=chkfile))
 
 
 class PWKRMP2:
