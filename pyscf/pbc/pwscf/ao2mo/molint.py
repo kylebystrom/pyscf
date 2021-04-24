@@ -7,7 +7,7 @@ import numpy as np
 from pyscf import lib
 from pyscf.pbc import tools
 
-from pyscf.pbc.pwscf.pw_helper_cpwpw import get_kcomp, set_kcomp
+from pyscf.pbc.pwscf.pw_helper import get_kcomp, set_kcomp
 
 dot = lib.dot
 einsum = np.einsum
@@ -54,13 +54,16 @@ def get_molint_from_C(cell, C_ks, mo_slices, kpts, exxdiv=None,
 
     C_ks_R = fswap.create_group("C_ks_R")
     for k in range(nkpts):
-        key = "%d"%k
-        C_ks_R[key] = tools.ifft(C_ks[key][()], mesh)
+        C_k = get_kcomp(C_ks, k)
+        C_k = tools.ifft(C_k, mesh)
+        set_kcomp(C_k, C_ks_R, k)
+        C_k = None
 
     dtype = np.complex128
     dsize = 16
     nmos = [mo_slice[1]-mo_slice[0] for mo_slice in mo_slices]
     buf = np.empty(nmos[0]*nmos[1]*ngrids, dtype=dtype)
+    mo_ranges = [list(range(mo_slice[0],mo_slice[1])) for mo_slice in mo_slices]
 
     if erifile is None:
         incore = True
@@ -85,12 +88,12 @@ def get_molint_from_C(cell, C_ks, mo_slices, kpts, exxdiv=None,
     for k1 in range(nkpts):
         kpt1 = kpts[k1]
         p0,p1 = mo_slices[0]
-        C_k1_R = get_kcomp(C_ks_R, k1, mo_slice=mo_slices[0])
+        C_k1_R = get_kcomp(C_ks_R, k1, occ=mo_ranges[0])
         for k2 in range(nkpts):
             kpt2 = kpts[k2]
             kpt12 = kpt2 - kpt1
             q0,q1 = mo_slices[1]
-            C_k2_R = get_kcomp(C_ks_R, k2, mo_slice=mo_slices[1])
+            C_k2_R = get_kcomp(C_ks_R, k2, occ=mo_ranges[1])
             coulG_k12 = tools.get_coulG(cell, kpt12, exx=exxdiv, mesh=mesh)
 # FIXME: batch appropriately
             v_pq_k12 = np.ndarray((nmos[0],nmos[1],ngrids), dtype=dtype,
@@ -102,17 +105,17 @@ def get_molint_from_C(cell, C_ks, mo_slices, kpts, exxdiv=None,
 
             for k3 in range(nkpts):
                 kpt3 = kpts[k3]
-                r0,r1 = mo_slices[2]
-                C_k3_R = get_kcomp(C_ks_R, k3, mo_slice=mo_slices[2])
                 kpt123 = kpt12 - kpt3
                 k4 = kconserv(kpt123, reduce_latvec, kdota)
                 kpt4 = kpts[k4]
-                s0,s1 = mo_slices[3]
-                C_k4_R = get_kcomp(C_ks_R, k4, mo_slice=mo_slices[3])
-
                 kpt1234 = kpt123 + kpt4
                 phase = np.exp(1j*lib.dot(coords,
                                kpt1234.reshape(-1,1))).reshape(-1)
+
+                r0,r1 = mo_slices[2]
+                C_k3_R = get_kcomp(C_ks_R, k3, occ=mo_ranges[2])
+                s0,s1 = mo_slices[3]
+                C_k4_R = get_kcomp(C_ks_R, k4, occ=mo_ranges[3]) * phase
 
                 if incore:
                     vpqrs = deri[k1,k2,k3]
@@ -120,7 +123,7 @@ def get_molint_from_C(cell, C_ks, mo_slices, kpts, exxdiv=None,
                     vpqrs = np.ndarray(nmos, dtype=dtype, buffer=buf2)
                 for r in range(r0,r1):
                     ir = r - r0
-                    rho_rs_k34 = C_k3_R[ir].conj() * C_k4_R * phase
+                    rho_rs_k34 = C_k3_R[ir].conj() * C_k4_R
                     vpqrs[:,:,ir] = dot(v_pq_k12.reshape(-1,ngrids),
                                         rho_rs_k34.T).reshape(nmos[0],nmos[1],nmos[-1])
                 vpqrs *= fac
