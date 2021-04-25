@@ -1,9 +1,11 @@
 import h5py
+import time
 import numpy as np
 
 from pyscf.pbc import cc
 from pyscf.pbc.pwscf.ao2mo.molint import get_molint_from_C
 from pyscf.pbc.pwscf.khf import THR_OCC
+from pyscf import lib
 
 
 class PWKRCCSD:
@@ -11,7 +13,9 @@ class PWKRCCSD:
         self.mf = mf
 
     def kernel(self):
+        cput0 = (time.clock(), time.time())
         eris = _ERIS(self.mf)
+        cput0 = lib.logger.timer(self.mf, 'CCSD init eri', *cput0)
         mcc = cc.kccsd_rhf.RCCSD(self.mf)
         mcc.kernel(eris=eris)
 
