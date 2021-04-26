@@ -253,8 +253,8 @@ def remove_pGTO_from_cGTO_(bdict, amax=None, amin=None, verbose=0):
     for atm,basis in bdict.items():
         if isinstance(basis, str):
             if "gth" in basis.lower():
-                cell = pbc_gto.M(atom="H 0 0 0", basis=basis, spin=1)
-                blist = cell._basis["H"]
+                cell = pbc_gto.M(atom="%s 0 0 0"%atm, basis=basis, spin=1)
+                blist = cell._basis[atm]
             else:
                 blist = mol_gto.basis.load(basis, atm)
         else:

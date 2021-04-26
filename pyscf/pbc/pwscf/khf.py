@@ -1059,6 +1059,13 @@ def get_cpw_virtual(mf, basis, amin=None, amax=None, thr_lindep=1e-14,
             e[mocc_ks[k]>THR_OCC] -= mf._madelung
         moe_ks[k] = e
     e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
+    de_tot = e_tot - mf.e_tot
+    logger.info(mf, "SCF energy before %.10f  after CPW %.10f  change %.10f",
+                mf.e_tot, e_tot, de_tot)
+    if abs(de_tot) > 1e-4:
+        logger.warn(mf, "CPW causes a significant change in SCF energy. Please check the SCF convergence.")
+    logger.debug(mf, "CPW band energies")
+    mf.dump_moe(moe_ks, mocc_ks)
 # dump to chkfile
     chkfile.dump_scf(cell, erifile, e_tot, moe_ks, mocc_ks, C_ks)
 
