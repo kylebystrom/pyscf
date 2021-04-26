@@ -1064,7 +1064,7 @@ def get_cpw_virtual(mf, basis, amin=None, amax=None, thr_lindep=1e-14,
 
     if not incore: fswap.close()
 
-    return moe_ks, mocc_ks
+    return e_tot, moe_ks, mocc_ks
 
 
 # class PWKRHF(lib.StreamObject):
@@ -1321,7 +1321,7 @@ class PWKRHF(pbc_hf.KSCF):
     kernel = lib.alias(scf, alias_name='kernel')
 
     def get_cpw_virtual(self, basis, amin=None, amax=None, thr_lindep=1e-14):
-        self.mo_energy, self.mo_occ = get_cpw_virtual(self, basis,
+        self.e_tot, self.mo_energy, self.mo_occ = get_cpw_virtual(self, basis,
                                                       amin=amin, amax=amax,
                                                       thr_lindep=thr_lindep,
                                                       erifile=None)

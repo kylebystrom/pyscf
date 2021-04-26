@@ -224,6 +224,7 @@ def remove_pGTO_from_cGTO_(bdict, amax=None, amin=None, verbose=0):
     """ Removing from input GTO basis all primitive GTOs whose exponents are >amax or <amin.
     """
     from pyscf import gto as mol_gto
+    from pyscf.pbc import gto as pbc_gto
     def prune(blist):
         if amin is None and amax is None:
             return blist
@@ -251,7 +252,11 @@ def remove_pGTO_from_cGTO_(bdict, amax=None, amin=None, verbose=0):
     bdict_new = {}
     for atm,basis in bdict.items():
         if isinstance(basis, str):
-            blist = mol_gto.basis.load(basis, atm)
+            if "gth" in basis.lower():
+                cell = pbc_gto.M(atom="H 0 0 0", basis=basis, spin=1)
+                blist = cell._basis["H"]
+            else:
+                blist = mol_gto.basis.load(basis, atm)
         else:
             blist = basis
         bdict_new[atm] = prune(blist)

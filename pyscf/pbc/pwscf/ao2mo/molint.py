@@ -1,10 +1,12 @@
 """ Generating MO integrals
 """
+import time
 import h5py
 import tempfile
 import numpy as np
 
 from pyscf import lib
+from pyscf.lib import logger
 from pyscf.pbc import tools
 
 from pyscf.pbc.pwscf.pw_helper import get_kcomp, set_kcomp
@@ -38,6 +40,7 @@ def get_molint_from_C(cell, C_ks, kpts, mo_slices=None, exxdiv=None,
         erifile: str, h5py File or h5py Group
             The file to store the ERIs. If not given, the ERIs are held in memory.
     """
+    cput0 = (time.clock(), time.time())
 
     nkpts = len(kpts)
     mesh = cell.mesh
@@ -88,11 +91,20 @@ def get_molint_from_C(cell, C_ks, kpts, mo_slices=None, exxdiv=None,
     else:
         raise RuntimeError
 
+    cput1 = logger.timer(cell, 'initialize pwmolint', *cput0)
+
+    tick = np.zeros(2)
+    tock = np.zeros(2)
+    tspans = np.zeros((4,2))
+    tcomps = ["init", "v_ks_R", "eri", "tot"]
+
     for k1 in range(nkpts):
         kpt1 = kpts[k1]
         p0,p1 = mo_slices[0]
         C_k1_R = get_kcomp(C_ks_R, k1, occ=mo_ranges[0])
         for k2 in range(nkpts):
+            tick[:] = time.clock(), time.time()
+
             kpt2 = kpts[k2]
             kpt12 = kpt2 - kpt1
             q0,q1 = mo_slices[1]
@@ -105,6 +117,9 @@ def get_molint_from_C(cell, C_ks, kpts, mo_slices=None, exxdiv=None,
                 ip = p - p0
                 v_pq_k12[ip] = tools.ifft(tools.fft(C_k1_R[ip].conj() * C_k2_R,
                                           mesh) * coulG_k12, mesh)
+
+            tock[:] = time.clock(), time.time()
+            tspans[1] += tock - tick
 
             for k3 in range(nkpts):
                 kpt3 = kpts[k3]
@@ -133,8 +148,29 @@ def get_molint_from_C(cell, C_ks, kpts, mo_slices=None, exxdiv=None,
                 if not incore:
                     deri[k1,k2,k3,:] = vpqrs
                     vpqrs = None
+            tick[:] = time.clock(), time.time()
+            tspans[2] += tick - tock
+
+        tock[:] = time.clock(), time.time()
+        cput1 = logger.timer(cell, 'kpt %d (%6.3f %6.3f %6.3f)'%(k1,*kpt1),
+                             *cput1)
 
     fswap.close()
+
+    cput1 = logger.timer(cell, 'pwmolint', *cput0)
+    tspans[3] = np.asarray(cput1) - np.asarray(cput0)
+
+# dump timing
+    def write_time(comp, t_comp, t_tot):
+        tc, tw = t_comp
+        tct, twt = t_tot
+        rc = tc / tct * 100
+        rw = tw / twt * 100
+        logger.debug1(cell, 'CPU time for %10s %9.2f  ( %6.2f%% ), wall time %9.2f  ( %6.2f%% )', comp.ljust(10), tc, rc, tw, rw)
+
+    t_tot = tspans[-1]
+    for icomp,comp in enumerate(tcomps):
+        write_time(comp, tspans[icomp], t_tot)
 
     return deri
 
