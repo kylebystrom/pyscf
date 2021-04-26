@@ -11,15 +11,22 @@ from pyscf import lib
 class PWKRCCSD:
     def __init__(self, mf):
         self.mf = mf
+        self.mcc = None
 
     def kernel(self):
         cput0 = (time.clock(), time.time())
         eris = _ERIS(self.mf)
         cput0 = lib.logger.timer(self.mf, 'CCSD init eri', *cput0)
-        mcc = cc.kccsd_rhf.RCCSD(self.mf)
-        mcc.kernel(eris=eris)
+        self.mcc = cc.kccsd_rhf.RCCSD(self.mf)
+        self.mcc.kernel(eris=eris)
 
-        return mcc
+        return self.mcc
+
+    @property
+    def e_corr(self):
+        if self.mcc is None:
+            raise RuntimeError("kernel must be called first.")
+        return self.mcc.e_corr
 
 
 class _ERIS:
