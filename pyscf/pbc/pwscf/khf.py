@@ -12,6 +12,7 @@ import scipy.linalg
 from pyscf import lib
 from pyscf import __config__
 from pyscf.scf import hf as mol_hf
+from pyscf.pbc.scf import khf as pbc_hf
 from pyscf.scf import chkfile as mol_chkfile
 from pyscf.pbc.pwscf import chkfile
 from pyscf.pbc import gto, scf, tools
@@ -135,7 +136,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
         last_hf_moe = moe_ks
         moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks, vj_R=vj_R)
         # C_ks, moe_ks, mocc_ks = sort_mo(C_ks, moe_ks, mocc_ks)
-        de_band = get_band_err(moe_ks, last_hf_moe, nband)
+        de_band = get_band_err(moe_ks, last_hf_moe, nband, joint=True)
         last_hf_e = e_tot
         e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
         de = e_tot - last_hf_e
@@ -184,7 +185,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
         last_hf_moe = moe_ks
         moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks, vj_R=vj_R)
         # C_ks, moe_ks, mocc_ks = sort_mo(C_ks, moe_ks, mocc_ks)
-        de_band = get_band_err(moe_ks, last_hf_moe, nband)
+        de_band = get_band_err(moe_ks, last_hf_moe, nband, joint=True)
         last_hf_e = e_tot
         e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
         de = e_tot - last_hf_e
@@ -255,12 +256,19 @@ def get_nband(mf, nbandv, nbandv_extra):
 #         return C_ks, moe_ks, mocc_ks
 
 
-def get_band_err(moe_ks, last_hf_moe, nband):
+def get_band_err(moe_ks, last_hf_moe, nband, joint=False):
     if isinstance(moe_ks[0], np.ndarray):
         if nband == 0: return 0.
         nkpts = len(moe_ks)
-        return np.max([np.max(abs(moe_ks[k] - last_hf_moe[k])[:nband])
-                      for k in range(nkpts)])
+        if joint:
+            moe1 = np.sort(np.concatenate([moe_ks[k][:nband]
+                           for k in range(nkpts)]))
+            moe0 = np.sort(np.concatenate([last_hf_moe[k][:nband]
+                           for k in range(nkpts)]))
+            return np.max(abs(moe1 - moe0))
+        else:
+            return np.max([np.max(abs(moe_ks[k] - last_hf_moe[k])[:nband])
+                          for k in range(nkpts)])
     else:
         ncomp = len(moe_ks)
         if isinstance(nband, int): nband = [nband] * ncomp
@@ -1060,7 +1068,8 @@ def get_cpw_virtual(mf, basis, amin=None, amax=None, thr_lindep=1e-14,
 
 
 # class PWKRHF(lib.StreamObject):
-class PWKRHF(mol_hf.SCF):
+# class PWKRHF(mol_hf.SCF):
+class PWKRHF(pbc_hf.KSCF):
     '''PWKRHF base class. non-relativistic RHF using PW basis.
     '''
 
@@ -1110,6 +1119,13 @@ class PWKRHF(mol_hf.SCF):
         self.with_jk = None
 
         self._keys = self._keys.union(['cell', 'exxdiv'])
+
+    @property
+    def kpts(self):
+        return self._kpts
+    @kpts.setter
+    def kpts(self, x):
+        self._kpts = np.reshape(x, (-1,3))
 
     def dump_flags(self):
 

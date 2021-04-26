@@ -271,7 +271,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
 
                     if incore:
                         v_ib_ = v_ib
-                        v_ib = np.ndarray((nocc_j,nvir_b,ngrids), dtype=dtype,
+                        v_ib = np.ndarray((nocc_i,nvir_b,ngrids), dtype=dtype,
                                           buffer=buf1)
                         np.multiply(v_ib_, phase, out=v_ib)
                         v_ib_ = None
