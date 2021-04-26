@@ -12,14 +12,7 @@ from pyscf import lib
 import pyscf.lib.parameters as param
 
 
-if __name__ == "__main__":
-    kmesh = [2,1,1]
-    ke_cutoff = 50
-    pseudo = "gth-pade"
-    exxdiv = "ewald"
-    atom = "Li 0 0 0; Li 1.75 1.75 1.75"
-    a = np.eye(3) * 3.5
-
+def test1(atom, a, basis, pseudo, ke_cutoff, kmesh):
 # cell
     cell = gto.Cell(
         atom=atom,
@@ -52,3 +45,19 @@ if __name__ == "__main__":
     print(gcc.e_corr)
 
     assert(abs(gcc.e_corr - pcc.e_corr) < 1.e-6)
+
+
+if __name__ == "__main__":
+    ke_cutoff = 50
+    basis = "gth-szv"
+    pseudo = "gth-pade"
+    exxdiv = "ewald"
+    atom = "Li 0 0 0; Li 1.75 1.75 1.75"
+    a = np.eye(3) * 3.5
+
+# same occ per kpt
+    kmesh = [2,1,1]
+    test1(atom, a, basis, pseudo, ke_cutoff, kmesh)
+# diff occ per kpt (i.e., needs padding)
+    kmesh = [2,2,1]
+    test1(atom, a, basis, pseudo, ke_cutoff, kmesh)

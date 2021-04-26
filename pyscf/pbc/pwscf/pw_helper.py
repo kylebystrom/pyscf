@@ -19,7 +19,7 @@ from pyscf.lib import logger
 """
 def get_kcomp(C_ks, k, load=True, occ=None, copy=False):
     if C_ks is None: return None
-    if isinstance(C_ks, list):
+    if isinstance(C_ks, (list,np.ndarray)):
         if occ is None:
             if copy:
                 return C_ks[k].copy()
@@ -54,7 +54,7 @@ def safe_write(h5grp, key, val, occ=None):
     else:
         h5grp[key] = val
 def set_kcomp(C_k, C_ks, k, occ=None, copy=False):
-    if isinstance(C_ks, list):
+    if isinstance(C_ks, (list,np.ndarray)):
         if occ is None:
             if copy:
                 C_ks[k] = C_k.copy()
@@ -69,7 +69,7 @@ def set_kcomp(C_k, C_ks, k, occ=None, copy=False):
         key = "%d"%k
         safe_write(C_ks, key, C_k, occ)
 def acc_kcomp(C_k, C_ks, k, occ=None):
-    if isinstance(C_ks, list):
+    if isinstance(C_ks, (list,np.ndarray)):
         if occ is None:
             C_ks[k] += C_k
         else:
@@ -83,7 +83,7 @@ def acc_kcomp(C_k, C_ks, k, occ=None):
                 occ = occ.tolist()
             C_ks[key][occ] += C_k
 def scale_kcomp(C_ks, k, scale):
-    if isinstance(C_ks, list):
+    if isinstance(C_ks, (list,np.ndarray)):
         C_ks[k] *= scale
     else:
         key = "%d"%k
