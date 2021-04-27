@@ -30,7 +30,7 @@ if __name__ == "__main__":
         ke_cutoff=ke_cutoff
     )
     cell.build()
-    cell.verbose = 5
+    cell.verbose = 6
 
 # kpts
     kpts = cell.make_kpts(kmesh)
@@ -40,7 +40,7 @@ if __name__ == "__main__":
     mf = pwscf.KRHF(cell, kpts)
     mf.kernel()
 
-    assert(abs(mf.e_tot - -10.6755239422105) < 1.e-6)
+    assert(abs(mf.e_tot - -10.6754924867542) < 1.e-6)
 
 # MP2
     moe_ks, mocc_ks = mf.get_cpw_virtual(basis_cpw)
@@ -49,4 +49,4 @@ if __name__ == "__main__":
     mmp.kernel()
     mmp.dump_mp2_summary()
 
-    assert(abs(mmp.e_corr - -0.215892462730802) < 1.e-6)
+    assert(abs(mmp.e_corr - -0.215895180360867) < 1.e-6)

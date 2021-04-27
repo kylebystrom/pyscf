@@ -121,9 +121,11 @@ def kernel_doubleloop(mf, kpts, C0=None,
         last_hf_e = e_tot
         last_hf_moe = moe_ks
 
-        # update coulomb potential, support vecs for PP & EXX
-        mf.update_pp(C_ks)
-        mf.update_k(C_ks, mocc_ks)
+        if cycle == 0:
+            # update coulomb potential, support vecs for PP & EXX
+            vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
+            mf.update_pp(C_ks)
+            mf.update_k(C_ks, mocc_ks)
 
         if cycle > 0:
             chg_conv_tol = min(chg_conv_tol, max(conv_tol, 0.1*abs(de)))
@@ -150,8 +152,17 @@ def kernel_doubleloop(mf, kpts, C0=None,
         de_band = get_band_err(moe_ks, last_hf_moe, nband, joint=True)
         de = e_tot - last_hf_e
 
-        logger.info(mf, 'cycle= %d E= %.15g  delta_E= %4.3g  max|dEband|= %4.3g  %d FC (%d tot)',
-                    cycle+1, e_tot, de, de_band, fc_this, fc_tot)
+        # update coulomb potential, support vecs for PP & EXX
+        vj_R = mf.get_vj_R(C_ks, mocc_ks)
+        mf.update_pp(C_ks)
+        mf.update_k(C_ks, mocc_ks)
+
+        # ACE error
+        err_R = get_ace_error(mf, C_ks, moe_ks, mocc_ks, nband=nband,
+                              mesh=mesh, Gv=Gv, vj_R=vj_R)
+
+        logger.info(mf, 'cycle= %d E= %.15g  delta_E= %4.3g  |dEbnd|= %4.3g  R= %4.3g  %d FC (%d tot)',
+                    cycle+1, e_tot, de, de_band, err_R, fc_this, fc_tot)
         mf.dump_moe(moe_ks, mocc_ks, nband=nband)
 
         if callable(mf.check_convergence):
@@ -175,11 +186,6 @@ def kernel_doubleloop(mf, kpts, C0=None,
         last_hf_e = e_tot
         last_hf_moe = moe_ks
 
-        # update coulomb potential, support vecs for PP & EXX
-        vj_R = mf.get_vj_R(C_ks, mocc_ks)
-        mf.update_pp(C_ks)
-        mf.update_k(C_ks, mocc_ks)
-
         chg_conv_tol = min(chg_conv_tol, max(conv_tol, 0.1*abs(de)))
         conv_tol_davidson = max(conv_tol*0.1, chg_conv_tol*0.01)
         logger.debug(mf, "  Performing charge SCF with conv_tol= %.3g conv_tol_davidson= %.3g", chg_conv_tol, conv_tol_davidson)
@@ -200,8 +206,17 @@ def kernel_doubleloop(mf, kpts, C0=None,
         de_band = get_band_err(moe_ks, last_hf_moe, nband, joint=True)
         de = e_tot - last_hf_e
 
-        logger.info(mf, 'Extra cycle  E= %.15g  delta_E= %4.3g  max|dEband|= %4.3g  %d FC (%d tot)',
-                    e_tot, de, de_band, fc_this, fc_tot)
+        # update coulomb potential, support vecs for PP & EXX
+        vj_R = mf.get_vj_R(C_ks, mocc_ks)
+        mf.update_pp(C_ks)
+        mf.update_k(C_ks, mocc_ks)
+
+        # ACE error
+        err_R = get_ace_error(mf, C_ks, moe_ks, mocc_ks, nband=nband,
+                              mesh=mesh, Gv=Gv, vj_R=vj_R)
+
+        logger.info(mf, 'Extra cycle  E= %.15g  delta_E= %4.3g  dEbnd= %4.3g  R= %4.3g  %d FC (%d tot)',
+                    e_tot, de, de_band, err_R, fc_this, fc_tot)
         mf.dump_moe(moe_ks, mocc_ks, nband=nband)
 
         if callable(mf.check_convergence):
@@ -290,6 +305,43 @@ def get_band_err(moe_ks, last_hf_moe, nband, joint=False):
         return np.max(err)
 
 
+def get_ace_error(mf, C_ks, moe_ks, mocc_ks, nband=None, comp=None, exxdiv=None,
+                  mesh=None, Gv=None, vj_R=None):
+    kpts = mf.kpts
+    nkpts = len(kpts)
+    cell = mf.cell
+    if mesh is None: mesh = cell.mesh
+    if Gv is None: Gv = cell.get_Gv(mesh)
+    if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
+    if exxdiv is None: exxdiv = mf.exxdiv
+
+    if isinstance(moe_ks[0][0], float): # RHF
+        if exxdiv == "ewald":
+            moe_ks_noewald = ewald_correction(moe_ks, mocc_ks, -mf._madelung)
+        err_Rs = np.zeros(nkpts)
+        for k in range(nkpts):
+            nband_ = len(mocc_ks[k]) if nband is None else nband
+            C_k = get_kcomp(C_ks, k)[:nband_]
+            Cbar_k = mf.apply_Fock_kpt(C_k, kpts[k], mocc_ks, mesh, Gv, vj_R,
+                                       "none", comp=comp, ret_E=False)
+            R_k = lib.dot(C_k.conj(),
+                          (Cbar_k - C_k*moe_ks_noewald[k][:nband_,None]).T)
+            err_Rs[k] = abs(R_k).max()
+            C_k = Cbar_k = None
+    else:
+        ncomp = len(moe_ks)
+        err_Rs = np.zeros(ncomp)
+        for comp in range(ncomp):
+            C_ks_comp = get_kcomp(C_ks, comp, load=False)
+            nband_ = None if nband is None else nband[comp]
+            err_Rs[comp] = get_ace_error(mf, C_ks_comp,
+                                         moe_ks[comp], mocc_ks[comp],
+                                         nband=nband_, comp=comp, exxdiv=exxdiv,
+                                         mesh=mesh, Gv=Gv, vj_R=vj_R)
+    err_R = np.max(err_Rs)
+    return err_R
+
+
 def remove_extra_virbands(C_ks, moe_ks, mocc_ks, nbandv_extra):
     if isinstance(moe_ks[0], np.ndarray):
         if nbandv_extra > 0:
@@ -334,9 +386,55 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
         chgmixer = pw_helper.AndersonMixing(mf)
 
     cput1 = (time.clock(), time.time())
+    # for cycle in range(max_cycle):
+    #
+    #     if cycle > 0:   # charge mixing
+    #         vj_R = chgmixer.next_step(mf, vj_R, vj_R-last_vj_R)
+    #
+    #     conv_ks, moe_ks, C_ks, fc_ks = mf.converge_band(
+    #                         C_ks, mocc_ks, kpts,
+    #                         mesh=mesh, Gv=Gv,
+    #                         vj_R=vj_R,
+    #                         conv_tol_davidson=conv_tol_davidson,
+    #                         max_cycle_davidson=max_cycle_davidson,
+    #                         verbose_davidson=verbose_davidson)
+    #     fc_this = sum(fc_ks)
+    #     fc_tot += fc_this
+    #
+    #     # update mo occ
+    #     mocc_ks = mf.get_mo_occ(moe_ks)
+    #
+    #     # update coulomb potential and energy
+    #     last_vj_R = vj_R
+    #     vj_R = mf.get_vj_R(C_ks, mocc_ks)
+    #
+    #     if cycle > 0: last_hf_e = e_tot
+    #     e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
+    #     if not last_hf_e is None:
+    #         de = e_tot-last_hf_e
+    #     else:
+    #         de = float("inf")
+    #     logger.debug(mf, '  chg cyc= %d E= %.15g  delta_E= %4.3g  %d FC (%d tot)',
+    #                 cycle+1, e_tot, de, fc_this, fc_tot)
+    #     mf.dump_moe(moe_ks, mocc_ks, nband=nband, trigger_level=logger.DEBUG3)
+    #
+    #     if abs(de) < conv_tol:
+    #         scf_conv = True
+    #
+    #     cput1 = logger.timer_debug1(mf, 'chg cyc= %d'%(cycle+1),
+    #                                 *cput1)
+    #
+    #     if scf_conv:
+    #         break
+
     for cycle in range(max_cycle):
 
         if cycle > 0:   # charge mixing
+            # update mo occ
+            mocc_ks = mf.get_mo_occ(moe_ks)
+            # update coulomb potential
+            last_vj_R = vj_R
+            vj_R = mf.get_vj_R(C_ks, mocc_ks)
             vj_R = chgmixer.next_step(mf, vj_R, vj_R-last_vj_R)
 
         conv_ks, moe_ks, C_ks, fc_ks = mf.converge_band(
@@ -348,13 +446,6 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
                             verbose_davidson=verbose_davidson)
         fc_this = sum(fc_ks)
         fc_tot += fc_this
-
-        # update mo occ
-        mocc_ks = mf.get_mo_occ(moe_ks)
-
-        # update coulomb potential and energy
-        last_vj_R = vj_R
-        vj_R = mf.get_vj_R(C_ks, mocc_ks)
 
         if cycle > 0: last_hf_e = e_tot
         e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
@@ -665,7 +756,11 @@ def update_k(mf, C_ks, mocc_ks):
     if not "t-ace" in mf.scf_summary:
         mf.scf_summary["t-ace"] = np.zeros(2)
 
-    mf.with_jk.update_k_support_vec(C_ks, mocc_ks, mf.kpts)
+    mesh = mf.cell.mesh
+    if np.all(abs(mesh-mesh/2*2)>0):   # all odd --> s2 symm for occ bands
+        mf.with_jk.update_k_support_vec(C_ks, mocc_ks, mf.kpts)
+    else:
+        mf.with_jk.update_k_support_vec(C_ks, mocc_ks, mf.kpts, Ct_ks=C_ks)
 
     tock = np.asarray([time.clock(), time.time()])
     mf.scf_summary["t-ace"] += tock - tick
@@ -1069,12 +1164,11 @@ def get_cpw_virtual(mf, basis, amin=None, amax=None, thr_lindep=1e-14,
         Cv = pw_helper.get_C_ks_G(cell_cpw, [kpts[k]], [Cao], [nao])[0]
         occ = np.where(mocc_ks0[k]>THR_OCC)[0]
         Co = get_kcomp(Co_ks, k, occ=occ)
+        Cv -= lib.dot(lib.dot(Cv, Co.conj().T), Co)
+        Cv = pw_helper.orth(cell, Cv, thr_lindep=thr_lindep, follow=False)
         C = np.vstack([Co,Cv])
-        mocc = np.zeros(C.shape[0])
-        mocc[:len(occ)] = 2.
-        C = orth_mo1(cell, C, mocc, thr_lindep=thr_lindep, follow=False)
         set_kcomp(C, C_ks, k)
-        mocc_ks[k] = mocc[:C.shape[0]]
+        mocc_ks[k] = np.asarray([2.]*len(occ) + [0.]*Cv.shape[0])
         C = Co = Cv = None
 # build and diagonalize fock vv
     mf.update_pp(C_ks)

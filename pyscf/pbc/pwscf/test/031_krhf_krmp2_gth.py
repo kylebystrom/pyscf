@@ -29,7 +29,7 @@ if __name__ == "__main__":
         ke_cutoff=ke_cutoff
     )
     cell.build()
-    cell.verbose = 5
+    cell.verbose = 6
 
 # kpts
     kpts = cell.make_kpts(kmesh)
@@ -46,18 +46,19 @@ if __name__ == "__main__":
     pwmf.chkfile = chkfile
     pwmf.kernel()
 
-    assert(abs(pwmf.e_tot - -10.6755239422105) < 1.e-6)
+    e_tot0 = -10.6754927046184
+    assert(abs(pwmf.e_tot - e_tot0) < 1.e-6)
 
 # krhf init from chkfile
     pwmf.init_guess = "chkfile"
     pwmf.kernel()
 
-    assert(abs(pwmf.e_tot - -10.6755239422105) < 1.e-6)
+    assert(abs(pwmf.e_tot - e_tot0) < 1.e-6)
 
 # input C0
     pwmf.kernel(C0=pwmf.mo_coeff)
 
-    assert(abs(pwmf.e_tot - -10.6755239422105) < 1.e-6)
+    assert(abs(pwmf.e_tot - e_tot0) < 1.e-6)
 
 # krmp2
     pwmp = pwscf.KMP2(pwmf)

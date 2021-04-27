@@ -124,14 +124,14 @@ def apply_k_s1(cell, C_ks, Ct_ks, mocc_ks, kpts, mesh, Gv, out=None):
             coulG = tools.get_coulG(cell, kpt1-kpt2, exx=False, mesh=mesh,
                                     Gv=Gv)
             Co_k2_R = get_kcomp(Co_ks_R, k2)
-            for j in range(no_ks[k2]):
+            for j in occ_ks[k2]:
                 Cj_k2_R = Co_k2_R[j]
                 vij_R = tools.ifft(tools.fft(Ct_k1_R * Cj_k2_R.conj(), mesh) *
                                    coulG, mesh)
                 Ctbar_k1 += vij_R * Cj_k2_R
 
         Ctbar_k1 = tools.fft(Ctbar_k1, mesh) * fac
-        set_kcomp(out, Ctbar_k1, k)
+        set_kcomp(Ctbar_k1, out, k1)
         Ctbar_k1 = None
 
     return out
@@ -196,11 +196,12 @@ def apply_k_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv, out):
 
                 for i in range(no_k1):
                     jmax = i+1 if k2 == k1 else no_k2
-                    jmax2 = jmax-1 if k2 == k1 else jmax
+                    jmax2 = i if k2 == k1 else no_k2
                     vji_R = tools.ifft(tools.fft(C_k2_R[:jmax].conj() *
                                        C_k1_R[i], mesh) * coulG, mesh)
                     Cbar_k1[i] += np.sum(vji_R * C_k2_R[:jmax], axis=0)
-                    Cbar_k2[:jmax2] += vji_R[:jmax2].conj() * C_k1_R[i]
+                    if jmax2 > 0:
+                        Cbar_k2[:jmax2] += vji_R[:jmax2].conj() * C_k1_R[i]
 
                 acc_kcomp(Cbar_k2, out, k2, occ=occ_ks[k2])
 
@@ -261,7 +262,7 @@ class PWJK:
         else:
             return self.cell.get_Gv(mesh)
 
-    def get_vj_R(self, C_ks, mocc_ks, mesh=None, Gv=None, ncomp=1):
+    def get_rho_R(self, C_ks, mocc_ks, mesh=None, Gv=None, ncomp=1):
         if mesh is None: mesh = self.mesh
         if Gv is None: Gv = self.get_Gv(mesh)
         if ncomp == 1:
@@ -272,6 +273,12 @@ class PWJK:
                 C_ks_comp = get_kcomp(C_ks, comp, load=False)
                 rho_R += get_rho_R(C_ks_comp, mocc_ks[comp], mesh)
             rho_R *= 1./ncomp
+        return rho_R
+
+    def get_vj_R(self, C_ks, mocc_ks, mesh=None, Gv=None, ncomp=1):
+        if mesh is None: mesh = self.mesh
+        if Gv is None: Gv = self.get_Gv(mesh)
+        rho_R = self.get_rho_R(C_ks, mocc_ks, mesh, Gv, ncomp)
 
         cell = self.cell
         nkpts = len(self.kpts)
