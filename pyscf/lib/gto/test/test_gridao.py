@@ -17,9 +17,9 @@ import ctypes
 import unittest
 import numpy
 from pyscf import lib, gto, df
+from pyscf.gto.eval_gto import BLKSIZE
 
 libcgto = lib.load_library('libdft')
-BLKSIZE = 64
 
 mol = gto.M(atom='''
             O 0.5 0.5 0.

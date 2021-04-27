@@ -22,7 +22,7 @@ import numpy
 from pyscf import lib
 from pyscf.gto.moleintor import make_loc
 
-BLKSIZE = 120 # needs to be the same to lib/gto/grid_ao_drv.c
+BLKSIZE = 120  # must be equal to lib/gto/grid_ao_drv.h
 
 libcgto = lib.load_library('libcgto')
 
