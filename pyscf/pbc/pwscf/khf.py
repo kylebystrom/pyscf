@@ -85,7 +85,6 @@ def kernel_doubleloop(mf, kpts, C0=None,
     mf.update_pp(C_ks)
     mf.update_k(C_ks, mocc_ks)
     C_ks, moe_ks, mocc_ks = mf.eig_subspace(C_ks, mocc_ks)
-    # C_ks, moe_ks, mocc_ks = sort_mo(C_ks, moe_ks, mocc_ks)
     e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks)
     logger.info(mf, 'init E= %.15g', e_tot)
     mf.dump_moe(moe_ks, mocc_ks, nband=nband)
@@ -108,13 +107,21 @@ def kernel_doubleloop(mf, kpts, C0=None,
     chg_conv_tol = 0.1
     for cycle in range(max_cycle):
 
+        last_hf_e = e_tot
+        last_hf_moe = moe_ks
+
+        # update coulomb potential, support vecs for PP & EXX
+        vj_R = mf.get_vj_R(C_ks, mocc_ks)
+        mf.update_pp(C_ks)
+        mf.update_k(C_ks, mocc_ks)
+
         if cycle > 0:
             chg_conv_tol = min(chg_conv_tol, max(conv_tol, 0.1*abs(de)))
         conv_tol_davidson = max(conv_tol*0.1, chg_conv_tol*0.01)
         logger.debug(mf, "  Performing charge SCF with conv_tol= %.3g conv_tol_davidson= %.3g", chg_conv_tol, conv_tol_davidson)
 
         # charge SCF
-        chg_scf_conv, fc_this, C_ks, chg_moe_ks, chg_mocc_ks, chg_e_tot = \
+        chg_scf_conv, fc_this, vj_R, C_ks, moe_ks, mocc_ks, e_tot = \
                             mf.kernel_charge(
                                 C_ks, mocc_ks, kpts, nband, mesh=mesh, Gv=Gv,
                                 max_cycle=max_cycle, conv_tol=chg_conv_tol,
@@ -128,17 +135,9 @@ def kernel_doubleloop(mf, kpts, C0=None,
         if not chg_scf_conv:
             logger.warn(mf, "  Charge SCF not converged.")
 
-        # update coulomb potential, support vecs for PP & EXX, and energies
-        mocc_ks = chg_mocc_ks
-        vj_R = mf.get_vj_R(C_ks, mocc_ks)
-        mf.update_pp(C_ks)
-        mf.update_k(C_ks, mocc_ks)
-        last_hf_moe = moe_ks
-        moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks, vj_R=vj_R)
-        # C_ks, moe_ks, mocc_ks = sort_mo(C_ks, moe_ks, mocc_ks)
+        if mf.exxdiv == "ewald":
+            moe_ks = ewald_correction(moe_ks, mocc_ks, mf._madelung)
         de_band = get_band_err(moe_ks, last_hf_moe, nband, joint=True)
-        last_hf_e = e_tot
-        e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
         de = e_tot - last_hf_e
 
         logger.info(mf, 'cycle= %d E= %.15g  delta_E= %4.3g  max|dEband|= %4.3g  %d FC (%d tot)',
@@ -163,11 +162,19 @@ def kernel_doubleloop(mf, kpts, C0=None,
 
     if scf_conv and conv_check:
         # An extra diagonalization, to remove level shift
+        last_hf_e = e_tot
+        last_hf_moe = moe_ks
+
+        # update coulomb potential, support vecs for PP & EXX
+        vj_R = mf.get_vj_R(C_ks, mocc_ks)
+        mf.update_pp(C_ks)
+        mf.update_k(C_ks, mocc_ks)
+
         chg_conv_tol = min(chg_conv_tol, max(conv_tol, 0.1*abs(de)))
         conv_tol_davidson = max(conv_tol*0.1, chg_conv_tol*0.01)
         logger.debug(mf, "  Performing charge SCF with conv_tol= %.3g conv_tol_davidson= %.3g", chg_conv_tol, conv_tol_davidson)
 
-        chg_scf_conv, fc_this, C_ks, chg_moe_ks, chg_mocc_ks, chg_e_tot = \
+        chg_scf_conv, fc_this, vj_R, C_ks, moe_ks, mocc_ks, e_tot = \
                             mf.kernel_charge(
                                 C_ks, mocc_ks, kpts, nband, mesh=mesh, Gv=Gv,
                                 max_cycle=max_cycle, conv_tol=chg_conv_tol,
@@ -178,16 +185,9 @@ def kernel_doubleloop(mf, kpts, C0=None,
                                 last_hf_e=e_tot)
         fc_tot += fc_this
 
-        mocc_ks = chg_mocc_ks
-        vj_R = mf.get_vj_R(C_ks, mocc_ks)
-        mf.update_pp(C_ks)
-        mf.update_k(C_ks, mocc_ks)
-        last_hf_moe = moe_ks
-        moe_ks, mocc_ks = mf.get_mo_energy(C_ks, mocc_ks, vj_R=vj_R)
-        # C_ks, moe_ks, mocc_ks = sort_mo(C_ks, moe_ks, mocc_ks)
+        if mf.exxdiv == "ewald":
+            moe_ks = ewald_correction(moe_ks, mocc_ks, mf._madelung)
         de_band = get_band_err(moe_ks, last_hf_moe, nband, joint=True)
-        last_hf_e = e_tot
-        e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
         de = e_tot - last_hf_e
 
         logger.info(mf, 'Extra cycle  E= %.15g  delta_E= %4.3g  max|dEband|= %4.3g  %d FC (%d tot)',
@@ -365,7 +365,7 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
         if scf_conv:
             break
 
-    return scf_conv, fc_tot, C_ks, moe_ks, mocc_ks, e_tot
+    return scf_conv, fc_tot, vj_R, C_ks, moe_ks, mocc_ks, e_tot
 
 
 def get_mo_occ(cell, moe_ks=None, C_ks=None, nocc=None):
@@ -686,9 +686,8 @@ def eig_subspace(mf, C_ks, mocc_ks, mesh=None, Gv=None, vj_R=None, exxdiv=None,
         C_k = Cbar_k = None
 
     mocc_ks = get_mo_occ(cell, moe_ks=moe_ks)
-    if exxdiv == "ewald":
-        for k in range(nkpts):
-            moe_ks[k][mocc_ks[k] > THR_OCC] -= mf._madelung
+    if mf.exxdiv == "ewald":
+        moe_ks = ewald_correction(moe_ks, mocc_ks, mf._madelung)
 
     return C_ks, moe_ks, mocc_ks
 
@@ -805,6 +804,22 @@ def apply_Fock_kpt(mf, C_k, kpt, mocc_ks, mesh, Gv, vj_R, exxdiv,
         return Cbar_k
 
 
+def ewald_correction(moe_ks, mocc_ks, madelung):
+    if isinstance(moe_ks[0][0], float): # RHF
+        nkpts = len(moe_ks)
+        moe_ks_new = [None] * nkpts
+        for k in range(nkpts):
+            moe_ks_new[k] = moe_ks[k].copy()
+            moe_ks_new[k][mocc_ks[k]>THR_OCC] -= madelung
+    else:                               # UHF
+        ncomp = len(moe_ks)
+        moe_ks_new = [None] * ncomp
+        for comp in range(ncomp):
+            moe_ks_new[comp] = ewald_correction(moe_ks[comp], mocc_ks[comp],
+                                                madelung)
+    return moe_ks_new
+
+
 def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
                   vj_R=None, comp=None, ret_mocc=True):
     cell = mf.cell
@@ -829,9 +844,8 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
         moe_ks[k] = moe_k.real
 
     mocc_ks = get_mo_occ(cell, moe_ks=moe_ks)
-    if exxdiv == "ewald":
-        for k in range(nkpts):
-            moe_ks[k][mocc_ks[k] > THR_OCC] -= mf._madelung
+    if mf.exxdiv == "ewald":
+        moe_ks = ewald_correction(moe_ks, mocc_ks, mf._madelung)
 
     if ret_mocc:
         return moe_ks, mocc_ks
@@ -1055,9 +1069,9 @@ def get_cpw_virtual(mf, basis, amin=None, amax=None, thr_lindep=1e-14,
         C = lib.dot(u.T, C)
         set_kcomp(C, C_ks, k)
         Cbar = C = None
-        if exxdiv == "ewald":
-            e[mocc_ks[k]>THR_OCC] -= mf._madelung
         moe_ks[k] = e
+    if mf.exxdiv == "ewald":
+        moe_ks = ewald_correction(moe_ks, mocc_ks, mf._madelung)
     e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
     de_tot = e_tot - mf.e_tot
     logger.info(mf, "SCF energy before %.10f  after CPW %.10f  change %.10f",
