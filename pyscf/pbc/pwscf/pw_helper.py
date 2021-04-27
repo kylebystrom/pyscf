@@ -334,25 +334,49 @@ def gtomf2pwmf(mf, chkfile=None):
             A hdf5 file to store chk variables (mo_energy, mo_occ, etc.). If not provided, a temporary file is generated.
     """
     from pyscf.pbc import scf
-    assert(isinstance(mf, scf.khf.KRHF))
+    assert(isinstance(mf, (scf.khf.KRHF,scf.kuhf.KUHF,scf.uhf.UHF)))
 
+    from pyscf.pbc import pwscf
+    cell = mf.cell
+    kpts = getattr(mf, "kpts", np.zeros((1,3)))
+    nkpts = len(kpts)
+# transform GTO MO coeff to PW MO coeff
+    Cgto_ks = mf.mo_coeff
+    if isinstance(mf, scf.khf.KRHF):
+        pwmf = pwscf.KRHF(cell, kpts)
+        nmo_ks = [Cgto_ks[k].shape[1] for k in range(nkpts)]
+        pwmf.mo_coeff = C_ks = get_C_ks_G(cell, kpts, Cgto_ks, nmo_ks)
+        pwmf.mo_energy = moe_ks = mf.mo_energy
+        pwmf.mo_occ = mocc_ks = mf.mo_occ
+        pwmf.e_tot = mf.e_tot
+    elif isinstance(mf, scf.kuhf.KUHF):
+        pwmf = pwscf.KUHF(cell, kpts)
+        C_ks = [None] * 2
+        for s in [0,1]:
+            nmo_ks = [Cgto_ks[s][k].shape[1] for k in range(nkpts)]
+            C_ks[s] = get_C_ks_G(cell, kpts, Cgto_ks[s], nmo_ks)
+        pwmf.mo_coeff = C_ks
+        pwmf.mo_energy = moe_ks = mf.mo_energy
+        pwmf.mo_occ = mocc_ks = mf.mo_occ
+        pwmf.e_tot = mf.e_tot
+    elif isinstance(mf, scf.uhf.UHF):
+        pwmf = pwscf.KUHF(cell, kpts)
+        C_ks = [None] * 2
+        for s in [0,1]:
+            nmo_ks = [Cgto_ks[s].shape[1]]
+            C_ks[s] = get_C_ks_G(cell, kpts, [Cgto_ks[s]], nmo_ks)
+        pwmf.mo_coeff = C_ks
+        pwmf.mo_energy = moe_ks = [[mf.mo_energy[s]] for s in [0,1]]
+        pwmf.mo_occ = mocc_ks = [[mf.mo_occ[s]] for s in [0,1]]
+        pwmf.e_tot = mf.e_tot
+    else:
+        raise TypeError
+# update chkfile
     if chkfile is None:
         swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
         chkfile = swapfile.name
         swapfile = None
-
-    from pyscf.pbc import pwscf
-    cell = mf.cell
-    kpts = mf.kpts
-    nkpts = len(kpts)
-    pwmf = pwscf.KRHF(cell, kpts)
     pwmf.chkfile = chkfile
-    Cgto_ks = mf.mo_coeff
-    nmo_ks = [Cgto_ks[k].shape[1] for k in range(nkpts)]
-    pwmf.mo_coeff = C_ks = get_C_ks_G(cell, kpts, Cgto_ks, nmo_ks)
-    pwmf.mo_energy = moe_ks = mf.mo_energy
-    pwmf.mo_occ = mocc_ks = mf.mo_occ
-    pwmf.e_tot = mf.e_tot
     from pyscf.pbc.pwscf.chkfile import dump_scf
     dump_scf(mf.cell, pwmf.chkfile, mf.e_tot, moe_ks, mocc_ks, C_ks)
     pwmf.converged = True

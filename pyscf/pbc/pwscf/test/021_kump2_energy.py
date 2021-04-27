@@ -46,28 +46,7 @@ if __name__ == "__main__":
     gmp.kernel()
 
 # PW
-    pmf = pwscf.KUHF(cell, kpts)
-    pmf.init_pp()
-    pmf.init_jk()
-    pmf.exxdiv = exxdiv
-    C_ks = [None] * 2
-    for s in [0,1]:
-        n_ks = [gmf.mo_coeff[0].shape[1]] * nkpts
-        C_ks[s] = pw_helper.get_C_ks_G(cell, kpts, gmf.mo_coeff, n_ks)
-    mocc_ks = kuhf.get_mo_occ(cell, C_ks=C_ks)
-    pmf.update_pp(C_ks)
-    pmf.update_k(C_ks, mocc_ks)
-    vj_R = pmf.get_vj_R(C_ks, mocc_ks)
-    pmf.nvir = [np.sum(mocc_ks[s][0]<1e-3) for s in [0,1]]
-
-    moe_ks = pmf.get_mo_energy(C_ks, mocc_ks, exxdiv=exxdiv, vj_R=vj_R,
-                               ret_mocc=False)
-
-    # fake a scf chkfile
-    swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
-    pmf.chkfile = swapfile.name
-    swapfile = None
-    pwscf.chkfile.dump_scf(cell, pmf.chkfile, 0., moe_ks, mocc_ks, C_ks)
+    pmf = pw_helper.gtomf2pwmf(gmf)
 
     from pyscf.pbc.pwscf import kump2
     pmp = kump2.PWKUMP2(pmf)
