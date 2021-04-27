@@ -1421,6 +1421,12 @@ class PWKRHF(pbc_hf.KSCF):
         ntot_ks = [nocc+nvir] * len(self.kpts)
         return init_guess_from_C0(self.cell, C0, ntot_ks, out=out)
 
+    def get_rho_R(self, C_ks, mocc_ks, mesh=None, Gv=None):
+        return self.with_jk.get_rho_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
+
+    def get_vj_R_from_rho_R(self, rho_R, mesh=None, Gv=None):
+        return self.with_jk.get_vj_R_from_rho_R(rho_R, mesh=mesh, Gv=Gv)
+
     def get_vj_R(self, C_ks, mocc_ks, mesh=None, Gv=None):
         return self.with_jk.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
 

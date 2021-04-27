@@ -275,17 +275,22 @@ class PWJK:
             rho_R *= 1./ncomp
         return rho_R
 
-    def get_vj_R(self, C_ks, mocc_ks, mesh=None, Gv=None, ncomp=1):
+    def get_vj_R_from_rho_R(self, rho_R, mesh=None, Gv=None):
         if mesh is None: mesh = self.mesh
         if Gv is None: Gv = self.get_Gv(mesh)
-        rho_R = self.get_rho_R(C_ks, mocc_ks, mesh, Gv, ncomp)
-
         cell = self.cell
         nkpts = len(self.kpts)
         ngrids = Gv.shape[0]
         fac = ngrids**2 / (cell.vol*nkpts)
         vj_R = tools.ifft(tools.fft(rho_R, mesh) * tools.get_coulG(cell, Gv=Gv),
                           mesh).real * fac
+        return vj_R
+
+    def get_vj_R(self, C_ks, mocc_ks, mesh=None, Gv=None, ncomp=1):
+        if mesh is None: mesh = self.mesh
+        if Gv is None: Gv = self.get_Gv(mesh)
+        rho_R = self.get_rho_R(C_ks, mocc_ks, mesh, Gv, ncomp)
+        vj_R = self.get_vj_R_from_rho_R(rho_R, mesh, Gv)
 
         return vj_R
 
