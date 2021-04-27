@@ -84,9 +84,20 @@ def kernel_doubleloop(mf, kpts, C0=None,
     vj_R = mf.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
     mf.update_pp(C_ks)
     mf.update_k(C_ks, mocc_ks)
-    C_ks, moe_ks, mocc_ks = mf.eig_subspace(C_ks, mocc_ks)
-    e_tot = mf.energy_tot(C_ks, mocc_ks, moe_ks=moe_ks)
+    # charge SCF with very looooooose convergence threshold
+    logger.debug(mf, "Init charge cycle")
+    chg_scf_conv, fc_init, vj_R, C_ks, moe_ks, mocc_ks, e_tot = \
+                        mf.kernel_charge(
+                            C_ks, mocc_ks, kpts, nband, mesh=mesh, Gv=Gv,
+                            max_cycle=max_cycle, conv_tol=0.1,
+                            max_cycle_davidson=max_cycle_davidson,
+                            conv_tol_davidson=0.001,
+                            verbose_davidson=verbose_davidson,
+                            damp_type=damp_type, damp_factor=damp_factor,
+                            vj_R=vj_R)
     logger.info(mf, 'init E= %.15g', e_tot)
+    if mf.exxdiv == "ewald":
+        moe_ks = ewald_correction(moe_ks, mocc_ks, mf._madelung)
     mf.dump_moe(moe_ks, mocc_ks, nband=nband)
 
     scf_conv = False
@@ -100,10 +111,10 @@ def kernel_doubleloop(mf, kpts, C0=None,
         # Note in pbc.scf, mf.mol == mf.cell, cell is saved under key "mol"
         mol_chkfile.save_mol(cell, mf.chkfile)
 
-    fc_tot = 0
-    fc_this = 0
     cput1 = logger.timer(mf, 'initialize pwscf', *cput0)
 
+    fc_tot = fc_init
+    fc_this = 0
     chg_conv_tol = 0.1
     for cycle in range(max_cycle):
 
@@ -111,7 +122,6 @@ def kernel_doubleloop(mf, kpts, C0=None,
         last_hf_moe = moe_ks
 
         # update coulomb potential, support vecs for PP & EXX
-        vj_R = mf.get_vj_R(C_ks, mocc_ks)
         mf.update_pp(C_ks)
         mf.update_k(C_ks, mocc_ks)
 
@@ -914,6 +924,21 @@ def energy_tot(mf, C_ks, mocc_ks, moe_ks=None, mesh=None, Gv=None,
     return e_tot
 
 
+def get_precond_davidson(kpt, Gv):
+    kG = kpt + Gv if np.sum(np.abs(kpt)) > 1.E-9 else Gv
+    dF = np.einsum("gj,gj->g", kG, kG) * 0.5
+    # precond = lambda dx, e, x0: dx/(dF - e)
+    def precond(dx, e, x0):
+        """ G Kresse and J. Furthmüller PRB, 54, 1996: 11169 - 11186
+        """
+        Ek = np.einsum("g,g,g->", dF, dx.conj(), dx)
+        dX = dF / (1.5 * Ek)
+        num = 27.+18.*dX+12.*dX**2.+8.*dX**3.
+        denom = num + 16*dX**4.
+        return (num/denom) * dx
+    return precond
+
+
 def converge_band_kpt(mf, C_k, kpt, mocc_ks, nband=None, mesh=None, Gv=None,
                       vj_R=None, comp=None,
                       conv_tol_davidson=1e-6,
@@ -921,6 +946,9 @@ def converge_band_kpt(mf, C_k, kpt, mocc_ks, nband=None, mesh=None, Gv=None,
                       verbose_davidson=0):
     ''' Converge all occupied orbitals for a given k-point using davidson algorithm
     '''
+    cell = mf.cell
+    if mesh is None: mesh = cell.mesh
+    if Gv is None: Gv = cell.get_Gv(mesh)
 
     fc = [0]
     def FC(C_k_, ret_E=False):
@@ -933,9 +961,7 @@ def converge_band_kpt(mf, C_k, kpt, mocc_ks, nband=None, mesh=None, Gv=None,
 
     tick = np.asarray([time.clock(), time.time()])
 
-    kG = kpt + Gv if np.sum(np.abs(kpt)) > 1.E-9 else Gv
-    dF = np.einsum("gj,gj->g", kG, kG) * 0.5
-    precond = lambda dx, e, x0: dx/(dF - e)
+    precond = get_precond_davidson(kpt, Gv)
 
     nroots = C_k.shape[0] if nband is None else nband
 
