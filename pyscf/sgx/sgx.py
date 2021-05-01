@@ -161,7 +161,7 @@ mcscf.casci.CASCI.COSX = sgx_fit
 
 def _make_opt(mol):
     '''Optimizer to genrate 3-center 2-electron integrals'''
-    intor = mol._add_suffix('int3c2e')
+    intor = mol._add_suffix('int1e_grids')
     cintopt = gto.moleintor.make_cintopt(mol._atm, mol._bas, mol._env, intor)
     # intor 'int1e_ovlp' is used by the prescreen method
     # 'SGXnr_ovlp_prescreen' only. Not used again in other places.

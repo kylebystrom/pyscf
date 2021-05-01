@@ -260,17 +260,23 @@ def _gen_jk_direct(mol, aosym, with_j, with_k, direct_scf_tol, sgxopt=None):
     ncomp = 1
     nao = mol.nao
     cintor = _vhf._fpointer(sgxopt._intor)
-    fdot = _vhf._fpointer('SGXdot_nr'+aosym)
+    fdot = _vhf._fpointer('SGXdot_nrk')
     drv = _vhf.libcvhf.SGXnr_direct_drv
 
     def jk_part(mol, grid_coords, dms, fg):
         fakemol = gto.fakemol_for_charges(grid_coords)
-        atm, bas, env = gto.mole.conc_env(mol._atm, mol._bas, mol._env,
-                                          fakemol._atm, fakemol._bas, fakemol._env)
+        #atm, bas, env = gto.mole.conc_env(mol._atm, mol._bas, mol._env,
+        #                                  fakemol._atm, fakemol._bas, fakemol._env)
+        atm, bas, env = mol._atm, mol._bas, mol._env
+        ngrids = grid_coords.shape[0]
+        env = numpy.append(env, grid_coords.ravel())
+        env[11] = ngrids
+        env[12] = mol._env.size
 
         ao_loc = moleintor.make_loc(bas, sgxopt._intor)
-        shls_slice = (0, mol.nbas, 0, mol.nbas, mol.nbas, len(bas))
-        ngrids = grid_coords.shape[0]
+        shls_slice = (0, mol.nbas, 0, mol.nbas)
+
+        fg = numpy.ascontiguousarray(fg.transpose(0,2,1))
 
         vj = vk = None
         fjk = []
@@ -290,7 +296,7 @@ def _gen_jk_direct(mol, aosym, with_j, with_k, direct_scf_tol, sgxopt=None):
                     vjkptr.append(vj[i].ctypes.data_as(ctypes.c_void_p))
                     fjk.append(_vhf._fpointer('SGXnr'+aosym+'_ijg_ji_g'))
         if with_k:
-            vk = numpy.zeros((len(fg),ncomp,ngrids,nao))[:,0]
+            vk = numpy.zeros((len(fg),ncomp,nao,ngrids))[:,0]
             for i, dm in enumerate(fg):
                 dmsptr.append(dm.ctypes.data_as(ctypes.c_void_p))
                 vjkptr.append(vk[i].ctypes.data_as(ctypes.c_void_p))
@@ -302,12 +308,17 @@ def _gen_jk_direct(mol, aosym, with_j, with_k, direct_scf_tol, sgxopt=None):
         vjkptr = (ctypes.c_void_p*(n_dm))(*vjkptr)
 
         drv(cintor, fdot, fjk, dmsptr, vjkptr, n_dm, ncomp,
-            (ctypes.c_int*6)(*shls_slice),
+            (ctypes.c_int*4)(*shls_slice),
             ao_loc.ctypes.data_as(ctypes.c_void_p),
             sgxopt._cintopt, sgxopt._this,
             atm.ctypes.data_as(ctypes.c_void_p), ctypes.c_int(mol.natm),
             bas.ctypes.data_as(ctypes.c_void_p), ctypes.c_int(mol.nbas),
-            env.ctypes.data_as(ctypes.c_void_p))
+            env.ctypes.data_as(ctypes.c_void_p),
+            ctypes.c_int(env.shape[0]),
+            ctypes.c_int(2 if aosym == 's2' else 1))
+        if vk is not None:
+            vk = vk.transpose(0,2,1)
+            vk = numpy.ascontiguousarray(vk)
         return vj, vk
     return jk_part
 
