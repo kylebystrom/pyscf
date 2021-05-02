@@ -36,8 +36,11 @@ typedef struct {
 
 typedef struct {
         SGXJKArray *(*allocate)(int *shls_slice, int *ao_loc, int ncomp, int ngrids);
+        //void (*contract)(double *eri, double *dm, SGXJKArray *vjk,
+        //                 int i0, int i1, int j0, int j1);
         void (*contract)(double *eri, double *dm, SGXJKArray *vjk,
-                         int i0, int i1, int j0, int j1);
+                             int i0, int i1, int j0, int j1,
+                             int* inds, int ngrids);
         void (*set0)(SGXJKArray *, int);
         void (*send)(SGXJKArray *, int, double *);
         void (*finalize)(SGXJKArray *, double *);
@@ -65,7 +68,8 @@ int GTOmax_cache_size(int (*intor)(), int *shls_slice, int ncenter,
 
 void SGXdot_nrk(int (*intor)(), SGXJKOperator **jkop, SGXJKArray **vjk,
                 double **dms, double *buf, double *cache, int n_dm, int* shls,
-                CVHFOpt *vhfopt, IntorEnvs *envs)
+                CVHFOpt *vhfopt, IntorEnvs *envs,
+                double* all_grids, int tot_grids)
 {
         DECLARE_ALL;
 
@@ -74,43 +78,45 @@ void SGXdot_nrk(int (*intor)(), SGXJKOperator **jkop, SGXJKArray **vjk,
         i1 = ao_loc[ish+1] - ioff;
         j1 = ao_loc[jsh+1] - joff;
 
-        //double *bgrids = env[PTR_GRIDS];
-        //int bngrids = (int) env[NGRIDS];
-        //int tmp_ngrids = 0;
-        //int k;
-        //int* inds;
+        int tmp_ngrids = 0;
+        int k;
+        int* inds = (int*) malloc(tot_grids*sizeof(int));
 
-        /*
-        if (pjscreen) {
-            env[PTR_GRIDS] = (double*) malloc(3*ngrids*sizeof(double));
-            inds = (double*) malloc(ngrids*sizeof(int));
-            for (k = 0; k <= ngrids; k++) {
-                    if (pscreen(...)) {
-                            env[PTR_GRIDS][3*tmp_ngrids+0] = bgrids[3*k+0];
-                            env[PTR_GRIDS][3*tmp_ngrids+1] = bgrids[3*k+1];
-                            env[PTR_GRIDS][3*tmp_ngrids+2] = bgrids[3*k+2];
-                            inds[tmp_ngrids] = k;
-                            tmp_ngrids++;
-                    }
-            }
-            env[NGRIDS] = tmp_ngrids;
+        double *grids = env + (size_t) env[PTR_GRIDS];
+        
+        if (vhfopt != NULL && vhfopt->pscreen == 1) {
+                for (k = 0; k < tot_grids; k++) {
+                        shls[2] = k;
+                        if (SGXnr_pj_prescreen(shls, vhfopt, atm, bas, env)) {
+                                grids[3*tmp_ngrids+0] = all_grids[3*k+0];
+                                grids[3*tmp_ngrids+1] = all_grids[3*k+1];
+                                grids[3*tmp_ngrids+2] = all_grids[3*k+2];
+                                inds[tmp_ngrids] = k;
+                                tmp_ngrids++;
+                        }
+                }
+                env[NGRIDS] = tmp_ngrids;
+        } else {
+                for (k = 0; k < tot_grids; k++) {
+                        shls[2] = k;
+                        grids[3*tmp_ngrids+0] = all_grids[3*k+0];
+                        grids[3*tmp_ngrids+1] = all_grids[3*k+1];
+                        grids[3*tmp_ngrids+2] = all_grids[3*k+2];
+                        inds[tmp_ngrids] = k;
+                        tmp_ngrids++;
+                }
+                env[NGRIDS] = tmp_ngrids;
         }
-        */
+        
 
         (*intor)(buf, NULL, shls, atm, natm, bas, nbas, env, cintopt, cache);
 
         for (idm = 0; idm < n_dm; idm++) {
                 jkop[idm]->contract(buf, dms[idm], vjk[idm],
-                                    i0, i1, j0, j1);
+                                    i0, i1, j0, j1, inds, tmp_ngrids);
         }
-        /*
-        if (pjscreen) {
-            free(env[PTR_GRIDS]);
-            free(inds);
-            env[PTR_GRIDS] = bgrids;
-            env[NGRIDS] = bngrids;
-        }
-        */
+        
+        free(inds);
 }
 
 
@@ -121,6 +127,7 @@ void SGXnr_direct_drv(int (*intor)(), void (*fdot)(), SGXJKOperator **jkop,
                         int *atm, int natm, int *bas, int nbas, double *env,
                         int env_size, int aosym)
 {
+
         const int ish0 = shls_slice[0];
         const int ish1 = shls_slice[1];
         //const int jsh0 = shls_slice[2];
@@ -137,16 +144,19 @@ void SGXnr_direct_drv(int (*intor)(), void (*fdot)(), SGXJKOperator **jkop,
         } else {
                 fprescreen = CVHFnoscreen;
         }
+        int ngrids = env[NGRIDS];
+        double* all_grids = env+(size_t)env[PTR_GRIDS];
 
 #pragma omp parallel default(none) \
         shared(intor, fdot, jkop, ao_loc, shls_slice, \
                dms, vjk, n_dm, ncomp, nbas, vhfopt, \
                atm, bas, env, natm, \
                nish, di, cache_size, fprescreen, \
-               aosym, npair, cintopt, env_size)
+               aosym, npair, cintopt, env_size, \
+               ngrids, all_grids)
 {
         int i, ij, ish, jsh;
-        int shls[2];
+        int shls[3];
         double* tmp_env = (double*) malloc(env_size * sizeof(double));
         for (i = 0; i < env_size; i++) {
             tmp_env[i] = env[i];
@@ -173,7 +183,7 @@ void SGXnr_direct_drv(int (*intor)(), void (*fdot)(), SGXJKOperator **jkop,
                 if ((*fprescreen)(shls, vhfopt, atm, bas, env))
                 {
                     (*fdot)(intor, jkop, v_priv, dms, buf, cache, n_dm, shls,
-                            vhfopt, &envs);
+                            vhfopt, &envs, all_grids, ngrids);
                 }
         }
 #pragma omp critical
@@ -256,30 +266,33 @@ void SGXsetnr_direct_scf_dm(CVHFOpt *opt, double *dm, int nset, int *ao_loc,
 {
         nbas = opt->nbas;
         if (alloc) {
-                if (opt->dm_cond) { // NOT reuse opt->dm_cond because nset may be diff in different call
+                if (opt->dm_cond) {
                         free(opt->dm_cond);
                 }
                 opt->dm_cond = (double *)malloc(sizeof(double) * nbas*ngrids);
         }
+        opt->pscreen = 1;
         // nbas in the input arguments may different to opt->nbas.
         // Use opt->nbas because it is used in the prescreen function
         memset(opt->dm_cond, 0, sizeof(double)*nbas*ngrids);
+        opt->ngrids = ngrids;
 
         const size_t nao = ao_loc[nbas];
-        size_t i, j, jsh, iset;
-        double *pdm;
+        size_t jsh;
         #pragma omp parallel for schedule(dynamic, 4)
         for (jsh = 0; jsh < nbas; jsh++) {
-                double dmax;    
+                double dmax;
+                double *pdm;
+                size_t i, j, iset;
                 for (i = 0; i < ngrids; i++) {
                         dmax = 0;
                         for (iset = 0; iset < nset; iset++) {
                                 pdm = dm + nao*ngrids*iset;
                                 for (j = ao_loc[jsh]; j < ao_loc[jsh+1]; j++) {
-                                        dmax = MAX(dmax, fabs(pdm[i*nao+j]));
+                                        dmax = MAX(dmax, fabs(pdm[j*ngrids+i]));
                                 }
                         }
-                        opt->dm_cond[jsh+ngrids*i] = dmax;
+                        opt->dm_cond[jsh*ngrids+i] = dmax;
                 }
         }
 }
@@ -307,14 +320,15 @@ int SGXnr_pj_prescreen(int *shls, CVHFOpt *opt,
         }
         int i = shls[0];
         int j = shls[1];
-        int k = shls[3];
+        int k = shls[2];
         int n = opt->nbas;
+        int nk = opt->ngrids;
         assert(opt->q_cond);
         assert(opt->dm_cond);
         assert(i < n);
         assert(j < n);
         return opt->q_cond[i*n+j]
-               * MAX(fabs(opt->dm_cond[k*n+j]), fabs(opt->dm_cond[k*n+i]))
+               * MAX(fabs(opt->dm_cond[j*nk+k]), fabs(opt->dm_cond[i*nk+k]))
                > opt->direct_scf_cutoff;
 }
 
@@ -401,55 +415,55 @@ static void SGXJKOperator_sanity_check_s2(int *shls_slice)
 }
 
 static void nrs1_ijg_ji_g(double *eri, double *dm, SGXJKArray *out,
-                          int i0, int i1, int j0, int j1)
+                          int i0, int i1, int j0, int j1,
+                           int* inds, int ngrids)
 {
         const int ncol = out->v_dims[0];
         int i, j, k, icomp;
         double *data = out->data;
-        const int ngrids = out->v_dims[2];
 
         int ij = 0;
         for (icomp = 0; icomp < out->ncomp; icomp++) {
                 for (j = j0; j < j1; j++) {
                 for (i = i0; i < i1; i++, ij++) {
                 for (k = 0; k < ngrids; k++) {
-                        data[k] += eri[ij*ngrids+k] * dm[j*ncol+i];
+                        data[inds[k]] += eri[ij*ngrids+k] * dm[j*ncol+i];
                 } } }
-                data += ngrids;
+                data += out->v_dims[2];
         }
 }
 ADD_OP(nrs1_ijg_ji_g, JTYPE1, s1);
 
 static void nrs2_ijg_ji_g(double *eri, double *dm, SGXJKArray *out,
-                          int i0, int i1, int j0, int j1)
+                          int i0, int i1, int j0, int j1,
+                           int* inds, int ngrids)
 {
         if (i0 == j0) {
-                return nrs1_ijg_ji_g(eri, dm, out, i0, i1, j0, j1);
+                return nrs1_ijg_ji_g(eri, dm, out, i0, i1, j0, j1, inds, ngrids);
         }
 
         const int ncol = out->v_dims[0];
         int i, j, k, icomp;
         double *data = out->data;
-        const int ngrids = out->v_dims[2];
 
         int ij = 0;
         for (icomp = 0; icomp < out->ncomp; icomp++) {
                 for (j = j0; j < j1; j++) {
                 for (i = i0; i < i1; i++, ij++) {
                 for (k = 0; k < ngrids; k++) {
-                        data[k] += eri[ij*ngrids+k] * (dm[j*ncol+i] + dm[i*ncol+j]);
+                        data[inds[k]] += eri[ij*ngrids+k] * (dm[j*ncol+i] + dm[i*ncol+j]);
                 } } }
-                data += ngrids;
+                data += out->v_dims[2];
         }
 }
 ADD_OP(nrs2_ijg_ji_g, JTYPE1, s2);
 
 static void nrs1_ijg_g_ij(double *eri, double *dm, SGXJKArray *out,
-                          int i0, int i1, int j0, int j1)
+                          int i0, int i1, int j0, int j1,
+                           int* inds, int ngrids)
 {
         int ni = out->v_dims[0];
         int nj = out->v_dims[1];
-        const int ngrids = out->v_dims[2];
         int i, j, k, icomp;
         double *data = out->data;
 
@@ -458,7 +472,7 @@ static void nrs1_ijg_g_ij(double *eri, double *dm, SGXJKArray *out,
                 for (j = j0; j < j1; j++) {
                 for (i = i0; i < i1; i++, ij++) {
                 for (k = 0; k < ngrids; k++) {
-                        data[i*nj+j] += eri[ij*ngrids+k] * dm[k];
+                        data[i*nj+j] += eri[ij*ngrids+k] * dm[inds[k]];
                 } } }
                 data += ni * nj;
         }
@@ -471,9 +485,9 @@ SGXJKOperator SGXnrs2_ijg_g_ij = {SGXJKOperator_allocate_nrs1_ijg_g_ij,
         SGXJKOperator_sanity_check_s2};
 
 static void nrs1_ijg_gj_gi(double *eri, double *dm, SGXJKArray *out,
-                           int i0, int i1, int j0, int j1)
+                           int i0, int i1, int j0, int j1,
+                           int* inds, int ngrids)
 {
-        const int ngrids = out->v_dims[2];
         double *data = out->data;
         int i, j, k, icomp;
 
@@ -482,21 +496,21 @@ static void nrs1_ijg_gj_gi(double *eri, double *dm, SGXJKArray *out,
                 for (j = j0; j < j1; j++) {
                 for (i = i0; i < i1; i++, ij++) {
                 for (k = 0; k < ngrids; k++) {
-                        data[i*ngrids+k] += eri[ij*ngrids+k] * dm[j*ngrids+k];
+                        data[i*ngrids+inds[k]] += eri[ij*ngrids+k] * dm[j*ngrids+inds[k]];
                 } } }
-                data += out->v_dims[0];
+                data += out->v_dims[0] * out->v_dims[2];
         }
 }
 ADD_OP(nrs1_ijg_gj_gi, KTYPE1, s1);
 
 static void nrs2_ijg_gj_gi(double *eri, double *dm, SGXJKArray *out,
-                           int i0, int i1, int j0, int j1)
+                           int i0, int i1, int j0, int j1,
+                           int* inds, int ngrids)
 {
         if (i0 == j0) {
-                return nrs1_ijg_gj_gi(eri, dm, out, i0, i1, j0, j1);
+                return nrs1_ijg_gj_gi(eri, dm, out, i0, i1, j0, j1, inds, ngrids);
         }
 
-        const int ngrids = out->v_dims[2];
         double *data = out->data;
         int i, j, k, icomp;
 
@@ -505,13 +519,13 @@ static void nrs2_ijg_gj_gi(double *eri, double *dm, SGXJKArray *out,
                 for (j = j0; j < j1; j++) {
                 for (i = i0; i < i1; i++, ij++) {
                 for (k = 0; k < ngrids; k++) {
-                        data[i*ngrids+k] += eri[ij*ngrids+k] * dm[j*ngrids+k];
+                        data[i*ngrids+inds[k]] += eri[ij*ngrids+k] * dm[j*ngrids+inds[k]];
                 }
                 for (k = 0; k < ngrids; k++) {
-                        data[j*ngrids+k] += eri[ij*ngrids+k] * dm[i*ngrids+k];
+                        data[j*ngrids+inds[k]] += eri[ij*ngrids+k] * dm[i*ngrids+inds[k]];
                 }
                 } }
-                data += out->v_dims[0];
+                data += out->v_dims[0] * out->v_dims[2];
         }
 }
 ADD_OP(nrs2_ijg_gj_gi, KTYPE1, s2);
