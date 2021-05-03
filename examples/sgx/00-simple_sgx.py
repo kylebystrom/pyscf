@@ -21,9 +21,11 @@ mf.kernel()
 mf = sgx.sgx_fit(scf.RHF(mol), pjs=True)
 mf.with_df.grids_level_i = 0
 mf.with_df.grids_level_f = 1
-mf.with_df.dfj = True
+#mf.with_df.dfj = True
 mf.conv_tol = 1e-9
 mf.kernel()
+print(mf.with_df._opt.dm_cond)
+print(mf.with_df._opt._this.contents)
 print(np.sum(mf.with_df._opt.dm_cond < 1e-7))
 
 # Using RI for Coulomb matrix while K-matrix is constructed with COS-X method
