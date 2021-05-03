@@ -13,20 +13,24 @@ mol = gto.M(
             H    0.   -0.757   0.587
             H    0.   0.757    0.587
     ''',
-    basis = 'def2-svp',
+    basis = 'def2-qzvppd',
     verbose=4
 )
 mf = scf.RHF(mol)
 mf.kernel()
-mf = sgx.sgx_fit(scf.RHF(mol), pjs=True)
-mf.with_df.grids_level_i = 0
+import time
+start = time.monotonic()
+mf = sgx.sgx_fit(scf.RHF(mol), pjs=False)
+mf.with_df.grids_level_i = 1
 mf.with_df.grids_level_f = 1
-#mf.with_df.dfj = True
+mf.with_df.dfj = True
 mf.conv_tol = 1e-9
 mf.kernel()
-print(mf.with_df._opt.dm_cond)
-print(mf.with_df._opt._this.contents)
-print(np.sum(mf.with_df._opt.dm_cond < 1e-7))
+end = time.monotonic()
+print(end-start)
+#print(mf.with_df._opt.dm_cond)
+#print(mf.with_df._opt._this.contents)
+#print(np.sum(mf.with_df._opt.dm_cond < 1e-7))
 
 # Using RI for Coulomb matrix while K-matrix is constructed with COS-X method
 #mf.with_df.dfj = True
