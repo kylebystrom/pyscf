@@ -138,8 +138,6 @@ void SGXdot_nrk(int (*intor)(), SGXJKOperator **jkop, SGXJKArray **vjk,
                 env[NGRIDS] = tmp_ngrids;
         }
 
-        //if (vhfopt->ngrids != tot_grids) printf("%d %d\n", vhfopt->ngrids, tot_grids);
-
         (*intor)(buf, NULL, shls, atm, natm, bas, nbas, env, cintopt, cache);
 
         for (idm = 0; idm < n_dm; idm++) {
@@ -167,7 +165,12 @@ void SGXnr_direct_drv(int (*intor)(), void (*fdot)(), SGXJKOperator **jkop,
         int di = GTOmax_shell_dim(ao_loc, shls_slice, 2);
         int cache_size = GTOmax_cache_size(intor, shls_slice, 2,
                                            atm, natm, bas, nbas, env);
-        int npair = nish * (nish+1) / 2;
+        int npair;
+        if (aosym == 2) {
+            npair = nish * (nish+1) / 2;
+        } else {
+            npair = nish * nish;
+        }
 
         int (*fprescreen)();
         if (vhfopt) {
@@ -424,7 +427,7 @@ static void SGXJKOperator_sanity_check_s2(int *shls_slice)
 
 static void nrs1_ijg_ji_g(double *eri, double *dm, SGXJKArray *out,
                           int i0, int i1, int j0, int j1,
-                           int* inds, int ngrids)
+                           int* inds, int pngrids)
 {
         const int ncol = out->v_dims[0];
         int i, j, k, icomp;
@@ -434,8 +437,8 @@ static void nrs1_ijg_ji_g(double *eri, double *dm, SGXJKArray *out,
         for (icomp = 0; icomp < out->ncomp; icomp++) {
                 for (j = j0; j < j1; j++) {
                 for (i = i0; i < i1; i++, ij++) {
-                for (k = 0; k < ngrids; k++) {
-                        data[inds[k]] += eri[ij*ngrids+k] * dm[j*ncol+i];
+                for (k = 0; k < pngrids; k++) {
+                        data[inds[k]] += eri[ij*pngrids+k] * dm[j*ncol+i];
                 } } }
                 data += out->v_dims[2];
         }
@@ -444,10 +447,10 @@ ADD_OP(nrs1_ijg_ji_g, JTYPE1, s1);
 
 static void nrs2_ijg_ji_g(double *eri, double *dm, SGXJKArray *out,
                           int i0, int i1, int j0, int j1,
-                           int* inds, int ngrids)
+                           int* inds, int pngrids)
 {
         if (i0 == j0) {
-                return nrs1_ijg_ji_g(eri, dm, out, i0, i1, j0, j1, inds, ngrids);
+                return nrs1_ijg_ji_g(eri, dm, out, i0, i1, j0, j1, inds, pngrids);
         }
 
         const int ncol = out->v_dims[0];
@@ -458,8 +461,8 @@ static void nrs2_ijg_ji_g(double *eri, double *dm, SGXJKArray *out,
         for (icomp = 0; icomp < out->ncomp; icomp++) {
                 for (j = j0; j < j1; j++) {
                 for (i = i0; i < i1; i++, ij++) {
-                for (k = 0; k < ngrids; k++) {
-                        data[inds[k]] += eri[ij*ngrids+k] * (dm[j*ncol+i] + dm[i*ncol+j]);
+                for (k = 0; k < pngrids; k++) {
+                        data[inds[k]] += eri[ij*pngrids+k] * (dm[j*ncol+i] + dm[i*ncol+j]);
                 } } }
                 data += out->v_dims[2];
         }
@@ -468,7 +471,7 @@ ADD_OP(nrs2_ijg_ji_g, JTYPE1, s2);
 
 static void nrs1_ijg_g_ij(double *eri, double *dm, SGXJKArray *out,
                           int i0, int i1, int j0, int j1,
-                           int* inds, int ngrids)
+                           int* inds, int pngrids)
 {
         int ni = out->v_dims[0];
         int nj = out->v_dims[1];
@@ -479,8 +482,8 @@ static void nrs1_ijg_g_ij(double *eri, double *dm, SGXJKArray *out,
         for (icomp = 0; icomp < out->ncomp; icomp++) {
                 for (j = j0; j < j1; j++) {
                 for (i = i0; i < i1; i++, ij++) {
-                for (k = 0; k < ngrids; k++) {
-                        data[i*nj+j] += eri[ij*ngrids+k] * dm[inds[k]];
+                for (k = 0; k < pngrids; k++) {
+                        data[i*nj+j] += eri[ij*pngrids+k] * dm[inds[k]];
                 } } }
                 data += ni * nj;
         }
@@ -494,17 +497,18 @@ SGXJKOperator SGXnrs2_ijg_g_ij = {SGXJKOperator_allocate_nrs1_ijg_g_ij,
 
 static void nrs1_ijg_gj_gi(double *eri, double *dm, SGXJKArray *out,
                            int i0, int i1, int j0, int j1,
-                           int* inds, int ngrids)
+                           int* inds, int pngrids)
 {
         double *data = out->data;
         int i, j, k, icomp;
+        const int ngrids = out->v_dims[2];
 
         int ij = 0;
         for (icomp = 0; icomp < out->ncomp; icomp++) {
                 for (j = j0; j < j1; j++) {
                 for (i = i0; i < i1; i++, ij++) {
-                for (k = 0; k < ngrids; k++) {
-                        data[i*ngrids+inds[k]] += eri[ij*ngrids+k] * dm[j*ngrids+inds[k]];
+                for (k = 0; k < pngrids; k++) {
+                        data[i*ngrids+inds[k]] += eri[ij*pngrids+k] * dm[j*ngrids+inds[k]];
                 } } }
                 data += out->v_dims[0] * out->v_dims[2];
         }
@@ -513,24 +517,25 @@ ADD_OP(nrs1_ijg_gj_gi, KTYPE1, s1);
 
 static void nrs2_ijg_gj_gi(double *eri, double *dm, SGXJKArray *out,
                            int i0, int i1, int j0, int j1,
-                           int* inds, int ngrids)
+                           int* inds, int pngrids)
 {
         if (i0 == j0) {
-                return nrs1_ijg_gj_gi(eri, dm, out, i0, i1, j0, j1, inds, ngrids);
+                return nrs1_ijg_gj_gi(eri, dm, out, i0, i1, j0, j1, inds, pngrids);
         }
 
         double *data = out->data;
+        const int ngrids = out->v_dims[2];
         int i, j, k, icomp;
 
         int ij = 0;
         for (icomp = 0; icomp < out->ncomp; icomp++) {
                 for (j = j0; j < j1; j++) {
                 for (i = i0; i < i1; i++, ij++) {
-                for (k = 0; k < ngrids; k++) {
-                        data[i*ngrids+inds[k]] += eri[ij*ngrids+k] * dm[j*ngrids+inds[k]];
+                for (k = 0; k < pngrids; k++) {
+                        data[i*ngrids+inds[k]] += eri[ij*pngrids+k] * dm[j*ngrids+inds[k]];
                 }
-                for (k = 0; k < ngrids; k++) {
-                        data[j*ngrids+inds[k]] += eri[ij*ngrids+k] * dm[i*ngrids+inds[k]];
+                for (k = 0; k < pngrids; k++) {
+                        data[j*ngrids+inds[k]] += eri[ij*pngrids+k] * dm[i*ngrids+inds[k]];
                 }
                 } }
                 data += out->v_dims[0] * out->v_dims[2];
