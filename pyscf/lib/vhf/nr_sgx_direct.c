@@ -138,8 +138,7 @@ void SGXdot_nrk(int (*intor)(), SGXJKOperator **jkop, SGXJKArray **vjk,
                 env[NGRIDS] = tmp_ngrids;
         }
 
-        if (tmp_ngrids != tot_grids) printf("%d %d\n", tmp_ngrids, tot_grids);
-        
+        //if (vhfopt->ngrids != tot_grids) printf("%d %d\n", vhfopt->ngrids, tot_grids);
 
         (*intor)(buf, NULL, shls, atm, natm, bas, nbas, env, cintopt, cache);
 

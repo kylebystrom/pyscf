@@ -92,8 +92,11 @@ def sgx_fit(mf, auxbasis=None, with_df=None, pjs=False):
             # Grids/Integral quality varies during SCF. VHF cannot be
             # constructed incrementally.
             self.direct_scf = False
+            self.direct_scf_sgx = False
 
             self._last_dm = 0
+            self._last_vj = 0
+            self._last_vk = 0
             self._in_scf = False
             self._keys = self._keys.union(['auxbasis', 'with_df'])
 
@@ -118,17 +121,29 @@ def sgx_fit(mf, auxbasis=None, with_df=None, pjs=False):
             if not with_df:
                 return mf_class.get_jk(self, mol, dm, hermi, with_j, with_k, omega)
 
-            if self._in_scf and not self.direct_scf:
+            if self._in_scf and not self.direct_scf_sgx:
                 if numpy.linalg.norm(dm - self._last_dm) < with_df.grids_switch_thrd:
                     logger.debug(self, 'Switching SGX grids')
                     with_df.build(level=with_df.grids_level_f)
                     self._in_scf = False
                     self._last_dm = 0
-                else:
-                    self._last_dm = numpy.asarray(dm)
+                    self._last_vj = 0
+                    self._last_vk = 0
 
-            return with_df.get_jk(dm, hermi, with_j, with_k,
-                                  self.direct_scf_tol, omega)
+            #vj, vk = with_df.get_jk(dm-self._last_dm, hermi, with_j, with_k,
+            #                        self.direct_scf_tol, omega)
+
+            vj, vk = with_df.get_jk(dm, hermi, with_j, with_k,
+                                    self.direct_scf_tol, omega)
+
+            #vj += self._last_vj
+            #vk += self._last_vk
+
+            self._last_dm = numpy.asarray(dm)
+            self._last_vj = vj.copy()
+            self._last_vk = vk.copy()
+
+            return vj, vk
 
         def post_kernel(self, envs):
             self._in_scf = False
