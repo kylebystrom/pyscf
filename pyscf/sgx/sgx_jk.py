@@ -86,7 +86,7 @@ def get_jk_favork(sgx, dm, hermi=1, with_j=True, with_k=True,
     tnuc = 0, 0
     for i0, i1 in lib.prange(0, ngrids, blksize):
         coords = grids.coords[i0:i1]
-        weights = grids.weights[i0:i1]
+        weights = grids.weights[i0:i1,None]
         ao = mol.eval_gto('GTOval', coords)
         wao = ao * grids.weights[i0:i1,None]
         sn += lib.dot(ao.T, wao)
@@ -186,7 +186,7 @@ def get_jk_favorj(sgx, dm, hermi=1, with_j=True, with_k=True,
     tnuc = 0, 0
     for i0, i1 in lib.prange(0, ngrids, blksize):
         coords = grids.coords[i0:i1]
-        weights = grids.weights[i0:i1]
+        weights = grids.weights[i0:i1,None]
         ao = mol.eval_gto('GTOval', coords)
         wao = ao * grids.weights[i0:i1,None]
 
@@ -268,10 +268,9 @@ def _gen_jk_direct(mol, aosym, with_j, with_k, direct_scf_tol, sgxopt=None, pjs=
     drv = _vhf.libcvhf.SGXnr_direct_drv
 
     def jk_part(mol, grid_coords, dms, fg, weights):
-        fg = numpy.ascontiguousarray(fg.transpose(0,2,1))
         if pjs:
-            sgxopt.set_dm(fg/weights, mol._atm, mol._bas, mol._env)
-            #ao_loc = moleintor.make_loc(mol._bas, sgxopt._intor)
+            sgxopt.set_dm(fg/weights[None,:], mol._atm, mol._bas, mol._env)
+            ao_loc = moleintor.make_loc(mol._bas, sgxopt._intor)
         fakemol = gto.fakemol_for_charges(grid_coords)
         #atm, bas, env = gto.mole.conc_env(mol._atm, mol._bas, mol._env,
         #                                  fakemol._atm, fakemol._bas, fakemol._env)
@@ -283,6 +282,8 @@ def _gen_jk_direct(mol, aosym, with_j, with_k, direct_scf_tol, sgxopt=None, pjs=
 
         ao_loc = moleintor.make_loc(bas, sgxopt._intor)
         shls_slice = (0, mol.nbas, 0, mol.nbas)
+
+        fg = numpy.ascontiguousarray(fg.transpose(0,2,1))
 
         vj = vk = None
         fjk = []

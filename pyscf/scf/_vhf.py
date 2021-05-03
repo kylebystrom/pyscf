@@ -163,10 +163,10 @@ class SGXOpt(VHFOpt):
             nbas = ctypes.c_int(c_bas.shape[0])
             if isinstance(dm, numpy.ndarray) and dm.ndim == 2:
                 n_dm = 1
-                ngrids = dm.shape[1]
+                ngrids = dm.shape[0]
             else:
                 n_dm = len(dm)
-                ngrids = dm.shape[2]
+                ngrids = dm.shape[1]
             dm = numpy.asarray(dm, order='C')
             ao_loc = make_loc(c_bas, self._intor)
             if isinstance(self._dmcondname, ctypes._CFuncPtr):
@@ -196,7 +196,7 @@ class SGXOpt(VHFOpt):
         modified through this array
         '''
         nbas = self._this.contents.nbas
-        shape = (self.ngrids, nbas)
+        shape = (nbas, self.ngrids)
         data = ctypes.cast(self._this.contents.dm_cond,
                            ctypes.POINTER(ctypes.c_double))
         return numpy.ctypeslib.as_array(data, shape=shape)

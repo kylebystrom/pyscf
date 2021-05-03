@@ -66,6 +66,27 @@ int GTOmax_cache_size(int (*intor)(), int *shls_slice, int ncenter,
         ish = shls[0]; \
         jsh = shls[1];
 
+int SGXnr_pj_prescreen(int *shls, CVHFOpt *opt,
+                       int *atm, int *bas, double *env)
+{
+        if (!opt) {
+                return 1;
+        }
+        int i = shls[0];
+        int j = shls[1];
+        int k = shls[2];
+        int n = opt->nbas;
+        int nk = opt->ngrids;
+        assert(opt->q_cond);
+        assert(opt->dm_cond);
+        assert(i < n);
+        assert(j < n);
+        assert(k < nk);
+        return opt->q_cond[i*n+j]
+               * MAX(fabs(opt->dm_cond[j*nk+k]), fabs(opt->dm_cond[i*nk+k]))
+               > opt->direct_scf_cutoff;
+}
+
 void SGXdot_nrk(int (*intor)(), SGXJKOperator **jkop, SGXJKArray **vjk,
                 double **dms, double *buf, double *cache, int n_dm, int* shls,
                 CVHFOpt *vhfopt, IntorEnvs *envs,
@@ -96,6 +117,15 @@ void SGXdot_nrk(int (*intor)(), SGXJKOperator **jkop, SGXJKArray **vjk,
                         }
                 }
                 env[NGRIDS] = tmp_ngrids;
+                /*for (k = 0; k < tot_grids; k++) {
+                        shls[2] = k;
+                        grids[3*tmp_ngrids+0] = all_grids[3*k+0];
+                        grids[3*tmp_ngrids+1] = all_grids[3*k+1];
+                        grids[3*tmp_ngrids+2] = all_grids[3*k+2];
+                        inds[tmp_ngrids] = k;
+                        tmp_ngrids++;
+                }
+                env[NGRIDS] = tmp_ngrids;*/
         } else {
                 for (k = 0; k < tot_grids; k++) {
                         shls[2] = k;
@@ -107,6 +137,8 @@ void SGXdot_nrk(int (*intor)(), SGXJKOperator **jkop, SGXJKArray **vjk,
                 }
                 env[NGRIDS] = tmp_ngrids;
         }
+
+        if (tmp_ngrids != tot_grids) printf("%d %d\n", tmp_ngrids, tot_grids);
         
 
         (*intor)(buf, NULL, shls, atm, natm, bas, nbas, env, cintopt, cache);
@@ -265,7 +297,7 @@ void SGXsetnr_direct_scf_dm(CVHFOpt *opt, double *dm, int nset, int *ao_loc,
                             int ngrids, int alloc)
 {
         nbas = opt->nbas;
-        if (alloc) {
+        if (1) {
                 if (opt->dm_cond) {
                         free(opt->dm_cond);
                 }
@@ -277,24 +309,21 @@ void SGXsetnr_direct_scf_dm(CVHFOpt *opt, double *dm, int nset, int *ao_loc,
         memset(opt->dm_cond, 0, sizeof(double)*nbas*ngrids);
         opt->ngrids = ngrids;
 
-        const size_t nao = ao_loc[nbas];
-        size_t jsh;
-        #pragma omp parallel for schedule(dynamic, 4)
+        const size_t nao = ao_loc[nbas] - ao_loc[0];
+        double dmax, tmp;
+        size_t i, j, jsh, iset;
+        double *pdm;
+        for (i = 0; i < ngrids; i++) {
         for (jsh = 0; jsh < nbas; jsh++) {
-                double dmax;
-                double *pdm;
-                size_t i, j, iset;
-                for (i = 0; i < ngrids; i++) {
-                        dmax = 0;
-                        for (iset = 0; iset < nset; iset++) {
-                                pdm = dm + nao*ngrids*iset;
-                                for (j = ao_loc[jsh]; j < ao_loc[jsh+1]; j++) {
-                                        dmax = MAX(dmax, fabs(pdm[j*ngrids+i]));
-                                }
+                dmax = 0;
+                for (iset = 0; iset < nset; iset++) {
+                        pdm = dm + nao*ngrids*iset;
+                        for (j = ao_loc[jsh]; j < ao_loc[jsh+1]; j++) {
+                                dmax = MAX(dmax, fabs(pdm[i*nao+j]));
                         }
-                        opt->dm_cond[jsh*ngrids+i] = dmax;
                 }
-        }
+                opt->dm_cond[jsh*ngrids+i] = dmax;
+        } }
 }
 
 int SGXnr_ovlp_prescreen(int *shls, CVHFOpt *opt,
@@ -310,26 +339,6 @@ int SGXnr_ovlp_prescreen(int *shls, CVHFOpt *opt,
         assert(i < n);
         assert(j < n);
         return opt->q_cond[i*n+j] > opt->direct_scf_cutoff;
-}
-
-int SGXnr_pj_prescreen(int *shls, CVHFOpt *opt,
-                       int *atm, int *bas, double *env)
-{
-        if (!opt) {
-                return 1;
-        }
-        int i = shls[0];
-        int j = shls[1];
-        int k = shls[2];
-        int n = opt->nbas;
-        int nk = opt->ngrids;
-        assert(opt->q_cond);
-        assert(opt->dm_cond);
-        assert(i < n);
-        assert(j < n);
-        return opt->q_cond[i*n+j]
-               * MAX(fabs(opt->dm_cond[j*nk+k]), fabs(opt->dm_cond[i*nk+k]))
-               > opt->direct_scf_cutoff;
 }
 
 

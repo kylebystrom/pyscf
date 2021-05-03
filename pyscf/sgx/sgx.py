@@ -167,7 +167,7 @@ def _make_opt(mol, pjs=False):
     # 'SGXnr_ovlp_prescreen' only. Not used again in other places.
     # It can be released early
     if pjs:
-        vhfopt = _vhf.SGXOpt(mol, 'int1e_ovlp', 'SGXnr_pj_prescreen',
+        vhfopt = _vhf.SGXOpt(mol, 'int1e_ovlp', 'SGXnr_ovlp_prescreen',
                              'SGXsetnr_direct_scf', 'SGXsetnr_direct_scf_dm')
     else:
         vhfopt = _vhf.VHFOpt(mol, 'int1e_ovlp', 'SGXnr_ovlp_prescreen',
