@@ -132,14 +132,14 @@ def sgx_fit(mf, auxbasis=None, with_df=None,
                     self._last_vj = 0
                     self._last_vk = 0
 
-            vj, vk = with_df.get_jk(dm-self._last_dm, hermi, with_j, with_k,
-                                    self.direct_scf_tol, omega)
-
-            #vj, vk = with_df.get_jk(dm, hermi, with_j, with_k,
+            #vj, vk = with_df.get_jk(dm-self._last_dm, hermi, with_j, with_k,
             #                        self.direct_scf_tol, omega)
 
-            vj += self._last_vj
-            vk += self._last_vk
+            vj, vk = with_df.get_jk(dm, hermi, with_j, with_k,
+                                    self.direct_scf_tol, omega)
+
+            #vj += self._last_vj
+            #vk += self._last_vk
 
             self._last_dm = numpy.asarray(dm)
             self._last_vj = vj.copy()
