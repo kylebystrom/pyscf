@@ -379,7 +379,7 @@ static void SGXJKOperator_final_##label(SGXJKArray *jkarray, double *out) \
         double *data = jkarray->data; \
         int ngrids = jkarray->v_dims[2]; \
         if (task == JTYPE1) { \
-                for (int i = 0; i < jkarray->ncomp; i++) { \
+                for (i = 0; i < jkarray->ncomp; i++) { \
                 for (k = 0; k < ngrids; k++) { \
                         out[i*ngrids+k] += data[i*ngrids+k]; \
                 } } \
