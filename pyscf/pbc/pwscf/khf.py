@@ -690,7 +690,7 @@ def add_random_mo1(cell, n, C0):
     return np.vstack([C0,C1])
 
 
-def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None, out=None):
+def init_guess_by_chkfile(cell, chkfile_name, nvir, project=True, out=None):
     from pyscf.pbc.scf import chkfile
     scf_dict = chkfile.load_scf(chkfile_name)[1]
     mocc_ks = scf_dict["mo_occ"]
@@ -707,13 +707,14 @@ def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None, out=None):
         for k in range(nkpts):
             set_kcomp(get_kcomp(C0_ks, k), C_ks, k)
 
-    C_ks, mocc_ks = init_guess_from_C0(cell, C_ks, ntot_ks, out=C_ks,
-                                       mocc_ks=mocc_ks)
+    C_ks, mocc_ks = init_guess_from_C0(cell, C_ks, ntot_ks, project=project,
+                                       out=C_ks, mocc_ks=mocc_ks)
 
     return C_ks, mocc_ks
 
 
-def init_guess_from_C0(cell, C0_ks, ntot_ks, out=None, mocc_ks=None):
+def init_guess_from_C0(cell, C0_ks, ntot_ks, project=True, out=None,
+                       mocc_ks=None):
     nkpts = len(C0_ks)
     if out is None: out = [None] * nkpts
     C_ks = out
@@ -728,7 +729,36 @@ def init_guess_from_C0(cell, C0_ks, ntot_ks, out=None, mocc_ks=None):
                 mocc_ks[k] = mocc_ks[k][:ntot]
         else:
             C = C0_k
+        # project if needed
+        npw = np.prod(cell.mesh)
+        npw0 = C.shape[1]
+        if npw != npw0:
+            if project:
+                if not "mesh_map" in locals():
+                    mesh = cell.mesh
+                    nmesh0 = int(np.round(npw0**(0.3333333333)))
+                    if not nmesh0**3 == npw0:
+                        raise NotImplementedError("Project MOs not implemented for non-cubic crystals.")
+                    mesh0 = np.array([nmesh0]*3)
+                    logger.warn(cell, "Input orbitals use mesh %s while cell uses mesh %s. Performing projection.", mesh0, mesh)
+                    if npw > npw0:
+                        mesh_map = pw_helper.get_mesh_map(cell, 0, 0, mesh,
+                                                          mesh0)
+                    else:
+                        mesh_map = pw_helper.get_mesh_map(cell, 0, 0, mesh0,
+                                                          mesh)
+                nmo = C.shape[0]
+                if npw > npw0:
+                    C_ = C
+                    C = np.zeros((nmo,npw), dtype=C_.dtype)
+                    C[:,mesh_map] = C_
+                    C_ = None
+                else:
+                    C = C[:,mesh_map]
+            else:
+                raise RuntimeError("Input C0 has wrong shape. Expected %d PWs; got %d." % (npw, npw0))
         set_kcomp(C, C_ks, k)
+        C = None
 
     if mocc_ks is None:
         mocc_ks = get_mo_occ(cell, C_ks=C_ks)
@@ -1399,7 +1429,7 @@ class PWKRHF(pbc_hf.KSCF):
 
         return C_ks, mocc_ks
 
-    def init_guess_by_chkfile(self, chk=None, nvir=None, project=None,
+    def init_guess_by_chkfile(self, chk=None, nvir=None, project=True,
                               out=None):
         if chk is None: chk = self.chkfile
         if nvir is None: nvir = self.nvir

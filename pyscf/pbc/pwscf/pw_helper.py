@@ -203,13 +203,20 @@ def get_C_ks_G(cell, kpts, mo_coeff_ks, n_ks, out=None, verbose=0):
 
 """ Contracted PW
 """
-def get_mesh_map(cell, ke_cutoff, ke_cutoff2):
+def get_mesh_map(cell, ke_cutoff, ke_cutoff2, mesh=None, mesh2=None):
     """ Input ke_cutoff > ke_cutoff2, hence define a dense grid "mesh" and a sparse grid "mesh2" where mesh2 is rigorously a subset of mesh. This function returns the indices of grid points in mesh2 in mesh.
     """
 
     latvec = cell.lattice_vectors()
-    mesh = tools.cutoff_to_mesh(latvec, ke_cutoff)
-    mesh2 = tools.cutoff_to_mesh(latvec, ke_cutoff2)
+    if mesh is None:
+        mesh = tools.cutoff_to_mesh(latvec, ke_cutoff)
+    else:
+        mesh = np.asarray(mesh)
+    if mesh2 is None:
+        mesh2 = tools.cutoff_to_mesh(latvec, ke_cutoff2)
+    else:
+        mesh2 = np.asarray(mesh2)
+    assert(np.all(mesh>=mesh2))
     rs = [np.fft.fftfreq(mesh[i], 1./mesh[i]) for i in range(3)]
     rs2 = [np.fft.fftfreq(mesh2[i], 1./mesh2[i]) for i in range(3)]
     idxr = [np.where(abs(rs[i][:,None]-rs2[i])<1e-3)[0] for i in range(3)]
@@ -272,7 +279,7 @@ def remove_pGTO_from_cGTO_(bdict, amax=None, amin=None, verbose=0):
     return bdict_new
 
 
-def cpw_from_cell(cell_cpw, out=None):
+def cpw_from_cell(cell_cpw, kpts, out=None):
     nao = cell_cpw.nao_nr()
     nkpts = len(kpts)
     Cao_ks = [np.eye(nao)+0j for k in range(nkpts)]
@@ -322,7 +329,7 @@ def gto2cpw(cell, basis, kpts, amin=None, amax=None, ke_or_mesh=None, out=None):
     cell_cpw.verbose = 0
     cell_cpw.build()
 # GTOs --> CPWs
-    out = cpw_from_cell(cell_cpw, out=out)
+    out = cpw_from_cell(cell_cpw, kpts, out=out)
 
     return out
 
