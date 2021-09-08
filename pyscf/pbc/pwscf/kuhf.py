@@ -388,8 +388,8 @@ class PWKUHF(khf.PWKRHF):
             mocc_ks[s] = [np.asarray([1 if i < nocc[s] else 0
                           for i in range(n0_ks[k])]) for k in range(nkpts)]
             C_ks_s, mocc_ks[s] = khf.init_guess_from_C0(self.cell, C0_ks_s,
-                                                        ntot_ks, C_ks_s,
-                                                        mocc_ks[s])
+                                                        ntot_ks, out=C_ks_s,
+                                                        mocc_ks=mocc_ks[s])
 
         return C_ks, mocc_ks
 
