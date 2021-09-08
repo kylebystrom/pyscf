@@ -91,13 +91,14 @@ def apply_k_kpt_support_vec(C_k, W_k):
     return Cbar_k
 
 
-def apply_k_s1(cell, C_ks, Ct_ks, mocc_ks, kpts, mesh, Gv, out=None):
+def apply_k_s1(cell, C_ks, mocc_ks, kpts, Ct_ks, ktpts, mesh, Gv, out=None):
     nkpts = len(kpts)
+    nktpts = len(ktpts)
     ngrids = np.prod(mesh)
     fac = ngrids**2./(cell.vol*nkpts)
     occ_ks = [np.where(mocc_ks[k] > THR_OCC)[0] for k in range(nkpts)]
 
-    if out is None: out = [None] * nkpts
+    if out is None: out = [None] * nktpts
 
 # swap file to hold FFTs
     swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
@@ -112,12 +113,12 @@ def apply_k_s1(cell, C_ks, Ct_ks, mocc_ks, kpts, mesh, Gv, out=None):
         set_kcomp(tools.ifft(Co_k, mesh), Co_ks_R, k)
         Co_k = None
 
-    for k in range(nkpts):
+    for k in range(nktpts):
         Ct_k = get_kcomp(Ct_ks, k)
         set_kcomp(tools.ifft(Ct_k, mesh), Ct_ks_R, k)
         Ct_k = None
 
-    for k1,kpt1 in enumerate(kpts):
+    for k1,kpt1 in enumerate(ktpts):
         Ct_k1_R = get_kcomp(Ct_ks_R, k1)
         Ctbar_k1 = np.zeros_like(Ct_k1_R)
         for k2,kpt2 in enumerate(kpts):
@@ -221,12 +222,12 @@ def apply_k_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv, out):
     return out
 
 
-def apply_k(cell, C_ks, mocc_ks, kpts, mesh, Gv, Ct_ks=None, exxdiv=None,
-            out=None):
+def apply_k(cell, C_ks, mocc_ks, kpts, mesh, Gv, Ct_ks=None, ktpts=None,
+            exxdiv=None, out=None):
     if Ct_ks is None:
         return apply_k_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv, out)
     else:
-        return apply_k_s1(cell, C_ks, Ct_ks, mocc_ks, kpts, mesh, Gv, out)
+        return apply_k_s1(cell, C_ks, mocc_ks, kpts, Ct_ks, ktpts, mesh, Gv, out)
 
 
 def jk(mf, with_jk=None, ace_exx=True):
@@ -237,6 +238,38 @@ def jk(mf, with_jk=None, ace_exx=True):
     mf.with_jk = with_jk
 
     return mf
+
+
+def get_ace_support_vec(cell, C1_ks, mocc1_ks, k1pts, C2_ks=None, k2pts=None,
+                        out=None, mesh=None, Gv=None, exxdiv=None, method="cd"):
+    """ Compute the ACE support vectors for orbitals given by C2_ks and the corresponding k-points given by k2pts, using the Fock matrix obtained from C1_ks, mocc1_ks, k1pts. If C2_ks and/or k2pts are not provided, their values will be set to the C1_ks and/or k1pts. The results are saved to out and returned.
+    """
+    from pyscf.pbc.pwscf.pseudo import get_support_vec
+    if mesh is None: mesh = cell.mesh
+    if Gv is None: Gv = cell.get_Gv(mesh)
+
+    swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+    fswap = lib.H5TmpFile(swapfile.name)
+
+    dname0 = "W_ks"
+    W_ks = fswap.create_group(dname0)
+    apply_k(cell, C1_ks, mocc1_ks, k1pts, mesh, Gv,
+            Ct_ks=C2_ks, ktpts=k2pts, exxdiv=exxdiv, out=W_ks)
+
+    if C2_ks is None: C2_ks = C1_ks
+    if k2pts is None: k2pts = k1pts
+    nk2pts = len(k2pts)
+
+    for k in range(nk2pts):
+        C_k = get_kcomp(C2_ks, k)
+        W_k = get_kcomp(W_ks, k)
+        W_k = get_support_vec(C_k, W_k, method=method)
+        set_kcomp(W_k, out, k)
+        W_k = None
+
+    del fswap[dname0]
+
+    return out
 
 
 class PWJK:
@@ -309,27 +342,10 @@ class PWJK:
             raise RuntimeError("comp must be None or int")
 
         if self.ace_exx:
-            from pyscf.pbc.pwscf.pseudo import get_support_vec
-            if mesh is None: mesh = self.mesh
-            if Gv is None: Gv = self.get_Gv(mesh)
-
-            dname0 = "W_ks"
-            if dname0 in self.fswap: del self.fswap[dname0]
-            W_ks = self.fswap.create_group(dname0)
-            self.apply_k(C_ks, mocc_ks, kpts, Ct_ks=Ct_ks,
-                         mesh=mesh, Gv=Gv, exxdiv=exxdiv, out=W_ks)
-
-            for k in range(nkpts):
-                if Ct_ks is None:
-                    Ct_k = get_kcomp(C_ks, k)
-                else:
-                    Ct_k = get_kcomp(Ct_ks, k)
-                W_k = get_kcomp(W_ks, k)
-                W_k = get_support_vec(Ct_k, W_k, method="cd")
-                set_kcomp(W_k, out, k)
-                W_k = None
-
-            del self.fswap[dname0]
+            out = get_ace_support_vec(self.cell, C_ks, mocc_ks, kpts,
+                                      C2_ks=Ct_ks, k2pts=kpts, out=out,
+                                      mesh=mesh, Gv=Gv, exxdiv=exxdiv,
+                                      method="cd")
         else:   # store ifft of Co_ks
             if mesh is None: mesh = self.mesh
             for k in range(nkpts):
