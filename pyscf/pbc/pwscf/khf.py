@@ -1251,7 +1251,7 @@ class PWKRHF(pbc_hf.KSCF):
     '''PWKRHF base class. non-relativistic RHF using PW basis.
     '''
 
-    outcore = getattr(__config__, 'pbc_pwscf_khf_PWKRHF_outcore', True)
+    outcore = getattr(__config__, 'pbc_pwscf_khf_PWKRHF_outcore', False)
     conv_tol = getattr(__config__, 'pbc_pwscf_khf_PWKRHF_conv_tol', 1e-6)
     conv_tol_davidson = getattr(__config__,
                                 'pbc_pwscf_khf_PWKRHF_conv_tol_davidson', 1e-7)
@@ -1311,6 +1311,7 @@ class PWKRHF(pbc_hf.KSCF):
         logger.info(self, "ke_cutoff = %s", self.cell.ke_cutoff)
         logger.info(self, "mesh = %s (%d PWs)", self.cell.mesh,
                     np.prod(self.cell.mesh))
+        logger.info(self, "outcore mode = %s", self.outcore)
         logger.info(self, "SCF init guess = %s", self.init_guess)
         logger.info(self, "SCF conv_tol = %s", self.conv_tol)
         logger.info(self, "SCF max_cycle = %d", self.max_cycle)
@@ -1472,7 +1473,8 @@ class PWKRHF(pbc_hf.KSCF):
 
     def init_jk(self, with_jk=None, ace_exx=None):
         if ace_exx is None: ace_exx = self.ace_exx
-        return pw_jk.jk(self, with_jk=with_jk, ace_exx=ace_exx)
+        return pw_jk.jk(self, with_jk=with_jk, ace_exx=ace_exx,
+                        outcore=self.outcore)
 
     def scf(self, C0=None, **kwargs):
         self.dump_flags()
