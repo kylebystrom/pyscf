@@ -473,21 +473,28 @@ def get_mo_occ(cell, moe_ks=None, C_ks=None, nocc=None):
     if nocc is None: nocc = cell.nelectron // 2
     if not moe_ks is None:
         nkpts = len(moe_ks)
-        nocc_tot = nocc * nkpts
-        e_fermi = np.sort(np.concatenate(moe_ks))[nocc_tot-1]
-        EPSILON = 1e-10
-        mocc_ks = [None] * nkpts
-        for k in range(nkpts):
-            mocc_k = np.zeros(moe_ks[k].size)
-            mocc_k[moe_ks[k] < e_fermi+EPSILON] = 2
-            mocc_ks[k] = mocc_k
+        if nocc == 0:
+            mocc_ks = [np.zeros(moe_ks[k].size) for k in range(nkpts)]
+        else:
+            nocc_tot = nocc * nkpts
+            e_fermi = np.sort(np.concatenate(moe_ks))[nocc_tot-1]
+            EPSILON = 1e-10
+            mocc_ks = [None] * nkpts
+            for k in range(nkpts):
+                mocc_k = np.zeros(moe_ks[k].size)
+                mocc_k[moe_ks[k] < e_fermi+EPSILON] = 2
+                mocc_ks[k] = mocc_k
     elif not C_ks is None:
         nkpts = len(C_ks)
-        mocc_ks = [None] * nkpts
-        for k in range(nkpts):
-            C_k = get_kcomp(C_ks, k, load=False)
-            mocc_ks[k] = np.asarray([2 if i < nocc else 0
-                                     for i in range(C_k.shape[0])])
+        if nocc == 0:
+            mocc_ks = [np.zeros(get_kcomp(C_ks,k,load=False).shape[0])
+                       for k in range(nkpts)]
+        else:
+            mocc_ks = [None] * nkpts
+            for k in range(nkpts):
+                C_k = get_kcomp(C_ks, k, load=False)
+                mocc_ks[k] = np.asarray([2 if i < nocc else 0
+                                         for i in range(C_k.shape[0])])
     else:
         raise RuntimeError
 
