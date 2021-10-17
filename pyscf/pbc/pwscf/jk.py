@@ -91,7 +91,8 @@ def apply_k_kpt_support_vec(C_k, W_k):
     return Cbar_k
 
 
-def apply_k_s1(cell, C_ks, mocc_ks, kpts, Ct_ks, ktpts, mesh, Gv, out=None):
+def apply_k_s1(cell, C_ks, mocc_ks, kpts, Ct_ks, ktpts, mesh, Gv, out=None,
+               outcore=False):
     nkpts = len(kpts)
     nktpts = len(ktpts)
     ngrids = np.prod(mesh)
@@ -101,12 +102,15 @@ def apply_k_s1(cell, C_ks, mocc_ks, kpts, Ct_ks, ktpts, mesh, Gv, out=None):
     if out is None: out = [None] * nktpts
 
 # swap file to hold FFTs
-    swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
-    fswap = lib.H5TmpFile(swapfile.name)
-    swapfile = None
-
-    Co_ks_R = fswap.create_group("Co_ks_R")
-    Ct_ks_R = fswap.create_group("Ct_ks_R")
+    if outcore:
+        swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+        fswap = lib.H5TmpFile(swapfile.name)
+        swapfile = None
+        Co_ks_R = fswap.create_group("Co_ks_R")
+        Ct_ks_R = fswap.create_group("Ct_ks_R")
+    else:
+        Co_ks_R = [None] * nkpts
+        Ct_ks_R = [None] * nktpts
 
     for k in range(nkpts):
         Co_k = get_kcomp(C_ks, k, occ=occ_ks[k])
@@ -138,7 +142,7 @@ def apply_k_s1(cell, C_ks, mocc_ks, kpts, Ct_ks, ktpts, mesh, Gv, out=None):
     return out
 
 
-def apply_k_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv, out):
+def apply_k_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv, out=None, outcore=False):
     nkpts = len(kpts)
     ngrids = np.prod(mesh)
     fac = ngrids**2./(cell.vol*nkpts)
@@ -159,11 +163,13 @@ def apply_k_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv, out):
         if np.sum(mocc_ks[k][:no_ks[k]]>THR_OCC) != no_ks[k]:
             raise NotImplementedError("Non-aufbau configurations are not supported.")
 
-    swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
-    fswap = lib.H5TmpFile(swapfile.name)
-    swapfile = None
-
-    C_ks_R = fswap.create_group("C_ks_R")
+    if outcore:
+        swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+        fswap = lib.H5TmpFile(swapfile.name)
+        swapfile = None
+        C_ks_R = fswap.create_group("C_ks_R")
+    else:
+        C_ks_R = [None] * nkpts
 
     for k in range(nkpts):
         C_k = get_kcomp(C_ks, k)
@@ -223,17 +229,18 @@ def apply_k_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv, out):
 
 
 def apply_k(cell, C_ks, mocc_ks, kpts, mesh, Gv, Ct_ks=None, ktpts=None,
-            exxdiv=None, out=None):
+            exxdiv=None, out=None, outcore=False):
     if Ct_ks is None:
-        return apply_k_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv, out)
+        return apply_k_s2(cell, C_ks, mocc_ks, kpts, mesh, Gv, out, outcore)
     else:
-        return apply_k_s1(cell, C_ks, mocc_ks, kpts, Ct_ks, ktpts, mesh, Gv, out)
+        return apply_k_s1(cell, C_ks, mocc_ks, kpts, Ct_ks, ktpts, mesh, Gv, out, outcore)
 
 
-def jk(mf, with_jk=None, ace_exx=True):
+def jk(mf, with_jk=None, ace_exx=True, outcore=False):
     if with_jk is None:
         with_jk = PWJK(mf.cell, mf.kpts, exxdiv=mf.exxdiv)
         with_jk.ace_exx = ace_exx
+        with_jk.outcore = outcore
 
     mf.with_jk = with_jk
 
@@ -241,20 +248,25 @@ def jk(mf, with_jk=None, ace_exx=True):
 
 
 def get_ace_support_vec(cell, C1_ks, mocc1_ks, k1pts, C2_ks=None, k2pts=None,
-                        out=None, mesh=None, Gv=None, exxdiv=None, method="cd"):
+                        out=None, mesh=None, Gv=None, exxdiv=None, method="cd",
+                        outcore=False):
     """ Compute the ACE support vectors for orbitals given by C2_ks and the corresponding k-points given by k2pts, using the Fock matrix obtained from C1_ks, mocc1_ks, k1pts. If C2_ks and/or k2pts are not provided, their values will be set to the C1_ks and/or k1pts. The results are saved to out and returned.
     """
     from pyscf.pbc.pwscf.pseudo import get_support_vec
     if mesh is None: mesh = cell.mesh
     if Gv is None: Gv = cell.get_Gv(mesh)
 
-    swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
-    fswap = lib.H5TmpFile(swapfile.name)
+    if outcore:
+        swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+        fswap = lib.H5TmpFile(swapfile.name)
+        dname0 = "W_ks"
+        W_ks = fswap.create_group(dname0)
+    else:
+        W_ks = None
 
-    dname0 = "W_ks"
-    W_ks = fswap.create_group(dname0)
-    apply_k(cell, C1_ks, mocc1_ks, k1pts, mesh, Gv,
-            Ct_ks=C2_ks, ktpts=k2pts, exxdiv=exxdiv, out=W_ks)
+    W_ks = apply_k(cell, C1_ks, mocc1_ks, k1pts, mesh, Gv,
+                   Ct_ks=C2_ks, ktpts=k2pts, exxdiv=exxdiv, out=W_ks,
+                   outcore=outcore)
 
     if C2_ks is None: C2_ks = C1_ks
     if k2pts is None: k2pts = k1pts
@@ -267,16 +279,15 @@ def get_ace_support_vec(cell, C1_ks, mocc1_ks, k1pts, C2_ks=None, k2pts=None,
         set_kcomp(W_k, out, k)
         W_k = None
 
-    del fswap[dname0]
+    if outcore:
+        del fswap[dname0]
 
     return out
 
 
 class PWJK:
 
-    ace_exx = getattr(__config__, "pbc_pwscf_jk_PWJK_ace_exx", True)
-
-    def __init__(self, cell, kpts, mesh=None, exxdiv=None):
+    def __init__(self, cell, kpts, mesh=None, exxdiv=None, **kwargs):
         self.cell = cell
         self.kpts = kpts
         if mesh is None: mesh = cell.mesh
@@ -284,10 +295,17 @@ class PWJK:
         self.Gv = cell.get_Gv(mesh)
         self.exxdiv = exxdiv
 
+        # kwargs
+        self.ace_exx = kwargs.get("ace_exx", True)
+        self.outcore = kwargs.get("outcore", False)
+
         # the following are not input options
-        self.swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
-        self.fswap = lib.H5TmpFile(self.swapfile.name)
-        self.exx_W_ks = self.fswap.create_group("exx_W_ks")
+        if self.outcore:
+            self.swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+            self.fswap = lib.H5TmpFile(self.swapfile.name)
+            self.exx_W_ks = self.fswap.create_group("exx_W_ks")
+        else:
+            self.exx_W_ks = {}
 
     def get_Gv(self, mesh):
         if is_zero(np.asarray(mesh)-np.asarray(self.mesh)):
@@ -336,7 +354,10 @@ class PWJK:
         elif isinstance(comp, int):
             keycomp = "%d" % comp
             if not keycomp in self.exx_W_ks:
-                self.exx_W_ks.create_group(keycomp)
+                if self.outcore:
+                    self.exx_W_ks.create_group(keycomp)
+                else:
+                    self.exx_W_ks[keycomp] = {}
             out = self.exx_W_ks[keycomp]
         else:
             raise RuntimeError("comp must be None or int")
@@ -345,7 +366,7 @@ class PWJK:
             out = get_ace_support_vec(self.cell, C_ks, mocc_ks, kpts,
                                       C2_ks=Ct_ks, k2pts=kpts, out=out,
                                       mesh=mesh, Gv=Gv, exxdiv=exxdiv,
-                                      method="cd")
+                                      method="cd", outcore=self.outcore)
         else:   # store ifft of Co_ks
             if mesh is None: mesh = self.mesh
             for k in range(nkpts):
