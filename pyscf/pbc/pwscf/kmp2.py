@@ -55,12 +55,14 @@ def fill_oovv(oovv, v_ia, Co_kj_R, Cv_kb_R, fac=None):
     return oovv
 
 
-def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
+def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, frozen=None):
     """ Compute both direct (d) and exchange (x) contributions together.
 
     Args:
         nvir_lst (array-like of int):
             If given, the MP2 correlation energies using the number of virtual orbitals specified by the list will be returned.
+        frozen (int):
+            Number of core orbitals to be frozen.
     """
     cput0 = (time.clock(), time.time())
 
@@ -68,6 +70,14 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
     dsize = 16
 
     fchk, C_ks, moe_ks, mocc_ks = read_fchk(chkfile_name)
+
+    if not frozen is None:
+        if isinstance(frozen, int):
+            logger.info(cell, "freezing %d orbitals", frozen)
+            moe_ks = [moe_k[frozen:] for moe_k in moe_ks]
+            mocc_ks = [mocc_k[frozen:] for mocc_k in mocc_ks]
+        else:
+            raise NotImplementedError
 
     nkpts = len(kpts)
     mesh = cell.mesh
@@ -143,6 +153,8 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
 
     for k in range(nkpts):
         C_k = get_kcomp(C_ks, k)
+        if not frozen is None:
+            C_k = C_k[frozen:]
         C_k = tools.ifft(C_k, mesh)
         set_kcomp(C_k, C_ks_R, k)
         C_k = None
@@ -363,7 +375,7 @@ def PWKRMP2_from_gtomf(mf, chkfile=None):
 
 
 class PWKRMP2:
-    def __init__(self, mf, nvir=None):
+    def __init__(self, mf, nvir=None, frozen=None):
         self.cell = self.mol = mf.cell
         self._scf = mf
 
@@ -372,6 +384,7 @@ class PWKRMP2:
         self.max_memory = mf.max_memory
 
         self.nvir = nvir
+        self.frozen = frozen
 
 ##################################################
 # don't modify the following attributes, they are not input options
@@ -424,15 +437,16 @@ class PWKRMP2:
         for icomp,comp in enumerate(summary["tcomps"]):
             write_time(comp, summary["t-%s"%comp], t_tot)
 
-    def kernel(self, nvir=None, nvir_lst=None):
+    def kernel(self, nvir=None, nvir_lst=None, frozen=None):
         cell = self.cell
         kpts = self.kpts
         chkfile = self._scf.chkfile
         summary = self.mp2_summary
         if nvir is None: nvir = self.nvir
+        if frozen is None: frozen = self.frozen
 
         self.e_corr = kernel_dx_(cell, kpts, chkfile, summary, nvir=nvir,
-                                 nvir_lst=nvir_lst)
+                                 nvir_lst=nvir_lst, frozen=frozen)
 
         self._finalize()
 
