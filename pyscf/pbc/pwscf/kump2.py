@@ -1,7 +1,6 @@
 """ kpt-sampled periodic MP2 using a plane wave basis and spin-unrestricted HF
 """
 
-import time
 import h5py
 import tempfile
 import numpy as np
@@ -42,7 +41,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
     """ Compute both direct (d) and exchange (x) contributions together.
     """
 
-    cput0 = (time.clock(), time.time())
+    cput0 = (logger.process_clock(), logger.perf_counter())
 
     dtype = np.complex128
     dsize = 16
@@ -133,7 +132,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
         kpti = kpts[ki]
         nocc_i = nocc_sps[ki]
 
-        tick[:] = time.clock(), time.time()
+        tick[:] = logger.process_clock(), logger.perf_counter()
 
         Co_ki_R = [C_ks_R["%d/%d"%(ki,s)][:nocc_i[s]] for s in [0,1]]
 
@@ -161,18 +160,18 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
 
         Co_ki_R = None
 
-        tock[:] = time.clock(), time.time()
+        tock[:] = logger.process_clock(), logger.perf_counter()
         tspans[1] += tock - tick
 
         for kj in range(nkpts):
             nocc_j = nocc_sps[kj]
             kptij = kpti + kpts[kj]
 
-            tick[:] = time.clock(), time.time()
+            tick[:] = logger.process_clock(), logger.perf_counter()
 
             Co_kj_R = [C_ks_R["%d/%d"%(kj,s)][:nocc_j[s]] for s in [0,1]]
 
-            tock[:] = time.clock(), time.time()
+            tock[:] = logger.process_clock(), logger.perf_counter()
             tspans[3] += tock - tick
 
             done = [False] * nkpts
@@ -186,7 +185,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
                 kptijab_lst.append(kptija-kpts[kb])
                 done[ka] = done[kb] = True
 
-            tick[:] = time.clock(), time.time()
+            tick[:] = logger.process_clock(), logger.perf_counter()
             tspans[2] += tick - tock
 
             nkab = len(kab_lst)
@@ -199,25 +198,25 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
                 nocc_b = nocc_sps[kb]
                 nvir_b = nvir_sps[kb]
 
-                tick[:] = time.clock(), time.time()
+                tick[:] = logger.process_clock(), logger.perf_counter()
                 phase = np.exp(-1j*lib.dot(coords,
                                            kptijab.reshape(-1,1))).reshape(-1)
-                tock[:] = time.clock(), time.time()
+                tock[:] = logger.process_clock(), logger.perf_counter()
                 tspans[4] += tock - tick
 
                 for s in [0,1]:
 
-                    tick[:] = time.clock(), time.time()
+                    tick[:] = logger.process_clock(), logger.perf_counter()
                     Cv_kb_R = C_ks_R["%d/%d"%(kb,s)][nocc_b[s]:nocc_b[s]+nvir_b[s]]
                     v_ia = v_ia_ks_R["%d/%d"%(ka,s)][:]
-                    tock[:] = time.clock(), time.time()
+                    tock[:] = logger.process_clock(), logger.perf_counter()
                     tspans[3] += tock - tick
 
                     v_ia *= phase
                     oovv_ka = np.ndarray((nocc_i[s],nocc_j[s],nvir_a[s],nvir_b[s]),
                                          dtype=dtype, buffer=buf2)
                     fill_oovv(oovv_ka, v_ia, Co_kj_R[s], Cv_kb_R, fac_oovv)
-                    tick[:] = time.clock(), time.time()
+                    tick[:] = logger.process_clock(), logger.perf_counter()
                     tspans[4] += tick - tock
 
                     Cv_kb_R = None
@@ -226,14 +225,14 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
                         Cv_ka_R = C_ks_R["%d/%d"%(ka,s)][nocc_a[s]:
                                                          nocc_a[s]+nvir_a[s]]
                         v_ib = v_ia_ks_R["%d/%s"%(kb,s)][:]
-                        tock[:] = time.clock(), time.time()
+                        tock[:] = logger.process_clock(), logger.perf_counter()
                         tspans[3] += tock - tick
 
                         v_ib *= phase
                         oovv_kb = np.ndarray((nocc_i[s],nocc_j[s],nvir_b[s],nvir_a[s]),
                                              dtype=dtype, buffer=buf3)
                         fill_oovv(oovv_kb, v_ib, Co_kj_R[s], Cv_ka_R, fac_oovv)
-                        tick[:] = time.clock(), time.time()
+                        tick[:] = logger.process_clock(), logger.perf_counter()
                         tspans[4] += tick - tock
 
                         Cv_ka_R = v_ib = None
@@ -241,7 +240,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
                         oovv_kb = oovv_ka
 
 # Same-spin contribution to KUMP2 energy
-                    tick[:] = time.clock(), time.time()
+                    tick[:] = logger.process_clock(), logger.perf_counter()
                     mo_e_o = moe_ks[s][ki][:nocc_i[s]]
                     mo_e_v = moe_ks[s][ka][nocc_a[s]:nocc_a[s]+nvir_a[s]]
                     eia = mo_e_o[:,None] - mo_e_v
@@ -268,7 +267,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
                         emp2_d[invir_] += eijab_d
                         emp2_x[invir_] += eijab_x
                         emp2_ss[invir_] += eijab_d + eijab_x
-                    tock[:] = time.clock(), time.time()
+                    tock[:] = logger.process_clock(), logger.perf_counter()
                     tspans[5] += tock - tick
 
                     oovv_ka = oovv_kb = eijab = None
@@ -276,16 +275,16 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
 # Opposite-spin contribution to KUMP2 energy
                     if s == 0:
                         t = 1 - s
-                        tick[:] = time.clock(), time.time()
+                        tick[:] = logger.process_clock(), logger.perf_counter()
                         Cv_kb_R = C_ks_R["%d/%d"%(kb,t)][nocc_b[t]:
                                                          nocc_b[t]+nvir_b[t]]
-                        tock[:] = time.clock(), time.time()
+                        tock[:] = logger.process_clock(), logger.perf_counter()
                         tspans[3] += tock - tick
 
                         oovv_ka = np.ndarray((nocc_i[s],nocc_j[t],nvir_a[s],nvir_b[t]),
                                              dtype=dtype, buffer=buf2)
                         fill_oovv(oovv_ka, v_ia, Co_kj_R[t], Cv_kb_R, fac_oovv)
-                        tick[:] = time.clock(), time.time()
+                        tick[:] = logger.process_clock(), logger.perf_counter()
                         tspans[4] += tick - tock
 
                         Cv_kb_R = v_ia = None
@@ -305,7 +304,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
                             eijab_d *= 2    # alpha,beta <-> beta,alpha
                             emp2_d[invir_] += eijab_d
                             emp2_os[invir_] += eijab_d
-                        tock[:] = time.clock(), time.time()
+                        tock[:] = logger.process_clock(), logger.perf_counter()
                         tspans[5] += tock - tick
 
                         oovv_ka = eijab = None

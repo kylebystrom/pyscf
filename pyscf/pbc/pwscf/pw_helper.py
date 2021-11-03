@@ -2,7 +2,6 @@
 """
 
 
-import time
 import copy
 import h5py
 import tempfile
@@ -91,11 +90,11 @@ def scale_kcomp(C_ks, k, scale):
 
 
 def timing_call(func, args, tdict, tname):
-    tick = np.asarray([time.clock(), time.time()])
+    tick = np.asarray([logger.process_clock(), logger.perf_counter()])
 
     res = func(*args)
 
-    tock = np.asarray([time.clock(), time.time()])
+    tock = np.asarray([logger.process_clock(), logger.perf_counter()])
     if not tname in tdict:
         tdict[tname] = np.zeros(2)
     tdict[tname] += tock - tick

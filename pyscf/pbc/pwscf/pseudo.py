@@ -2,7 +2,6 @@
     The wrapper for calling the functions here go to pw_helper.py
 """
 
-import time
 import tempfile
 import numpy as np
 import scipy.linalg
@@ -14,6 +13,7 @@ from pyscf.pbc.gto import pseudo as gth_pseudo
 from pyscf.pbc import tools
 from pyscf.pbc.lib.kpts_helper import member
 from pyscf import lib
+from pyscf.lib import logger
 from pyscf import __config__
 
 
@@ -134,7 +134,7 @@ class PWPP:
         if mesh is None: mesh = cell.mesh
         self.mesh = mesh
         self.Gv = cell.get_Gv(mesh)
-        lib.logger.debug(self, "Initializing PP local part")
+        logger.debug(self, "Initializing PP local part")
         self.vpplocR = get_vpplocR(cell, self.mesh, self.Gv)
 
         self.pptype = get_pp_type(cell)
@@ -148,7 +148,7 @@ class PWPP:
 
     def initialize_ecpnloc(self):
         if self.pptype == "ccecp":
-            lib.logger.debug(self, "Initializing ccECP non-local part")
+            logger.debug(self, "Initializing ccECP non-local part")
             cell = self.cell
             dtype = np.complex128
             self._ecp = format_ccecp_param(cell)
@@ -512,7 +512,7 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
     buf = np.empty(Gblksize*ngrids, dtype=dtype)
     buf2 = np.empty(Gblksize*ngrids, dtype=dtype0)
     buf3 = np.empty(Gblksize*ngrids, dtype=dtype0)
-    lib.logger.debug1(cell, "Computing v^nl*C_k in %d segs with blksize %d",
+    logger.debug1(cell, "Computing v^nl*C_k in %d segs with blksize %d",
                       (ngrids-1)//Gblksize+1, Gblksize)
 
     Gk = Gv + kpt
@@ -521,7 +521,7 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
     if lmax > 0: invG_rad = 1./G_rad
 
     tspans = np.zeros((4,2))
-    TICK = np.array([time.clock(), time.time()])
+    TICK = np.array([logger.process_clock(), logger.perf_counter()])
 
     # if use_numexpr:
     #     fSBin = fast_SphBslin_c
@@ -552,7 +552,7 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
                 G_red = G_rad * (0.5 / al)
                 iblk = 0
                 for p0,p1 in lib.prange(0,ngrids,Gblksize):
-                    lib.logger.debug2(cell, "Gblk [%d/%d], %d ~ %d", iblk,
+                    logger.debug2(cell, "Gblk [%d/%d], %d ~ %d", iblk,
                             (ngrids-1)//Gblksize+1, p0, p1)
                     iblk += 1
                     vnlGG = np.ndarray((p1-p0,ngrids), dtype=dtype, buffer=buf)
@@ -563,20 +563,20 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
                     # use np.dot since a slice is neither F nor C-contiguous
                     vnlGG = np.dot(pYlm_part[p0:p1], pYlm_part.conj().T,
                                    out=vnlGG)
-                    tick = np.array([time.clock(), time.time()])
+                    tick = np.array([logger.process_clock(), logger.perf_counter()])
                     SBin = fSBin(l, G_rad2, out=SBin)
-                    tock = np.array([time.clock(), time.time()])
+                    tock = np.array([logger.process_clock(), logger.perf_counter()])
                     tspans[0] += tock - tick
                     np.multiply(vnlGG, SBin, out=vnlGG)
-                    tick = np.array([time.clock(), time.time()])
+                    tick = np.array([logger.process_clock(), logger.perf_counter()])
                     Cbar_k[:,p0:p1] += lib.dot(vnlGG, C_k.T).T
-                    tock = np.array([time.clock(), time.time()])
+                    tock = np.array([logger.process_clock(), logger.perf_counter()])
                     tspans[1] += tock - tick
                     G_rad2 = vnlGG = SBin = None
                 G_red = pYlm_part = None
     Cbar_k /= cell.vol
 
-    TOCK = np.array([time.clock(), time.time()])
+    TOCK = np.array([logger.process_clock(), logger.perf_counter()])
     tspans[3] += TOCK - TICK
     tspans[2] = tspans[3] - np.sum(tspans[:2], axis=0)
 
@@ -584,7 +584,7 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
     for tname, tspan in zip(tnames, tspans):
         tc, tw = tspan
         rc, rw = tspan / tspans[-1] * 100
-        lib.logger.debug1(cell, 'CPU time for %10s %9.2f  ( %6.2f%% ), wall time %9.2f  ( %6.2f%% )', tname.ljust(10), tc, rc, tw, rw)
+        logger.debug1(cell, 'CPU time for %10s %9.2f  ( %6.2f%% ), wall time %9.2f  ( %6.2f%% )', tname.ljust(10), tc, rc, tw, rw)
 
     return Cbar_k
 
@@ -614,13 +614,13 @@ def get_ccecp_support_vec(cell, C_ks, kpts, out, _ecp=None, ke_cutoff_nloc=None,
     mesh_map = cell_nloc = None
     if not ke_cutoff_nloc is None:
         if ke_cutoff_nloc < cell.ke_cutoff:
-            lib.logger.debug1(cell, "Using ke_cutoff_nloc %s for KB support vector", ke_cutoff_nloc)
+            logger.debug1(cell, "Using ke_cutoff_nloc %s for KB support vector", ke_cutoff_nloc)
             mesh_map = get_mesh_map(cell, cell.ke_cutoff, ke_cutoff_nloc)
             cell_nloc = cell.copy()
             cell_nloc.ke_cutoff = ke_cutoff_nloc
             cell_nloc.build()
         else:
-            lib.logger.warn(cell, "Input ke_cutoff_nloc %s is greater than cell.ke_cutoff %s and will be ignored.", ke_cutoff_nloc, cell.ke_cutoff)
+            logger.warn(cell, "Input ke_cutoff_nloc %s is greater than cell.ke_cutoff %s and will be ignored.", ke_cutoff_nloc, cell.ke_cutoff)
 
     if ncomp > 1 and not out is None:
         for comp in range(ncomp):
@@ -680,7 +680,7 @@ def get_ccecp_kb_support_vec(cell, kb_basis, kpts, out, ke_cutoff_nloc=None,
     cell_kb = cell.copy()
     cell_kb.basis = kb_basis
     cell_kb.build()
-    lib.logger.debug(cell, "Using basis %s for KB-ccECP (%d AOs)", kb_basis,
+    logger.debug(cell, "Using basis %s for KB-ccECP (%d AOs)", kb_basis,
                      cell_kb.nao_nr())
 
     nao = cell_kb.nao_nr()
@@ -689,12 +689,12 @@ def get_ccecp_kb_support_vec(cell, kb_basis, kpts, out, ke_cutoff_nloc=None,
     ngrids = np.prod(cell_kb.mesh)
     kblk = min(int(np.floor(ioblk/(ngrids*nao*16/1024**2.))), nkpts)
     nblk = int(np.ceil(nkpts / kblk))
-    lib.logger.debug(cell, "Calculating KB support vec for all kpts in %d segments with kptblk size %d", nblk, kblk)
+    logger.debug(cell, "Calculating KB support vec for all kpts in %d segments with kptblk size %d", nblk, kblk)
 
     tmpgroupname = "tmp"
     iblk = 0
     for k0,k1 in lib.prange(0,nkpts,kblk):
-        lib.logger.debug1(cell, "BLK %d  kpt range %d ~ %d  kpts %s",
+        logger.debug1(cell, "BLK %d  kpt range %d ~ %d  kpts %s",
                           iblk, k0, k1, kpts[k0:k1])
         iblk += 1
         nkpts01 = k1 - k0
@@ -708,7 +708,7 @@ def get_ccecp_kb_support_vec(cell, kb_basis, kpts, out, ke_cutoff_nloc=None,
             Cg_k = orth(cell_kb, Cg_k)
             set_kcomp(Cg_k, Cg_ks, k)
         Cg_k = None
-        lib.logger.debug(cell, "keeping %s SOAOs", ng_ks)
+        logger.debug(cell, "keeping %s SOAOs", ng_ks)
 
         get_ccecp_support_vec(cell, Cg_ks, kpts01, W_ks_blk, _ecp=_ecp,
                               ke_cutoff_nloc=ke_cutoff_nloc, ncomp=1,
@@ -721,7 +721,7 @@ def get_ccecp_kb_support_vec(cell, kb_basis, kpts, out, ke_cutoff_nloc=None,
     nsv_ks = [get_kcomp(W_ks, k, load=False).shape[0]
               for k in range(nkpts)]
 
-    lib.logger.debug(cell, "keeping %s KB support vectors", nsv_ks)
+    logger.debug(cell, "keeping %s KB support vectors", nsv_ks)
 
     if ncomp > 1:
         for comp in range(1,ncomp):

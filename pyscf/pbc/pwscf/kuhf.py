@@ -2,7 +2,6 @@
 """
 
 
-import time
 import h5py
 import copy
 import numpy as np
@@ -205,18 +204,18 @@ def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None, out=None):
 
 
 def update_pp(mf, C_ks):
-    tick = np.asarray([time.clock(), time.time()])
+    tick = np.asarray([logger.process_clock(), logger.perf_counter()])
     if not "t-ppnl" in mf.scf_summary:
         mf.scf_summary["t-ppnl"] = np.zeros(2)
 
     mf.with_pp.update_vppnloc_support_vec(C_ks, ncomp=2)
 
-    tock = np.asarray([time.clock(), time.time()])
+    tock = np.asarray([logger.process_clock(), logger.perf_counter()])
     mf.scf_summary["t-ppnl"] += tock - tick
 
 
 def update_k(mf, C_ks, mocc_ks):
-    tick = np.asarray([time.clock(), time.time()])
+    tick = np.asarray([logger.process_clock(), logger.perf_counter()])
     if not "t-ace" in mf.scf_summary:
         mf.scf_summary["t-ace"] = np.zeros(2)
 
@@ -224,7 +223,7 @@ def update_k(mf, C_ks, mocc_ks):
         C_ks_s = get_kcomp(C_ks, s, load=False)
         mf.with_jk.update_k_support_vec(C_ks_s, mocc_ks[s], mf.kpts, comp=s)
 
-    tock = np.asarray([time.clock(), time.time()])
+    tock = np.asarray([logger.process_clock(), logger.perf_counter()])
     mf.scf_summary["t-ace"] += tock - tick
 
 

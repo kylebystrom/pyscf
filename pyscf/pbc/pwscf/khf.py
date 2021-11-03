@@ -2,7 +2,6 @@
 """
 
 
-import time
 import copy
 import h5py
 import tempfile
@@ -51,7 +50,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
                 How many extra virtual bands to include to facilitate the convergence of the davidson algorithm for the highest few virtual bands? Default is 1.
     '''
 
-    cput0 = (time.clock(), time.time())
+    cput0 = (logger.process_clock(), logger.perf_counter())
 
     cell = mf.cell
     nkpts = len(kpts)
@@ -63,7 +62,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
     logger.info(mf, "Num of extra vir bands= %s", nbandv_extra)
 
     # init guess and SCF chkfile
-    tick = np.asarray([time.clock(), time.time()])
+    tick = np.asarray([logger.process_clock(), logger.perf_counter()])
 
     if mf.outcore:
         swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
@@ -75,7 +74,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
         C_ks = None
     C_ks, mocc_ks = mf.get_init_guess(nvir=nbandv_tot, C0=C0, out=C_ks)
 
-    tock = np.asarray([time.clock(), time.time()])
+    tock = np.asarray([logger.process_clock(), logger.perf_counter()])
     mf.scf_summary["t-init"] = tock - tick
 
     # init E
@@ -237,7 +236,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
         C_ks = chkfile.load_mo_coeff(C_ks)
         fswap.close()
 
-    cput1 = (time.clock(), time.time())
+    cput1 = (logger.process_clock(), logger.perf_counter())
     mf.scf_summary["t-tot"] = np.asarray(cput1) - np.asarray(cput0)
     logger.debug(mf, '    CPU time for %s %9.2f sec, wall time %9.2f sec',
                  "scf_cycle", *mf.scf_summary["t-tot"])
@@ -385,7 +384,7 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
     elif damp_type.lower() == "anderson":
         chgmixer = pw_helper.AndersonMixing(mf)
 
-    cput1 = (time.clock(), time.time())
+    cput1 = (logger.process_clock(), logger.perf_counter())
     # for cycle in range(max_cycle):
     #
     #     if cycle > 0:   # charge mixing
@@ -778,18 +777,18 @@ def init_guess_from_C0(cell, C0_ks, ntot_ks, project=True, out=None,
 
 
 def update_pp(mf, C_ks):
-    tick = np.asarray([time.clock(), time.time()])
+    tick = np.asarray([logger.process_clock(), logger.perf_counter()])
     if not "t-ppnl" in mf.scf_summary:
         mf.scf_summary["t-ppnl"] = np.zeros(2)
 
     mf.with_pp.update_vppnloc_support_vec(C_ks)
 
-    tock = np.asarray([time.clock(), time.time()])
+    tock = np.asarray([logger.process_clock(), logger.perf_counter()])
     mf.scf_summary["t-ppnl"] += tock - tick
 
 
 def update_k(mf, C_ks, mocc_ks):
-    tick = np.asarray([time.clock(), time.time()])
+    tick = np.asarray([logger.process_clock(), logger.perf_counter()])
     if not "t-ace" in mf.scf_summary:
         mf.scf_summary["t-ace"] = np.zeros(2)
 
@@ -799,7 +798,7 @@ def update_k(mf, C_ks, mocc_ks):
     else:
         mf.with_jk.update_k_support_vec(C_ks, mocc_ks, mf.kpts, Ct_ks=C_ks)
 
-    tock = np.asarray([time.clock(), time.time()])
+    tock = np.asarray([logger.process_clock(), logger.perf_counter()])
     mf.scf_summary["t-ace"] += tock - tick
 
 
@@ -841,25 +840,25 @@ def apply_hcore_kpt(mf, C_k, kpt, mesh, Gv, with_pp, C_k_R=None, comp=None,
     es = np.zeros(3, dtype=np.complex128)
 
     tspans = np.zeros((3,2))
-    tick = np.asarray([time.clock(), time.time()])
+    tick = np.asarray([logger.process_clock(), logger.perf_counter()])
 
     tmp = pw_helper.apply_kin_kpt(C_k, kpt, mesh, Gv)
     Cbar_k = tmp
     es[0] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2
-    tock = np.asarray([time.clock(), time.time()])
+    tock = np.asarray([logger.process_clock(), logger.perf_counter()])
     tspans[0] = tock - tick
 
     if C_k_R is None: C_k_R = tools.ifft(C_k, mesh)
     tmp = with_pp.apply_vppl_kpt(C_k, mesh=mesh, C_k_R=C_k_R)
     Cbar_k += tmp
     es[1] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2
-    tick = np.asarray([time.clock(), time.time()])
+    tick = np.asarray([logger.process_clock(), logger.perf_counter()])
     tspans[1] = tick - tock
 
     tmp = with_pp.apply_vppnl_kpt(C_k, kpt, mesh=mesh, Gv=Gv, comp=comp)
     Cbar_k += tmp
     es[2] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2
-    tock = np.asarray([time.clock(), time.time()])
+    tock = np.asarray([logger.process_clock(), logger.perf_counter()])
     tspans[2] = tock - tick
 
     for ie_comp,e_comp in enumerate(mf.scf_summary["e_comp_name_lst"][:3]):
@@ -888,18 +887,18 @@ def apply_jk_kpt(mf, C_k, kpt, mocc_ks, kpts, mesh, Gv, vj_R, with_jk,
     tspans = np.zeros((2,2))
     es = np.zeros(2, dtype=np.complex128)
 
-    tick = np.asarray([time.clock(), time.time()])
+    tick = np.asarray([logger.process_clock(), logger.perf_counter()])
     tmp = with_jk.apply_j_kpt(C_k, mesh=mesh, vj_R=vj_R, C_k_R=C_k_R)
     Cbar_k = tmp * 2.
     es[0] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2.
-    tock = np.asarray([time.clock(), time.time()])
+    tock = np.asarray([logger.process_clock(), logger.perf_counter()])
     tspans[0] = np.asarray(tock - tick).reshape(1,2)
 
     tmp = -with_jk.apply_k_kpt(C_k, kpt, mesh=mesh, Gv=Gv, exxdiv=exxdiv,
                                comp=comp)
     Cbar_k += tmp
     es[1] = np.einsum("ig,ig->", C_k.conj(), tmp)
-    tick = np.asarray([time.clock(), time.time()])
+    tick = np.asarray([logger.process_clock(), logger.perf_counter()])
     tspans[1] = np.asarray(tick - tock).reshape(1,2)
 
     for ie_comp,e_comp in enumerate(mf.scf_summary["e_comp_name_lst"][-2:]):
@@ -1091,7 +1090,7 @@ def converge_band_kpt(mf, C_k, kpt, mocc_ks, nband=None, mesh=None, Gv=None,
                                     comp=comp, ret_E=False)
         return Cbar_k_
 
-    tick = np.asarray([time.clock(), time.time()])
+    tick = np.asarray([logger.process_clock(), logger.perf_counter()])
 
     precond = get_precond_davidson(kpt, Gv)
 
@@ -1104,7 +1103,7 @@ def converge_band_kpt(mf, C_k, kpt, mocc_ks, nband=None, mesh=None, Gv=None,
                                max_cycle=max_cycle_davidson)
     c = np.asarray(c)
 
-    tock = np.asarray([time.clock(), time.time()])
+    tock = np.asarray([logger.process_clock(), logger.perf_counter()])
     key = "t-dvds"
     if not key in mf.scf_summary:
         mf.scf_summary[key] = np.zeros(2)

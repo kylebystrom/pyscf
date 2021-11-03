@@ -1,5 +1,4 @@
 import h5py
-import time
 import numpy as np
 
 from pyscf.pbc import cc, mp
@@ -9,6 +8,7 @@ from pyscf.pbc.pwscf.pw_helper import get_kcomp
 from pyscf.pbc.pwscf.ao2mo.molint import get_molint_from_C
 from pyscf.pbc.pwscf.khf import THR_OCC
 from pyscf import lib
+from pyscf.lib import logger
 
 
 def padded_mo_coeff(mp, mo_coeff):
@@ -40,9 +40,9 @@ class PWKRCCSD:
         self.nkpts = len(self.kpts)
 
     def kernel(self, eris=None):
-        cput0 = (time.clock(), time.time())
+        cput0 = (logger.process_clock(), logger.perf_counter())
         if eris is None: eris = self.ao2mo()
-        cput0 = lib.logger.timer(self._scf, 'CCSD init eri', *cput0)
+        cput0 = logger.timer(self._scf, 'CCSD init eri', *cput0)
         self.mcc = cc.kccsd_rhf.RCCSD(self._scf)
         self.mcc.kernel(eris=eris)
 

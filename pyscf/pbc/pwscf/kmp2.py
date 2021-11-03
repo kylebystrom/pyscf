@@ -1,7 +1,6 @@
 """ kpt-sampled periodic MP2 using a plane wave basis
 """
 
-import time
 import h5py
 import tempfile
 import numpy as np
@@ -64,7 +63,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
         frozen (int):
             Number of core orbitals to be frozen.
     """
-    cput0 = (time.clock(), time.time())
+    cput0 = (logger.process_clock(), logger.perf_counter())
 
     dtype = np.complex128
     dsize = 16
@@ -180,7 +179,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
         nocc_i = nocc_ks[ki]
         occ_i = occ_ks[ki]
 
-        tick[:] = time.clock(), time.time()
+        tick[:] = logger.process_clock(), logger.perf_counter()
 
         Co_ki_R = get_kcomp(C_ks_R, ki, occ=occ_i)
 
@@ -207,7 +206,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
 
         Co_ki_R = None
 
-        tock[:] = time.clock(), time.time()
+        tock[:] = logger.process_clock(), logger.perf_counter()
         tspans[1] += tock - tick
 
         for kj in range(nkpts):
@@ -215,11 +214,11 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
             occ_j = occ_ks[kj]
             kptij = kpti + kpts[kj]
 
-            tick[:] = time.clock(), time.time()
+            tick[:] = logger.process_clock(), logger.perf_counter()
 
             Co_kj_R = get_kcomp(C_ks_R, kj, occ=occ_j)
 
-            tock[:] = time.clock(), time.time()
+            tock[:] = logger.process_clock(), logger.perf_counter()
             tspans[3] += tock - tick
 
             done = [False] * nkpts
@@ -233,7 +232,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
                 kptijab_lst.append(kptija-kpts[kb])
                 done[ka] = done[kb] = True
 
-            tick[:] = time.clock(), time.time()
+            tick[:] = logger.process_clock(), logger.perf_counter()
             tspans[2] += tick - tock
 
             nkab = len(kab_lst)
@@ -248,10 +247,10 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
                 occ_b = occ_ks[kb]
                 vir_b = vir_ks[kb]
 
-                tick[:] = time.clock(), time.time()
+                tick[:] = logger.process_clock(), logger.perf_counter()
                 Cv_kb_R = get_kcomp(C_ks_R, kb, occ=vir_b)
                 v_ia = get_kcomp(v_ia_ks_R, ka)
-                tock[:] = time.clock(), time.time()
+                tock[:] = logger.process_clock(), logger.perf_counter()
                 tspans[3] += tock - tick
 
                 phase = np.exp(-1j*lib.dot(coords,
@@ -270,7 +269,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
                 oovv_ka = np.ndarray((nocc_i,nocc_j,nvir_a,nvir_b), dtype=dtype,
                                      buffer=buf2)
                 fill_oovv(oovv_ka, v_ia, Co_kj_R, Cv_kb_R, fac_oovv)
-                tick[:] = time.clock(), time.time()
+                tick[:] = logger.process_clock(), logger.perf_counter()
                 tspans[4] += tick - tock
 
                 Cv_kb_R = v_ia = None
@@ -278,7 +277,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
                 if ka != kb:
                     Cv_ka_R = get_kcomp(C_ks_R, ka, occ=vir_a)
                     v_ib = get_kcomp(v_ia_ks_R, kb)
-                    tock[:] = time.clock(), time.time()
+                    tock[:] = logger.process_clock(), logger.perf_counter()
                     tspans[3] += tock - tick
 
                     if incore:
@@ -292,7 +291,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
                     oovv_kb = np.ndarray((nocc_i,nocc_j,nvir_b,nvir_a), dtype=dtype,
                                          buffer=buf3)
                     fill_oovv(oovv_kb, v_ib, Co_kj_R, Cv_ka_R, fac_oovv)
-                    tick[:] = time.clock(), time.time()
+                    tick[:] = logger.process_clock(), logger.perf_counter()
                     tspans[4] += tick - tock
 
                     Cv_ka_R = v_ib = None
@@ -300,7 +299,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
                     oovv_kb = oovv_ka
 
 # KMP2 energy evaluation starts here
-                tick[:] = time.clock(), time.time()
+                tick[:] = logger.process_clock(), logger.perf_counter()
                 mo_e_o = moe_ks[ki][occ_i]
                 mo_e_v = moe_ks[ka][vir_a]
                 eia = mo_e_o[:,None] - mo_e_v
@@ -331,7 +330,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
                     emp2_ss[invir_] += eijab_d * 0.5 + eijab_x
                     emp2_os[invir_] += eijab_d * 0.5
 
-                tock[:] = time.clock(), time.time()
+                tock[:] = logger.process_clock(), logger.perf_counter()
                 tspans[5] += tock - tick
 
                 oovv_ka = oovv_kb = eijab = woovv = None
