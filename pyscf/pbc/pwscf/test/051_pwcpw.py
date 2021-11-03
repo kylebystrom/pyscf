@@ -1,4 +1,7 @@
 """ Check PW occ + CPW vir for MP2
+CPW stands for "contracted PW", which refers to a PW expansion vector with
+*fixed* coefficient. This example generates such CPWs from the ccecp-cc-pvdz
+basis set.
 """
 
 

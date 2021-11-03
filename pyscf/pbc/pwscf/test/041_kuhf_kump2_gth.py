@@ -16,6 +16,8 @@ if __name__ == "__main__":
     pseudo = "gth-pade"
     atom = "C 0 0 0"
     a = np.eye(3) * 4   # atom in a cubic box
+    E0 = -5.39796638192271
+    ECORR0 = -0.00682323936825284
 
 # cell
     cell = gto.Cell(
@@ -45,21 +47,21 @@ if __name__ == "__main__":
     pwmf.chkfile = chkfile
     pwmf.kernel()
 
-    assert(abs(pwmf.e_tot - -5.39794638922015) < 1.e-6)
+    assert(abs(pwmf.e_tot - E0) < 1.e-6)
 
 # krhf init from chkfile
     pwmf.init_guess = "chkfile"
     pwmf.kernel()
 
-    assert(abs(pwmf.e_tot - -5.39794638922015) < 1.e-6)
+    assert(abs(pwmf.e_tot - E0) < 1.e-6)
 
 # input C0
     pwmf.kernel(C0=pwmf.mo_coeff)
 
-    assert(abs(pwmf.e_tot - -5.39794638922015) < 1.e-6)
+    assert(abs(pwmf.e_tot - E0) < 1.e-6)
 
 # krmp2
     pwmp = pwscf.KUMP2(pwmf)
     pwmp.kernel()
 
-    assert(abs(pwmp.e_corr - -0.0067920847863142) < 1.e-6)
+    assert(abs(pwmp.e_corr - ECORR0) < 1.e-6)

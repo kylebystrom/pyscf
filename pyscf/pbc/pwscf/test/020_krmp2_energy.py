@@ -1,4 +1,7 @@
-""" Check if the PW code gives same MO energies as the GTO code for a given wave function
+""" First do RHF and RMP2 calcs in a Gaussian basis, then re-evaluate the RHF
+and RMP2 energies using the PW code (for the fixed orbitals obtained from the
+Gaussian-based calculations). The energies obtained from the two approaches
+should agree.
 """
 
 

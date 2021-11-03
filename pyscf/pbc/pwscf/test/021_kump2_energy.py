@@ -1,4 +1,7 @@
-""" Check if the PW code gives same MO energies as the GTO code for a given wave function
+""" First do UHF and UMP2 calcs in a Gaussian basis, then re-evaluate the UHF
+and UMP2 energies using the PW code (for the fixed orbitals obtained from the
+Gaussian-based calculations). The energies obtained from the two approaches
+should agree.
 """
 
 

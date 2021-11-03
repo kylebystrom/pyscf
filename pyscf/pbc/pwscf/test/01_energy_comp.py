@@ -1,4 +1,5 @@
-""" Check if the PW code gives same MO energies as the GTO code for a given wave function
+""" Check if the PW code gives same MO energies as the GTO code for a given
+wave function
 """
 
 

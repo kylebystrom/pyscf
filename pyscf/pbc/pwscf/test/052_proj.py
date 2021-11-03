@@ -1,4 +1,5 @@
-""" When orbitals from init guess uses a different grid mesh than the current calculation, perform a projection.
+""" When orbitals from init guess uses a different grid mesh than the current
+calculation, perform a projection.
 """
 
 import tempfile
