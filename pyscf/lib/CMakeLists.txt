@@ -130,6 +130,7 @@ add_subdirectory(ri)
 #add_subdirectory(localizer)
 add_subdirectory(pbc)
 add_subdirectory(agf2)
+add_subdirectory(pwscf)
 
 # Overwrite CMAKE_C_CREATE_SHARED_LIBRARY in Modules/CMakeCInformation.cmake
 # to remove the SONAME flag in the so file. The soname information causes
