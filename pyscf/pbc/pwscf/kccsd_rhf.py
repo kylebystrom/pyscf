@@ -1,7 +1,7 @@
 import h5py
 import numpy as np
 
-from pyscf.pbc import cc, mp
+from pyscf.pbc import cc
 from pyscf.pbc.mp.kmp2 import (get_nocc, get_nmo, get_frozen_mask,
                                padded_mo_energy, padding_k_idx)
 from pyscf.pbc.pwscf.pw_helper import get_kcomp
@@ -122,10 +122,10 @@ class _ERIS:
 if __name__ == "__main__":
     a0 = 1.78339987
     atom = "C 0 0 0; C %.10f %.10f %.10f" % (a0*0.5, a0*0.5, a0*0.5)
-    a = np.asarray(
-        [[0., a0, a0],
-        [a0, 0., a0],
-        [a0, a0, 0.]])
+    a = np.asarray([
+            [0., a0, a0],
+            [a0, 0., a0],
+            [a0, a0, 0.]])
 
     from pyscf.pbc import gto, scf, pwscf
     cell = gto.Cell(atom=atom, a=a, basis="gth-szv", pseudo="gth-pade",

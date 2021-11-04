@@ -49,17 +49,19 @@ def fill_oovv(oovv, v_ia, Co_kj_R, Cv_kb_R, fac=None):
         for i in range(nocc_i):
             # oovv[i,j] = lib.dot(v_ia[i], rho_jb_R.T)
             lib.dot(v_ia[i], rho_jb_R.T, c=oovv[i,j])
-    if not fac is None: oovv *= fac
+    if fac is not None: oovv *= fac
 
     return oovv
 
 
-def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, frozen=None):
+def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None,
+               frozen=None):
     """ Compute both direct (d) and exchange (x) contributions together.
 
     Args:
         nvir_lst (array-like of int):
-            If given, the MP2 correlation energies using the number of virtual orbitals specified by the list will be returned.
+            If given, the MP2 correlation energies using the number of virtual
+            orbitals specified by the list will be returned.
         frozen (int):
             Number of core orbitals to be frozen.
     """
@@ -70,7 +72,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
 
     fchk, C_ks, moe_ks, mocc_ks = read_fchk(chkfile_name)
 
-    if not frozen is None:
+    if frozen is not None:
         if isinstance(frozen, int):
             logger.info(cell, "freezing %d orbitals", frozen)
             moe_ks = [moe_k[frozen:] for moe_k in moe_ks]
@@ -126,14 +128,17 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
     incore = est_mem_incore < cur_mem
     est_mem = est_mem_incore if incore else est_mem_outcore
 
-    logger.debug(cell, "Currently available memory total   %9.2f MB, safe   %9.2f MB",
-                 cur_mem, safe_mem)
-    logger.debug(cell, "Estimated required  memory outcore %9.2f MB, incore %9.2f MB",
-                 est_mem_outcore, est_mem_incore)
+    logger.debug(cell, "Currently available memory total   %9.2f MB, "
+                 "safe   %9.2f MB", cur_mem, safe_mem)
+    logger.debug(cell, "Estimated required  memory outcore %9.2f MB, "
+                 "incore %9.2f MB", est_mem_outcore, est_mem_incore)
     logger.debug(cell, "Incore mode: %r", incore)
     if est_mem > safe_mem:
         rec_mem = est_mem / frac + lib.current_memory()[0]
-        logger.warn(cell, "Estimate memory (%.2f MB) exceeds %.0f%% of currently available memory (%.2f MB). Calculations may fail and `cell.max_memory = %.2f` is recommended.", est_mem, frac*100, safe_mem, rec_mem)
+        logger.warn(cell, "Estimate memory (%.2f MB) exceeds %.0f%% of "
+                    "currently available memory (%.2f MB). Calculations may "
+                    "fail and `cell.max_memory = %.2f` is recommended.",
+                    est_mem, frac*100, safe_mem, rec_mem)
 
     buf1 = np.empty(nocc_max*nvir_max*ngrids, dtype=dtype)
     buf2 = np.empty(nocc_max*nocc_max*nvir_max*nvir_max, dtype=dtype)
@@ -152,7 +157,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
 
     for k in range(nkpts):
         C_k = get_kcomp(C_ks, k)
-        if not frozen is None:
+        if frozen is not None:
             C_k = C_k[frozen:]
         C_k = tools.ifft(C_k, mesh)
         set_kcomp(C_k, C_ks_R, k)
@@ -191,7 +196,8 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
 
             Cv_ka_R = get_kcomp(C_ks_R, ka, occ=vir_a)
             if incore:
-                # if from buffer, an extra "copy" is needed in "set_kcomp" below, which can be 1000x slower than allocating new mem.
+                # if from buffer, an extra "copy" is needed in "set_kcomp"
+                # below, which can be 1000x slower than allocating new mem.
                 v_ia_R = np.empty((nocc_i,nvir_a,ngrids), dtype=dtype)
             else:
                 v_ia_R = np.ndarray((nocc_i,nvir_a,ngrids), dtype=dtype,
@@ -256,8 +262,14 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None, froz
                 phase = np.exp(-1j*lib.dot(coords,
                                            kptijab.reshape(-1,1))).reshape(-1)
                 if incore:
-                    # two possible schemes: 1) make a copy in "get_kcomp" above and use "a*=b" here. 2) (currently used) no copy in "get_kcomp", init v_ia from buf, and use multiply with "out".
-                    # numerical tests found that: a) copy is 2x expensive than "a*=b" and 1000x than init from buf. b) mutiply with "out" is as fast as "a*=b", which is half the cost of "a*b".
+                    # two possible schemes: 1) make a copy in "get_kcomp" above
+                    # and use "a*=b" here. 2) (currently used) no copy in
+                    # "get_kcomp", init v_ia from buf, and use multiply with
+                    # "out".
+                    # numerical tests found that: a) copy is 2x expensive than
+                    # "a*=b" and 1000x than init from buf. b) mutiply with
+                    # "out" is as fast as "a*=b", which is half the cost of
+                    # "a*b".
                     # conclusion: scheme 2 will be >3x faster.
                     v_ia_ = v_ia
                     v_ia = np.ndarray((nocc_i,nvir_a,ngrids), dtype=dtype,
@@ -430,7 +442,8 @@ class PWKRMP2:
             tct, twt = t_tot
             rc = tc / tct * 100
             rw = tw / twt * 100
-            log.info('CPU time for %10s %9.2f  ( %6.2f%% ), wall time %9.2f  ( %6.2f%% )', comp.ljust(10), tc, rc, tw, rw)
+            log.info('CPU time for %10s %9.2f  ( %6.2f%% ), wall time %9.2f  '
+                     '( %6.2f%% )', comp.ljust(10), tc, rc, tw, rw)
 
         t_tot = summary["t-tot"]
         for icomp,comp in enumerate(summary["tcomps"]):

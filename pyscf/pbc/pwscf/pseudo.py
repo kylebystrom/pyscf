@@ -40,7 +40,7 @@ def get_vpplocG(cell, mesh=None, Gv=None):
 
     if len(cell._ecp) > 0:
         return get_vpplocG_ccecp(cell, Gv)
-    elif not cell.pseudo is None:
+    elif cell.pseudo is not None:
         if "GTH" in cell.pseudo.upper():
             return get_vpplocG_gth(cell, Gv)
         else:
@@ -62,13 +62,14 @@ def apply_vppnl_kpt(cell, C_k, kpt, mesh=None, Gv=None):
 
     if len(cell._ecp) > 0:
         return apply_vppnl_kpt_ccecp(cell, C_k, kpt, Gv)
-    elif not cell.pseudo is None:
+    elif cell.pseudo is not None:
         if "GTH" in cell.pseudo.upper():
             return apply_vppnl_kpt_gth(cell, C_k, kpt, Gv)
         else:
-            raise NotImplementedError("Pseudopotential %s is currently not supported." % (str(cell.pseudo)))
+            raise NotImplementedError("Pseudopotential %s is currently not "
+                                      "supported." % (str(cell.pseudo)))
     else:
-        return apply_vppnl_kpt_alle(cell, C_k, kpt, Gv, **kwargs)
+        return apply_vppnl_kpt_alle(cell, C_k, kpt, Gv)
 
 
 """ PW-PP class implementation goes here
@@ -101,7 +102,7 @@ def get_pp_type(cell):
 def pseudopotential(mf, with_pp=None, mesh=None, **kwargs):
     def set_kw(with_pp_, key):
         val = kwargs.get(key, None)
-        if not val is None: setattr(with_pp_, key, val)
+        if val is not None: setattr(with_pp_, key, val)
 
     if with_pp is None:
         with_pp = PWPP(mf.cell, mf.kpts, mesh=mesh)
@@ -328,7 +329,7 @@ def fast_SphBslin(n, xs, thr_switch=20, thr_overflow=700, out=None):
             out[:] = ((xs**2.+3.)*np.sinh(xs) - 3.*xs*np.cosh(xs)) / xs**3.
         elif n == 3:
             out[:] = ((xs**3.+15.*xs)*np.cosh(xs) -
-                    (6.*xs**2.+15.)*np.sinh(xs)) / xs**4.
+                      (6.*xs**2.+15.)*np.sinh(xs)) / xs**4.
         else:
             raise NotImplementedError("fast_SphBslin with n=%d is not implemented." % n)
 
@@ -404,7 +405,7 @@ def format_ccecp_param(cell):
     _ecp = {}
     for iatm in range(cell.natm):
         atm = cell.atom_symbol(iatm)
-        if not atm in cell._ecp: continue
+        if atm not in cell._ecp: continue
         if atm in _ecp: continue
         ncore, ecp_dic = cell._ecp[atm]
 # local part
@@ -439,7 +440,7 @@ def get_vpplocG_ccecp(cell, Gv, _ecp=None):
     vlocG = np.zeros((cell.natm,ngrids))
     for iatm in range(cell.natm):
         atm = cell.atom_symbol(iatm)
-        if not atm in _ecp:
+        if atm not in _ecp:
             continue
         _ecpi = _ecp[atm][0]
 # Zeff / r
@@ -494,7 +495,7 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
     uniq_atm_map = dict()
     for iatm in range(cell.natm):
         atm = cell.atom_symbol(iatm)
-        if not atm in uniq_atm_map:
+        if atm not in uniq_atm_map:
             uniq_atm_map[atm] = []
         uniq_atm_map[atm].append(iatm)
 
@@ -532,7 +533,7 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
 
     Cbar_k = np.zeros_like(C_k)
     for atm,iatm_lst in uniq_atm_map.items():
-        if not atm in _ecp:
+        if atm not in _ecp:
             continue
         _ecpnl_lst = _ecp[atm][1]
         for _ecpnl in _ecpnl_lst:
@@ -553,7 +554,7 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
                 iblk = 0
                 for p0,p1 in lib.prange(0,ngrids,Gblksize):
                     logger.debug2(cell, "Gblk [%d/%d], %d ~ %d", iblk,
-                            (ngrids-1)//Gblksize+1, p0, p1)
+                                  (ngrids-1)//Gblksize+1, p0, p1)
                     iblk += 1
                     vnlGG = np.ndarray((p1-p0,ngrids), dtype=dtype, buffer=buf)
                     G_rad2 = np.ndarray((p1-p0,ngrids), dtype=dtype0,
@@ -584,7 +585,8 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
     for tname, tspan in zip(tnames, tspans):
         tc, tw = tspan
         rc, rw = tspan / tspans[-1] * 100
-        logger.debug1(cell, 'CPU time for %10s %9.2f  ( %6.2f%% ), wall time %9.2f  ( %6.2f%% )', tname.ljust(10), tc, rc, tw, rw)
+        logger.debug1(cell, 'CPU time for %10s %9.2f  ( %6.2f%% ), wall time '
+                      '%9.2f  ( %6.2f%% )', tname.ljust(10), tc, rc, tw, rw)
 
     return Cbar_k
 
@@ -612,7 +614,7 @@ def get_ccecp_support_vec(cell, C_ks, kpts, out, _ecp=None, ke_cutoff_nloc=None,
     if _ecp is None: _ecp = format_ccecp_param(cell0)
 
     mesh_map = cell_nloc = None
-    if not ke_cutoff_nloc is None:
+    if ke_cutoff_nloc is not None:
         if ke_cutoff_nloc < cell.ke_cutoff:
             logger.debug1(cell, "Using ke_cutoff_nloc %s for KB support vector", ke_cutoff_nloc)
             mesh_map = get_mesh_map(cell, cell.ke_cutoff, ke_cutoff_nloc)
@@ -620,9 +622,11 @@ def get_ccecp_support_vec(cell, C_ks, kpts, out, _ecp=None, ke_cutoff_nloc=None,
             cell_nloc.ke_cutoff = ke_cutoff_nloc
             cell_nloc.build()
         else:
-            logger.warn(cell, "Input ke_cutoff_nloc %s is greater than cell.ke_cutoff %s and will be ignored.", ke_cutoff_nloc, cell.ke_cutoff)
+            logger.warn(cell, "Input ke_cutoff_nloc %s is greater than "
+                        "cell.ke_cutoff %s and will be ignored.",
+                        ke_cutoff_nloc, cell.ke_cutoff)
 
-    if ncomp > 1 and not out is None:
+    if ncomp > 1 and out is not None:
         for comp in range(ncomp):
             key = "%d"%comp
             if key in out: del out[key]

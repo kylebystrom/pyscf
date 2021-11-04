@@ -36,7 +36,7 @@ def apply_j(C_ks, mesh, vj_R, C_ks_R=None, out=None):
     if out is None: out = [None] * nkpts
     for k in range(nkpts):
         C_k = get_kcomp(C_ks, k)
-        C_k_R is None if C_ks_R is None else get_kcomp(C_ks_R, k)
+        C_k_R = None if C_ks_R is None else get_kcomp(C_ks_R, k)
         Cbar_k = apply_j_kpt(C_k, mesh, vj_R, C_k_R=C_k_R)
         set_kcomp(Cbar_k, out, k)
 
@@ -250,7 +250,11 @@ def jk(mf, with_jk=None, ace_exx=True, outcore=False):
 def get_ace_support_vec(cell, C1_ks, mocc1_ks, k1pts, C2_ks=None, k2pts=None,
                         out=None, mesh=None, Gv=None, exxdiv=None, method="cd",
                         outcore=False):
-    """ Compute the ACE support vectors for orbitals given by C2_ks and the corresponding k-points given by k2pts, using the Fock matrix obtained from C1_ks, mocc1_ks, k1pts. If C2_ks and/or k2pts are not provided, their values will be set to the C1_ks and/or k1pts. The results are saved to out and returned.
+    """ Compute the ACE support vectors for orbitals given by C2_ks and the
+    corresponding k-points given by k2pts, using the Fock matrix obtained from
+    C1_ks, mocc1_ks, k1pts. If C2_ks and/or k2pts are not provided, their
+    values will be set to the C1_ks and/or k1pts. The results are saved to out
+    and returned.
     """
     from pyscf.pbc.pwscf.pseudo import get_support_vec
     if mesh is None: mesh = cell.mesh
@@ -353,7 +357,7 @@ class PWJK:
             out = self.exx_W_ks
         elif isinstance(comp, int):
             keycomp = "%d" % comp
-            if not keycomp in self.exx_W_ks:
+            if keycomp not in self.exx_W_ks:
                 if self.outcore:
                     self.exx_W_ks.create_group(keycomp)
                 else:

@@ -32,7 +32,7 @@ def fill_oovv(oovv, v_ia, Co_kj_R, Cv_kb_R, fac=None):
         rho_jb_R = Co_kj_R[j].conj() * Cv_kb_R
         for i in range(nocc_i):
             oovv[i,j] = lib.dot(v_ia[i], rho_jb_R.T)
-    if not fac is None: oovv *= fac
+    if fac is not None: oovv *= fac
 
     return oovv
 
@@ -92,7 +92,10 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
     logger.debug(cell, "Estimated required memory  %9.2f MB", est_mem)
     if est_mem > safe_mem:
         rec_mem = est_mem / frac + lib.current_memory()[0]
-        logger.warn(cell, "Estimate memory requirement (%.2f MB) exceeds %.0f%% of currently available memory (%.2f MB). Calculations may fail and `cell.max_memory = %.2f` is recommended.", est_mem, frac*100, safe_mem, rec_mem)
+        logger.warn(cell, "Estimate memory requirement (%.2f MB) exceeds %.0f%%"
+                    " of currently available memory (%.2f MB). Calculations may"
+                    " fail and `cell.max_memory = %.2f` is recommended.",
+                    est_mem, frac*100, safe_mem, rec_mem)
 
     buf1 = np.empty(nocc_max*nvir_max*ngrids, dtype=dtype)
     buf2 = np.empty(nocc_max*nocc_max*nvir_max*nvir_max, dtype=dtype)

@@ -95,7 +95,7 @@ def timing_call(func, args, tdict, tname):
     res = func(*args)
 
     tock = np.asarray([logger.process_clock(), logger.perf_counter()])
-    if not tname in tdict:
+    if tname not in tdict:
         tdict[tname] = np.zeros(2)
     tdict[tname] += tock - tick
 
@@ -122,7 +122,7 @@ def orth(cell, C, thr_nonorth=1e-6, thr_lindep=1e-12, follow=True):
             for i in range(n):
                 order = np.argsort(np.abs(u[i]))[::-1]
                 for j in order:
-                    if not j in idx:
+                    if j not in idx:
                         break
                 idx.append(j)
             U = lib.dot(u[:,idx]*e[idx]**-0.5, u[:,idx].conj()).T
@@ -172,9 +172,13 @@ def get_C_ks_G(cell, kpts, mo_coeff_ks, n_ks, out=None, verbose=0):
     kblksize = min(int(np.floor((max_memory-extra_memory) / perk_memory)),
                    nkpts)
     if kblksize <= 0:
-        log.warn("Available memory %s MB cannot perform conversion for orbitals of a single k-point. Calculations may crash and `cell.memory = %s` is recommended.", max_memory, (perk_memory + extra_memory) / frac + cur_memory)
+        log.warn("Available memory %s MB cannot perform conversion for orbitals"
+                 " of a single k-point. Calculations may crash and `cell.memory"
+                 " = %s` is recommended.",
+                 max_memory, (perk_memory + extra_memory) / frac + cur_memory)
 
-    log.debug1("max memory= %s MB, extra memory= %s MB, perk memory= %s MB, kblksize= %s", max_memory, extra_memory, perk_memory, kblksize)
+    log.debug1("max memory= %s MB, extra memory= %s MB, perk memory= %s MB,"
+               " kblksize= %s", max_memory, extra_memory, perk_memory, kblksize)
 
     for k0,k1 in lib.prange(0, nkpts, kblksize):
         nk = k1 - k0
@@ -203,7 +207,9 @@ def get_C_ks_G(cell, kpts, mo_coeff_ks, n_ks, out=None, verbose=0):
 """ Contracted PW
 """
 def get_mesh_map(cell, ke_cutoff, ke_cutoff2, mesh=None, mesh2=None):
-    """ Input ke_cutoff > ke_cutoff2, hence define a dense grid "mesh" and a sparse grid "mesh2" where mesh2 is rigorously a subset of mesh. This function returns the indices of grid points in mesh2 in mesh.
+    """ Input ke_cutoff > ke_cutoff2, hence define a dense grid "mesh" and
+    a sparse grid "mesh2" where mesh2 is rigorously a subset of mesh. This
+    function returns the indices of grid points in mesh2 in mesh.
     """
 
     latvec = cell.lattice_vectors()
@@ -220,8 +226,8 @@ def get_mesh_map(cell, ke_cutoff, ke_cutoff2, mesh=None, mesh2=None):
     rs2 = [np.fft.fftfreq(mesh2[i], 1./mesh2[i]) for i in range(3)]
     idxr = [np.where(abs(rs[i][:,None]-rs2[i])<1e-3)[0] for i in range(3)]
     nr = [len(rs[i]) for i in range(3)]
-    mesh_map = np.ravel(((idxr[0]*nr[1]*nr[2])[:,None] + idxr[1]*nr[2]
-                        )[:,:,None] + idxr[2])
+    mesh_map = np.ravel(((idxr[0]*nr[1]*nr[2])[:,None] +
+                          idxr[1]*nr[2])[:,:,None] + idxr[2])
 
     return mesh_map
 
@@ -320,7 +326,7 @@ def gto2cpw(cell, basis, kpts, amin=None, amax=None, ke_or_mesh=None, out=None):
 # make a new cell with the modified GTO basis
     cell_cpw = cell.copy()
     cell_cpw.basis = basisdict
-    if not ke_or_mesh is None:
+    if ke_or_mesh is not None:
         if isinstance(ke_or_mesh, (list,tuple,np.ndarray)):
             cell_cpw.mesh = ke_or_mesh
         else:
@@ -337,7 +343,8 @@ def gtomf2pwmf(mf, chkfile=None):
     """
     Args:
         chkfile (str):
-            A hdf5 file to store chk variables (mo_energy, mo_occ, etc.). If not provided, a temporary file is generated.
+            A hdf5 file to store chk variables (mo_energy, mo_occ, etc.).
+            If not provided, a temporary file is generated.
     """
     from pyscf.pbc import scf
     assert(isinstance(mf, (scf.khf.KRHF,scf.kuhf.KUHF,scf.uhf.UHF)))

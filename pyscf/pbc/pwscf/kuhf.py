@@ -67,9 +67,9 @@ def get_mo_occ(cell, moe_ks=None, C_ks=None):
     mocc_ks = [None] * 2
     for s in [0,1]:
         nocc = cell.nelec[s]
-        if not moe_ks is None:
+        if moe_ks is not None:
             mocc_ks[s] = khf.get_mo_occ(cell, moe_ks[s], nocc=nocc)
-        elif not C_ks is None:
+        elif C_ks is not None:
             C_ks_s = get_spin_component(C_ks, s)
             mocc_ks[s] = khf.get_mo_occ(cell, C_ks=C_ks_s, nocc=nocc)
         else:
@@ -205,7 +205,7 @@ def init_guess_by_chkfile(cell, chkfile_name, nvir, project=None, out=None):
 
 def update_pp(mf, C_ks):
     tick = np.asarray([logger.process_clock(), logger.perf_counter()])
-    if not "t-ppnl" in mf.scf_summary:
+    if "t-ppnl" not in mf.scf_summary:
         mf.scf_summary["t-ppnl"] = np.zeros(2)
 
     mf.with_pp.update_vppnloc_support_vec(C_ks, ncomp=2)
@@ -216,7 +216,7 @@ def update_pp(mf, C_ks):
 
 def update_k(mf, C_ks, mocc_ks):
     tick = np.asarray([logger.process_clock(), logger.perf_counter()])
-    if not "t-ace" in mf.scf_summary:
+    if "t-ace" not in mf.scf_summary:
         mf.scf_summary["t-ace"] = np.zeros(2)
 
     for s in [0,1]:
@@ -301,7 +301,8 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
     e_scf = np.sum(e_ks) / nkpts
 
     if moe_ks is None and exxdiv == "ewald":
-        # Note: ewald correction is not needed if e_tot is computed from moe_ks since the correction is already in the mo energy
+        # Note: ewald correction is not needed if e_tot is computed from moe_ks
+        # since the correction is already in the mo energy
         e_scf += mf._etot_shift_ewald
 
     return e_scf
@@ -342,7 +343,7 @@ def converge_band(mf, C_ks, mocc_ks, kpts, Cout_ks=None,
 class PWKUHF(khf.PWKRHF):
 
     def __init__(self, cell, kpts=np.zeros((1,3)), ekincut=None,
-        exxdiv=getattr(__config__, 'pbc_scf_PWKUHF_exxdiv', 'ewald')):
+                 exxdiv=getattr(__config__, 'pbc_scf_PWKUHF_exxdiv', 'ewald')):
 
         khf.PWKRHF.__init__(self, cell, kpts=kpts, exxdiv=exxdiv)
 
