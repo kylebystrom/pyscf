@@ -325,6 +325,8 @@ def get_ace_error(mf, C_ks, moe_ks, mocc_ks, nband=None, comp=None, exxdiv=None,
     if isinstance(moe_ks[0][0], float): # RHF
         if exxdiv == "ewald":
             moe_ks_noewald = ewald_correction(moe_ks, mocc_ks, -mf._madelung)
+        else:
+            moe_ks_noewald = moe_ks
         err_Rs = np.zeros(nkpts)
         for k in range(nkpts):
             nband_ = len(mocc_ks[k]) if nband is None else nband
