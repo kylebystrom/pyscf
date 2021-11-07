@@ -1324,6 +1324,9 @@ class PWKRHF(pbc_hf.KSCF):
     @kpts.setter
     def kpts(self, x):
         self._kpts = np.reshape(x, (-1,3))
+        # update madelung constant and energy shift for exxdiv
+        self._madelung = tools.pbc.madelung(self.cell, self.kpts)
+        self._etot_shift_ewald = -0.5*self._madelung*self.cell.nelectron
 
     def dump_flags(self):
 
