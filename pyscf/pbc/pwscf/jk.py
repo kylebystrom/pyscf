@@ -304,6 +304,9 @@ class PWJK:
         self.outcore = kwargs.get("outcore", False)
 
         # the following are not input options
+        self.exx_W_ks = None
+
+    def __init_exx(self):
         if self.outcore:
             self.swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
             self.fswap = lib.H5TmpFile(self.swapfile.name)
@@ -351,6 +354,9 @@ class PWJK:
 
     def update_k_support_vec(self, C_ks, mocc_ks, kpts, Ct_ks=None,
                              mesh=None, Gv=None, exxdiv=None, comp=None):
+        if self.exx_W_ks is None:
+            self.__init_exx()
+
         nkpts = len(kpts)
 
         if comp is None:
