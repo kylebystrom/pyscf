@@ -99,13 +99,13 @@ def get_pp_type(cell):
         return "ccecp"
 
 
-def pseudopotential(mf, with_pp=None, mesh=None, **kwargs):
+def pseudopotential(mf, with_pp=None, mesh=None, outcore=False, **kwargs):
     def set_kw(with_pp_, key):
         val = kwargs.get(key, None)
         if val is not None: setattr(with_pp_, key, val)
 
     if with_pp is None:
-        with_pp = PWPP(mf.cell, mf.kpts, mesh=mesh)
+        with_pp = PWPP(mf.cell, mf.kpts, mesh=mesh, outcore=outcore)
         set_kw(with_pp, "ecpnloc_method")
         set_kw(with_pp, "ecpnloc_kbbas")
         set_kw(with_pp, "ecpnloc_ke_cutoff")
@@ -127,7 +127,7 @@ class PWPP:
     threshold_svec = getattr(__config__, "pbc_pwscf_pseudo_PWPP_threshold_svec",
                              1e-12)
 
-    def __init__(self, cell, kpts, mesh=None):
+    def __init__(self, cell, kpts, mesh=None, **kwargs):
         self.cell = cell
         self.stdout = cell.stdout
         self.verbose = cell.verbose
@@ -144,6 +144,9 @@ class PWPP:
         self.vppnlocWks = None
         self._ecpnloc_initialized = False
 
+        # kwargs
+        self.outcore = kwargs.get("outcore", False)
+
         # debug options
         self.ecpnloc_use_numexpr = False
 
@@ -153,13 +156,20 @@ class PWPP:
             cell = self.cell
             dtype = np.complex128
             self._ecp = format_ccecp_param(cell)
-            self.swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
-            self.fswap = lib.H5TmpFile(self.swapfile.name)
-            if self.ecpnloc_method in ["direct", "kb", "kb2"]:
-                self.vppnlocWks = self.fswap.create_group("vppnlocWks")
+            if self.outcore:
+                self.swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
+                self.fswap = lib.H5TmpFile(self.swapfile.name)
+                if self.ecpnloc_method in ["direct", "kb", "kb2"]:
+                    self.vppnlocWks = self.fswap.create_group("vppnlocWks")
+                else:
+                    raise RuntimeError("Unknown ecpnloc_method %s" %
+                                       (self.ecp_nloc_item))
             else:
-                raise RuntimeError("Unknown ecpnloc_method %s" %
-                                   (self.ecp_nloc_item))
+                if self.ecpnloc_method in ["direct", "kb", "kb2"]:
+                    self.vppnlocWks = {}
+                else:
+                    raise RuntimeError("Unknown ecpnloc_method %s" %
+                                       (self.ecp_nloc_item))
         self._ecpnloc_initialized = True
 
     def update_vppnloc_support_vec(self, C_ks, ncomp=1, out=None):
@@ -172,7 +182,8 @@ class PWPP:
             if self.ecpnloc_method == "kb":
                 if len(self.vppnlocWks) > 0:
                     return
-                if out is None: out = self.vppnlocWks
+                if out is None:
+                    out = self.vppnlocWks
                 get_ccecp_kb_support_vec(cell, self.ecpnloc_kbbas, self.kpts,
                                          out,
                                          ke_cutoff_nloc=self.ecpnloc_ke_cutoff,
@@ -611,6 +622,22 @@ def apply_vppnl_kpt_ccecp(cell, C_k, kpt, Gv, _ecp=None):
 def get_ccecp_support_vec(cell, C_ks, kpts, out, _ecp=None, ke_cutoff_nloc=None,
                           ncomp=1, thr_eig=1e-12, use_numexpr=False):
 
+    if out is None:
+        out = {}
+    if isinstance(out, dict):
+        outcore = False
+    else:
+        outcore = True
+
+    if ncomp > 1:
+        for comp in range(ncomp):
+            key = "%d"%comp
+            if outcore:
+                if key in out: del out[key]
+                out.create_group(key)
+            else:
+                out[key] = {}
+
     if _ecp is None: _ecp = format_ccecp_param(cell0)
 
     mesh_map = cell_nloc = None
@@ -625,12 +652,6 @@ def get_ccecp_support_vec(cell, C_ks, kpts, out, _ecp=None, ke_cutoff_nloc=None,
             logger.warn(cell, "Input ke_cutoff_nloc %s is greater than "
                         "cell.ke_cutoff %s and will be ignored.",
                         ke_cutoff_nloc, cell.ke_cutoff)
-
-    if ncomp > 1 and out is not None:
-        for comp in range(ncomp):
-            key = "%d"%comp
-            if key in out: del out[key]
-            out.create_group(key)
 
     nkpts = len(kpts)
     for k in range(nkpts):
@@ -670,22 +691,34 @@ def get_ccecp_support_vec(cell, C_ks, kpts, out, _ecp=None, ke_cutoff_nloc=None,
 
         C_k = W_k = None
 
+    return out
+
 
 def get_ccecp_kb_support_vec(cell, kb_basis, kpts, out, ke_cutoff_nloc=None,
                              ncomp=1, _ecp=None, thr_eig=1e-12,
                              use_numexpr=False, ioblk=IOBLK):
 
+    log = logger.Logger(cell.stdout, cell.verbose)
+
+    if out is None:
+        out = {}
+    outcore = not isinstance(out, dict)
+
     if ncomp == 1:
         W_ks = out
     else:
-        W_ks = out.create_group("0")
+        if outcore:
+            W_ks = out.create_group("0")
+        else:
+            out["0"] = {}
+            W_ks = out["0"]
 
     nkpts = len(kpts)
     cell_kb = cell.copy()
     cell_kb.basis = kb_basis
     cell_kb.build()
-    logger.debug(cell, "Using basis %s for KB-ccECP (%d AOs)", kb_basis,
-                     cell_kb.nao_nr())
+    log.debug("Using basis %s for KB-ccECP (%d AOs)", kb_basis,
+              cell_kb.nao_nr())
 
     nao = cell_kb.nao_nr()
 
@@ -693,39 +726,48 @@ def get_ccecp_kb_support_vec(cell, kb_basis, kpts, out, ke_cutoff_nloc=None,
     ngrids = np.prod(cell_kb.mesh)
     kblk = min(int(np.floor(ioblk/(ngrids*nao*16/1024**2.))), nkpts)
     nblk = int(np.ceil(nkpts / kblk))
-    logger.debug(cell, "Calculating KB support vec for all kpts in %d segments with kptblk size %d", nblk, kblk)
+    log.debug("Calculating KB support vec for all kpts in %d segments with "
+              "kptblk size %d", nblk, kblk)
+    log.debug("KB outcore: %s", outcore)
 
     tmpgroupname = "tmp"
     iblk = 0
     for k0,k1 in lib.prange(0,nkpts,kblk):
-        logger.debug1(cell, "BLK %d  kpt range %d ~ %d  kpts %s",
-                          iblk, k0, k1, kpts[k0:k1])
+        log.debug1("BLK %d  kpt range %d ~ %d  kpts %s", iblk, k0, k1,
+                   kpts[k0:k1])
         iblk += 1
         nkpts01 = k1 - k0
         kpts01 = kpts[k0:k1]
         Cg_ks = [np.eye(nao) + 0.j for k in range(nkpts01)]
         ng_ks = [nao] * nkpts01
-        W_ks_blk = W_ks.create_group(tmpgroupname)
-        Cg_ks = get_C_ks_G(cell_kb, kpts01, Cg_ks, ng_ks, out=W_ks_blk)
+        if outcore:
+            W_ks_blk = W_ks.create_group(tmpgroupname)
+            Cg_ks = get_C_ks_G(cell_kb, kpts01, Cg_ks, ng_ks, out=W_ks_blk)
+        else:
+            W_ks_blk = {}
+            Cg_ks = get_C_ks_G(cell_kb, kpts01, Cg_ks, ng_ks)
         for k in range(nkpts01):
             Cg_k = get_kcomp(Cg_ks, k)
             Cg_k = orth(cell_kb, Cg_k)
             set_kcomp(Cg_k, Cg_ks, k)
         Cg_k = None
-        logger.debug(cell, "keeping %s SOAOs", ng_ks)
+        log.debug("keeping %s SOAOs", ng_ks)
 
         get_ccecp_support_vec(cell, Cg_ks, kpts01, W_ks_blk, _ecp=_ecp,
                               ke_cutoff_nloc=ke_cutoff_nloc, ncomp=1,
                               thr_eig=thr_eig, use_numexpr=use_numexpr)
 
         for k in range(k0,k1):
-            W_ks["%d"%k] = W_ks_blk["%d"%(k-k0)]
-        del W_ks[tmpgroupname]
+            set_kcomp(get_kcomp(W_ks_blk, k-k0), W_ks, k)
+        if outcore:
+            del W_ks[tmpgroupname]
+        else:
+            Cg_ks = W_ks_blk = None
 
     nsv_ks = [get_kcomp(W_ks, k, load=False).shape[0]
               for k in range(nkpts)]
 
-    logger.debug(cell, "keeping %s KB support vectors", nsv_ks)
+    log.debug("keeping %s KB support vectors", nsv_ks)
 
     if ncomp > 1:
         for comp in range(1,ncomp):

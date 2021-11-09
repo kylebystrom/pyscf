@@ -1495,7 +1495,8 @@ class PWKRHF(pbc_hf.KSCF):
         return self.with_jk.get_vj_R(C_ks, mocc_ks, mesh=mesh, Gv=Gv)
 
     def init_pp(self, with_pp=None, **kwargs):
-        return pw_pseudo.pseudopotential(self, with_pp=with_pp, **kwargs)
+        return pw_pseudo.pseudopotential(self, with_pp=with_pp,
+                                         outcore=self.outcore, **kwargs)
 
     def init_jk(self, with_jk=None, ace_exx=None):
         if ace_exx is None: ace_exx = self.ace_exx
@@ -1530,6 +1531,16 @@ class PWKRHF(pbc_hf.KSCF):
         self._finalize()
         return self.e_tot
     kernel = lib.alias(scf, alias_name='kernel')
+
+    def _finalize(self):
+        pbc_hf.KSCF._finalize(self)
+
+        with_pp = self.with_pp
+        if not with_pp.outcore:
+            if with_pp.pptype == "ccecp":
+                # release memory of support vec
+                with_pp._ecpnloc_initialized = False
+                with_pp.vppnlocWks = None
 
     def get_cpw_virtual(self, basis, amin=None, amax=None, thr_lindep=1e-14):
         self.e_tot, self.mo_energy, self.mo_occ = get_cpw_virtual(
