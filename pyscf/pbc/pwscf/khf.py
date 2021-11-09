@@ -54,16 +54,17 @@ def kernel_doubleloop(mf, kpts, C0=None,
                 virtual bands? Default is 1.
     '''
 
+    log = logger.Logger(mf.stdout, mf.verbose)
     cput0 = (logger.process_clock(), logger.perf_counter())
 
     cell = mf.cell
     nkpts = len(kpts)
 
     nbando, nbandv_tot, nband, nband_tot = mf.get_nband(nbandv, nbandv_extra)
-    logger.info(mf, "Num of occ bands= %s", nbando)
-    logger.info(mf, "Num of vir bands= %s", nbandv)
-    logger.info(mf, "Num of all bands= %s", nband)
-    logger.info(mf, "Num of extra vir bands= %s", nbandv_extra)
+    log.info("Num of occ bands= %s", nbando)
+    log.info("Num of vir bands= %s", nbandv)
+    log.info("Num of all bands= %s", nband)
+    log.info("Num of extra vir bands= %s", nbandv_extra)
 
     # init guess and SCF chkfile
     tick = np.asarray([logger.process_clock(), logger.perf_counter()])
@@ -88,7 +89,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
     mf.update_pp(C_ks)
     mf.update_k(C_ks, mocc_ks)
     # charge SCF with very looooooose convergence threshold
-    logger.debug(mf, "Init charge cycle")
+    log.debug("Init charge cycle")
     chg_scf_conv, fc_init, vj_R, C_ks, moe_ks, mocc_ks, e_tot = \
                         mf.kernel_charge(
                             C_ks, mocc_ks, kpts, nband, mesh=mesh, Gv=Gv,
@@ -98,7 +99,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
                             verbose_davidson=verbose_davidson,
                             damp_type=damp_type, damp_factor=damp_factor,
                             vj_R=vj_R)
-    logger.info(mf, 'init E= %.15g', e_tot)
+    log.info('init E= %.15g', e_tot)
     if mf.exxdiv == "ewald":
         moe_ks = ewald_correction(moe_ks, mocc_ks, mf._madelung)
     mf.dump_moe(moe_ks, mocc_ks, nband=nband)
@@ -114,7 +115,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
         # Note in pbc.scf, mf.mol == mf.cell, cell is saved under key "mol"
         mol_chkfile.save_mol(cell, mf.chkfile)
 
-    cput1 = logger.timer(mf, 'initialize pwscf', *cput0)
+    cput1 = log.timer('initialize pwscf', *cput0)
 
     fc_tot = fc_init
     fc_this = 0
@@ -133,9 +134,8 @@ def kernel_doubleloop(mf, kpts, C0=None,
         if cycle > 0:
             chg_conv_tol = min(chg_conv_tol, max(conv_tol, 0.1*abs(de)))
         conv_tol_davidson = max(conv_tol*0.1, chg_conv_tol*0.01)
-        logger.debug(mf, "  Performing charge SCF with conv_tol= %.3g"
-                     " conv_tol_davidson= %.3g",
-                     chg_conv_tol, conv_tol_davidson)
+        log.debug("  Performing charge SCF with conv_tol= %.3g "
+                  "conv_tol_davidson= %.3g", chg_conv_tol, conv_tol_davidson)
 
         # charge SCF
         chg_scf_conv, fc_this, vj_R, C_ks, moe_ks, mocc_ks, e_tot = \
@@ -150,7 +150,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
                                 last_hf_e=e_tot)
         fc_tot += fc_this
         if not chg_scf_conv:
-            logger.warn(mf, "  Charge SCF not converged.")
+            log.warn("  Charge SCF not converged.")
 
         if mf.exxdiv == "ewald":
             moe_ks = ewald_correction(moe_ks, mocc_ks, mf._madelung)
@@ -166,8 +166,9 @@ def kernel_doubleloop(mf, kpts, C0=None,
         err_R = get_ace_error(mf, C_ks, moe_ks, mocc_ks, nband=nband,
                               mesh=mesh, Gv=Gv, vj_R=vj_R)
 
-        logger.info(mf, 'cycle= %d E= %.15g  delta_E= %4.3g  |dEbnd|= %4.3g  R= %4.3g  %d FC (%d tot)',
-                    cycle+1, e_tot, de, de_band, err_R, fc_this, fc_tot)
+        log.info('cycle= %d E= %.15g  delta_E= %4.3g  |dEbnd|= %4.3g  '
+                 'R= %4.3g  %d FC (%d tot)', cycle+1, e_tot, de, de_band,
+                 err_R, fc_this, fc_tot)
         mf.dump_moe(moe_ks, mocc_ks, nband=nband)
 
         if callable(mf.check_convergence):
@@ -181,7 +182,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
         if callable(callback):
             callback(locals())
 
-        cput1 = logger.timer(mf, 'cycle= %d'%(cycle+1), *cput1)
+        cput1 = log.timer('cycle= %d'%(cycle+1), *cput1)
 
         if scf_conv:
             break
@@ -193,9 +194,8 @@ def kernel_doubleloop(mf, kpts, C0=None,
 
         chg_conv_tol = min(chg_conv_tol, max(conv_tol, 0.1*abs(de)))
         conv_tol_davidson = max(conv_tol*0.1, chg_conv_tol*0.01)
-        logger.debug(mf, "  Performing charge SCF with conv_tol= %.3g"
-                     " conv_tol_davidson= %.3g",
-                     chg_conv_tol, conv_tol_davidson)
+        log.debug("  Performing charge SCF with conv_tol= %.3g"
+                  " conv_tol_davidson= %.3g", chg_conv_tol, conv_tol_davidson)
 
         chg_scf_conv, fc_this, vj_R, C_ks, moe_ks, mocc_ks, e_tot = \
                             mf.kernel_charge(
@@ -222,8 +222,9 @@ def kernel_doubleloop(mf, kpts, C0=None,
         err_R = get_ace_error(mf, C_ks, moe_ks, mocc_ks, nband=nband,
                               mesh=mesh, Gv=Gv, vj_R=vj_R)
 
-        logger.info(mf, 'Extra cycle  E= %.15g  delta_E= %4.3g  dEbnd= %4.3g  R= %4.3g  %d FC (%d tot)',
-                    e_tot, de, de_band, err_R, fc_this, fc_tot)
+        log.info('Extra cycle  E= %.15g  delta_E= %4.3g  dEbnd= %4.3g  '
+                 'R= %4.3g  %d FC (%d tot)', e_tot, de, de_band, err_R,
+                 fc_this, fc_tot)
         mf.dump_moe(moe_ks, mocc_ks, nband=nband)
 
         if callable(mf.check_convergence):
@@ -246,8 +247,8 @@ def kernel_doubleloop(mf, kpts, C0=None,
 
     cput1 = (logger.process_clock(), logger.perf_counter())
     mf.scf_summary["t-tot"] = np.asarray(cput1) - np.asarray(cput0)
-    logger.debug(mf, '    CPU time for %s %9.2f sec, wall time %9.2f sec',
-                 "scf_cycle", *mf.scf_summary["t-tot"])
+    log.debug('    CPU time for %s %9.2f sec, wall time %9.2f sec',
+              "scf_cycle", *mf.scf_summary["t-tot"])
     # A post-processing hook before return
     mf.post_kernel(locals())
     return scf_conv, e_tot, moe_ks, C_ks, mocc_ks
@@ -380,6 +381,8 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
                   vj_R=None,
                   last_hf_e=None):
 
+    log = logger.Logger(mf.stdout, mf.verbose)
+
     cell = mf.cell
     if mesh is None: mesh = cell.mesh
     if Gv is None: Gv = cell.get_Gv(mesh)
@@ -462,15 +465,14 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
             de = e_tot-last_hf_e
         else:
             de = float("inf")
-        logger.debug(mf, '  chg cyc= %d E= %.15g  delta_E= %4.3g'
-                     '  %d FC (%d tot)', cycle+1, e_tot, de, fc_this, fc_tot)
+        log.debug('  chg cyc= %d E= %.15g  delta_E= %4.3g  %d FC (%d tot)',
+                  cycle+1, e_tot, de, fc_this, fc_tot)
         mf.dump_moe(moe_ks, mocc_ks, nband=nband, trigger_level=logger.DEBUG3)
 
         if abs(de) < conv_tol:
             scf_conv = True
 
-        cput1 = logger.timer_debug1(mf, 'chg cyc= %d'%(cycle+1),
-                                    *cput1)
+        cput1 = log.timer_debug1('chg cyc= %d'%(cycle+1), *cput1)
 
         if scf_conv:
             break
@@ -511,6 +513,8 @@ def get_mo_occ(cell, moe_ks=None, C_ks=None, nocc=None):
 
 
 def dump_moe(mf, moe_ks_, mocc_ks_, nband=None, trigger_level=logger.DEBUG):
+    log = logger.Logger(mf.stdout, mf.verbose)
+
     if mf.verbose >= trigger_level:
         kpts = mf.cell.get_scaled_kpts(mf.kpts)
         nkpts = len(kpts)
@@ -529,8 +533,7 @@ def dump_moe(mf, moe_ks_, mocc_ks_, nband=None, trigger_level=logger.DEBUG):
             ehomo = np.max(ehomo_ks)
             khomos = has_occ[np.where(abs(ehomo_ks-ehomo) < 1e-4)[0]]
 
-            logger.info(mf, '  HOMO = %.15g  kpt'+' %d'*khomos.size,
-                         ehomo, *khomos)
+            log.info('  HOMO = %.15g  kpt'+' %d'*khomos.size, ehomo, *khomos)
 
         has_vir = np.where([(mocc_ks[k] < THR_OCC).any()
                            for k in range(nkpts)])[0]
@@ -540,23 +543,22 @@ def dump_moe(mf, moe_ks_, mocc_ks_, nband=None, trigger_level=logger.DEBUG):
             elumo = np.min(elumo_ks)
             klumos = has_vir[np.where(abs(elumo_ks-elumo) < 1e-4)[0]]
 
-            logger.info(mf, '  LUMO = %.15g  kpt'+' %d'*klumos.size,
-                         elumo, *klumos)
+            log.info('  LUMO = %.15g  kpt'+' %d'*klumos.size, elumo, *klumos)
 
         if len(has_occ) >0 and len(has_vir) > 0:
-            logger.debug(mf, '  Egap = %.15g', elumo-ehomo)
+            log.debug('  Egap = %.15g', elumo-ehomo)
 
         np.set_printoptions(threshold=len(moe_ks[0]))
-        logger.debug(mf, '     k-point                  mo_energy')
+        log.debug('     k-point                  mo_energy')
         for k,kpt in enumerate(kpts):
             if mocc_ks is None:
-                logger.debug(mf, '  %2d (%6.3f %6.3f %6.3f)   %s',
-                             k, kpt[0], kpt[1], kpt[2], moe_ks[k].real)
+                log.debug('  %2d (%6.3f %6.3f %6.3f)   %s',
+                          k, kpt[0], kpt[1], kpt[2], moe_ks[k].real)
             else:
-                logger.debug(mf, '  %2d (%6.3f %6.3f %6.3f)   %s  %s',
-                             k, kpt[0], kpt[1], kpt[2],
-                             moe_ks[k][mocc_ks[k]>0].real,
-                             moe_ks[k][mocc_ks[k]==0].real)
+                log.debug('  %2d (%6.3f %6.3f %6.3f)   %s  %s',
+                          k, kpt[0], kpt[1], kpt[2],
+                          moe_ks[k][mocc_ks[k]>0].real,
+                          moe_ks[k][mocc_ks[k]==0].real)
         np.set_printoptions(threshold=1000)
 
 
@@ -600,6 +602,8 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
                 If provided, the orbitals are written to it.
     """
 
+    log = logger.Logger(cell0.stdout, cell0.verbose)
+
     if out is not None:
         assert(isinstance(out, h5py.Group))
 
@@ -620,7 +624,7 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
                 continue
             else:
                 gth_pseudo[atm] = "gth-pade-q%d"%q
-        logger.debug(cell0, "Using the GTH-PP for init guess: %s", gth_pseudo)
+        log.debug("Using the GTH-PP for init guess: %s", gth_pseudo)
         cell.pseudo = gth_pseudo
         cell.ecp = cell._ecp = cell._ecpbas = None
     else:
@@ -629,7 +633,7 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
     cell.verbose = 0
     cell.build()
 
-    logger.info(cell0, "generating init guess using %s basis", cell.basis)
+    log.info("generating init guess using %s basis", cell.basis)
 
     if len(kpts) < 30:
         pmf = scf.KRHF(cell, kpts)
@@ -660,7 +664,7 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
     ntot = nocc + nvir
     ntot_ks = [min(ntot,nmo_ks[k]) for k in range(nkpts)]
 
-    logger.debug1(cell0, "converting init MOs from GTO basis to PW basis")
+    log.debug1("converting init MOs from GTO basis to PW basis")
     C_ks = pw_helper.get_C_ks_G(cell, kpts, mo_coeff, ntot_ks, out=out,
                                 verbose=cell0.verbose)
     mocc_ks = [mo_occ[k][:ntot_ks[k]] for k in range(nkpts)]
@@ -675,6 +679,8 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
 def add_random_mo(cell, n_ks, C_ks, mocc_ks):
     """ Add random MOs if C_ks[k].shape[0] < n_ks[k] for any k
     """
+    log = logger.Logger(cell.stdout, cell.verbose)
+
     nkpts = len(n_ks)
     for k in range(nkpts):
         n = n_ks[k]
@@ -682,9 +688,9 @@ def add_random_mo(cell, n_ks, C_ks, mocc_ks):
         n0 = C0.shape[0]
         if n0 < n:
             n1 = n - n0
-            logger.warn(cell, "Requesting more orbitals than currently have "
-                        "(%d > %d) for kpt %d. Adding %d random orbitals.",
-                        n, n0, k, n1)
+            log.warn("Requesting more orbitals than currently have "
+                     "(%d > %d) for kpt %d. Adding %d random orbitals.",
+                     n, n0, k, n1)
             C = add_random_mo1(cell, n, C0)
             set_kcomp(C, C_ks, k)
             C = None
@@ -733,6 +739,9 @@ def init_guess_by_chkfile(cell, chkfile_name, nvir, project=True, out=None):
 
 def init_guess_from_C0(cell, C0_ks, ntot_ks, project=True, out=None,
                        mocc_ks=None):
+
+    log = logger.Logger(cell.stdout, cell.verbose)
+
     nkpts = len(C0_ks)
     if out is None: out = [None] * nkpts
     C_ks = out
@@ -756,11 +765,11 @@ def init_guess_from_C0(cell, C0_ks, ntot_ks, project=True, out=None,
                     mesh = cell.mesh
                     nmesh0 = int(np.round(npw0**(0.3333333333)))
                     if not nmesh0**3 == npw0:
-                        raise NotImplementedError("Project MOs not implemented for non-cubic crystals.")
+                        raise NotImplementedError("Project MOs not implemented "
+                                                  "for non-cubic crystals.")
                     mesh0 = np.array([nmesh0]*3)
-                    logger.warn(cell, "Input orbitals use mesh %s while cell"
-                                " uses mesh %s. Performing projection.",
-                                mesh0, mesh)
+                    log.warn("Input orbitals use mesh %s while cell uses mesh "
+                             "%s. Performing projection.", mesh0, mesh)
                     if npw > npw0:
                         mesh_map = pw_helper.get_mesh_map(cell, 0, 0, mesh,
                                                           mesh0)
@@ -776,7 +785,8 @@ def init_guess_from_C0(cell, C0_ks, ntot_ks, project=True, out=None,
                 else:
                     C = C[:,mesh_map]
             else:
-                raise RuntimeError("Input C0 has wrong shape. Expected %d PWs; got %d." % (npw, npw0))
+                raise RuntimeError("Input C0 has wrong shape. Expected %d PWs; "
+                                   "got %d." % (npw, npw0))
         set_kcomp(C, C_ks, k)
         C = None
 
@@ -851,6 +861,9 @@ def apply_hcore_kpt(mf, C_k, kpt, mesh, Gv, with_pp, C_k_R=None, comp=None,
                     ret_E=False):
     r""" Apply hcore (kinetic and PP) opeartor to orbitals at given k-point.
     """
+
+    log = logger.Logger(mf.stdout, mf.verbose)
+
     es = np.zeros(3, dtype=np.complex128)
 
     tspans = np.zeros((3,2))
@@ -885,9 +898,9 @@ def apply_hcore_kpt(mf, C_k, kpt, mesh, Gv, with_pp, C_k_R=None, comp=None,
         if (np.abs(es.imag) > 1e-6).any():
             e_comp = mf.scf_summary["e_comp_name_lst"][:3]
             icomps = np.where(np.abs(es.imag) > 1e-6)[0]
-            logger.warn(mf, "Energy has large imaginary part:" +
-                        "%s : %s\n" * len(icomps),
-                        *[s for i in icomps for s in [e_comp[i],es[i]]])
+            log.warn("Energy has large imaginary part:" +
+                     "%s : %s\n" * len(icomps),
+                     *[s for i in icomps for s in [e_comp[i],es[i]]])
         es = es.real
         return Cbar_k, es
     else:
@@ -899,6 +912,8 @@ def apply_jk_kpt(mf, C_k, kpt, mocc_ks, kpts, mesh, Gv, vj_R, with_jk,
     r""" Apply non-local part of the Fock opeartor to orbitals at given
     k-point. The non-local part includes the exact exchange.
     """
+    log = logger.Logger(mf.stdout, mf.verbose)
+
     tspans = np.zeros((2,2))
     es = np.zeros(2, dtype=np.complex128)
 
@@ -926,9 +941,9 @@ def apply_jk_kpt(mf, C_k, kpt, mocc_ks, kpts, mesh, Gv, vj_R, with_jk,
         if (np.abs(es.imag) > 1e-6).any():
             e_comp = mf.scf_summary["e_comp_name_lst"][-2:]
             icomps = np.where(np.abs(es.imag) > 1e-6)[0]
-            logger.warn(mf, "Energy has large imaginary part:" +
-                        "%s : %s\n" * len(icomps),
-                        *[s for i in icomps for s in [e_comp[i],es[i]]])
+            log.warn("Energy has large imaginary part:" +
+                     "%s : %s\n" * len(icomps),
+                     *[s for i in icomps for s in [e_comp[i],es[i]]])
         es = es.real
         return Cbar_k, es
     else:
@@ -978,6 +993,9 @@ def ewald_correction(moe_ks, mocc_ks, madelung):
 
 def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
                   vj_R=None, comp=None, ret_mocc=True):
+
+    log = logger.Logger(mf.stdout, mf.verbose)
+
     cell = mf.cell
     if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks)
     if mesh is None: mesh = cell.mesh
@@ -995,8 +1013,7 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
         moe_k = np.einsum("ig,ig->i", C_k.conj(), Cbar_k)
         C_k = Cbar_k = None
         if (moe_k.imag > 1e-6).any():
-            logger.warn(mf, "MO energies have imaginary part %s for kpt %d",
-                        moe_k, k)
+            log.warn("MO energies have imaginary part %s for kpt %d", moe_k, k)
         moe_ks[k] = moe_k.real
 
     mocc_ks = get_mo_occ(cell, moe_ks=moe_ks)
@@ -1174,6 +1191,9 @@ def get_cpw_virtual(mf, basis, amin=None, amax=None, thr_lindep=1e-14,
             file. If not provided, mf.chkfile is used. A RuntimeError is raised
             if the latter is None.
     """
+
+    log = logger.Logger(mf.stdout, mf.verbose)
+
     assert(mf.converged)
     if erifile is None: erifile = mf.chkfile
     assert(erifile)
@@ -1240,9 +1260,9 @@ def get_cpw_virtual(mf, basis, amin=None, amax=None, thr_lindep=1e-14,
         F = lib.dot(C.conj(), Cbar.T)
         Fov = F[mocc_ks[k]>THR_OCC][:,mocc_ks[k]<THR_OCC]
         err_Fov = np.max(np.abs(Fov))
-        logger.debug1(mf, "kpt %d [% .4f % .4f % .4f]  no = %2d  nv = %3d "
-                      " ||Fov|| = %.3e", k, *kpts[k], sum(mocc_ks[k]>THR_OCC),
-                      sum(mocc_ks[k]<THR_OCC), err_Fov)
+        log.debug1("kpt %d [% .4f % .4f % .4f]  no = %2d  nv = %3d "
+                   " ||Fov|| = %.3e", k, *kpts[k], sum(mocc_ks[k]>THR_OCC),
+                   sum(mocc_ks[k]<THR_OCC), err_Fov)
         e, u = scipy.linalg.eigh(F)
         C = lib.dot(u.T, C)
         set_kcomp(C, C_ks, k)
@@ -1252,12 +1272,12 @@ def get_cpw_virtual(mf, basis, amin=None, amax=None, thr_lindep=1e-14,
         moe_ks = ewald_correction(moe_ks, mocc_ks, mf._madelung)
     e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
     de_tot = e_tot - mf.e_tot
-    logger.info(mf, "SCF energy before %.10f  after CPW %.10f  change %.10f",
-                mf.e_tot, e_tot, de_tot)
+    log.info("SCF energy before %.10f  after CPW %.10f  change %.10f",
+             mf.e_tot, e_tot, de_tot)
     if abs(de_tot) > 1e-4:
-        logger.warn(mf, "CPW causes a significant change in SCF energy. "
-                    "Please check the SCF convergence.")
-    logger.debug(mf, "CPW band energies")
+        log.warn("CPW causes a significant change in SCF energy. "
+                 "Please check the SCF convergence.")
+    log.debug("CPW band energies")
     mf.dump_moe(moe_ks, mocc_ks)
 # dump to chkfile
     chkfile.dump_scf(cell, erifile, e_tot, moe_ks, mocc_ks, C_ks)
@@ -1332,41 +1352,42 @@ class PWKRHF(pbc_hf.KSCF):
 
     def dump_flags(self):
 
-        logger.info(self, '******** PBC PWSCF flags ********')
-        logger.info(self, "ke_cutoff = %s", self.cell.ke_cutoff)
-        logger.info(self, "mesh = %s (%d PWs)", self.cell.mesh,
-                    np.prod(self.cell.mesh))
-        logger.info(self, "outcore mode = %s", self.outcore)
-        logger.info(self, "SCF init guess = %s", self.init_guess)
-        logger.info(self, "SCF conv_tol = %s", self.conv_tol)
-        logger.info(self, "SCF max_cycle = %d", self.max_cycle)
-        logger.info(self, "Num virtual bands to compute = %s", self.nvir)
-        logger.info(self, "Num extra v-bands included to help convergence = %s",
-                    self.nvir_extra)
-        logger.info(self, "Band energy conv_tol = %s", self.conv_tol_band)
-        logger.info(self, "Davidson conv_tol = %s", self.conv_tol_davidson)
-        logger.info(self, "Davidson max_cycle = %d", self.max_cycle_davidson)
-        logger.info(self, "Use ACE = %s", self.ace_exx)
-        logger.info(self, "Damping method = %s", self.damp_type)
-        if self.damp_type.lower() == "simple":
-            logger.info(self, "Damping factor = %s", self.damp_factor)
-        if self.chkfile:
-            logger.info(self, 'chkfile to save SCF result = %s', self.chkfile)
-        logger.info(self, 'max_memory %d MB (current use %d MB)',
-                    self.max_memory, lib.current_memory()[0])
+        log = logger.Logger(self.stdout, self.verbose)
 
-        logger.info(self, 'kpts = %s', self.kpts)
-        logger.info(self, 'Exchange divergence treatment (exxdiv) = %s',
-                    self.exxdiv)
+        log.info('******** PBC PWSCF flags ********')
+        log.info("ke_cutoff = %s", self.cell.ke_cutoff)
+        log.info("mesh = %s (%d PWs)", self.cell.mesh, np.prod(self.cell.mesh))
+        log.info("outcore mode = %s", self.outcore)
+        log.info("SCF init guess = %s", self.init_guess)
+        log.info("SCF conv_tol = %s", self.conv_tol)
+        log.info("SCF max_cycle = %d", self.max_cycle)
+        log.info("Num virtual bands to compute = %s", self.nvir)
+        log.info("Num extra v-bands included to help convergence = %s",
+                 self.nvir_extra)
+        log.info("Band energy conv_tol = %s", self.conv_tol_band)
+        log.info("Davidson conv_tol = %s", self.conv_tol_davidson)
+        log.info("Davidson max_cycle = %d", self.max_cycle_davidson)
+        log.info("Use ACE = %s", self.ace_exx)
+        log.info("Damping method = %s", self.damp_type)
+        if self.damp_type.lower() == "simple":
+            log.info("Damping factor = %s", self.damp_factor)
+        if self.chkfile:
+            log.info('chkfile to save SCF result = %s', self.chkfile)
+        log.info('max_memory %d MB (current use %d MB)', self.max_memory,
+                 lib.current_memory()[0])
+
+        log.info('kpts = %s', self.kpts)
+        log.info('Exchange divergence treatment (exxdiv) = %s', self.exxdiv)
 
         cell = self.cell
         if ((cell.dimension >= 2 and cell.low_dim_ft_type != 'inf_vacuum') and
             isinstance(self.exxdiv, str) and self.exxdiv.lower() == 'ewald'):
             madelung = self._madelung
-            logger.info(self, '    madelung (= occupied orbital energy shift) = %s', madelung)
-            logger.info(self, '    Total energy shift due to Ewald probe charge'
-                        ' = -1/2 * Nelec*madelung = %.12g',
-                        madelung*cell.nelectron * -.5)
+            log.info('    madelung (= occupied orbital energy shift) = %s',
+                     madelung)
+            log.info('    Total energy shift due to Ewald probe charge'
+                     ' = -1/2 * Nelec*madelung = %.12g',
+                     madelung*cell.nelectron * -.5)
 
     def dump_scf_summary(self, verbose=logger.DEBUG):
         log = logger.new_logger(self, verbose)

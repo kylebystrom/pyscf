@@ -40,7 +40,7 @@ def fill_oovv(oovv, v_ia, Co_kj_R, Cv_kb_R, fac=None):
 def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
     """ Compute both direct (d) and exchange (x) contributions together.
     """
-
+    log = logger.Logger(cell.stdout, cell.verbose)
     cput0 = (logger.process_clock(), logger.perf_counter())
 
     dtype = np.complex128
@@ -87,15 +87,15 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
     frac = 0.6
     cur_mem = cell.max_memory - lib.current_memory()[0]
     safe_mem = cur_mem * frac
-    logger.debug(cell, "Currently available memory %9.2f MB, safe %9.2f MB",
-                 cur_mem, safe_mem)
-    logger.debug(cell, "Estimated required memory  %9.2f MB", est_mem)
+    log.debug("Currently available memory %9.2f MB, safe %9.2f MB",
+              cur_mem, safe_mem)
+    log.debug("Estimated required memory  %9.2f MB", est_mem)
     if est_mem > safe_mem:
         rec_mem = est_mem / frac + lib.current_memory()[0]
-        logger.warn(cell, "Estimate memory requirement (%.2f MB) exceeds %.0f%%"
-                    " of currently available memory (%.2f MB). Calculations may"
-                    " fail and `cell.max_memory = %.2f` is recommended.",
-                    est_mem, frac*100, safe_mem, rec_mem)
+        log.warn("Estimate memory requirement (%.2f MB) exceeds %.0f%%"
+                 " of currently available memory (%.2f MB). Calculations may"
+                 " fail and `cell.max_memory = %.2f` is recommended.",
+                 est_mem, frac*100, safe_mem, rec_mem)
 
     buf1 = np.empty(nocc_max*nvir_max*ngrids, dtype=dtype)
     buf2 = np.empty(nocc_max*nocc_max*nvir_max*nvir_max, dtype=dtype)
@@ -118,7 +118,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
 
     v_ia_ks_R = fswap.create_group("v_ia_ks_R")
 
-    cput1 = logger.timer(cell, 'initialize pwmp2', *cput0)
+    cput1 = log.timer('initialize pwmp2', *cput0)
 
     tick = np.zeros(2)
     tock = np.zeros(2)
@@ -314,8 +314,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
                     else:
                         v_ia = None
 
-        cput1 = logger.timer(cell, 'kpt %d (%6.3f %6.3f %6.3f)'%(ki,*kpti),
-                             *cput1)
+        cput1 = log.timer('kpt %d (%6.3f %6.3f %6.3f)'%(ki,*kpti), *cput1)
 
     buf1 = buf2 = buf3 = None
 
@@ -336,7 +335,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None):
     summary["e_corr_os_lst"] = emp2_os
     summary["e_corr_lst"] = emp2
 
-    cput1 = logger.timer(cell, 'pwmp2', *cput0)
+    cput1 = log.timer('pwmp2', *cput0)
     tspans[6] = np.asarray(cput1) - np.asarray(cput0)
     for tspan, tcomp in zip(tspans,tcomps):
         summary["t-%s"%tcomp] = tspan

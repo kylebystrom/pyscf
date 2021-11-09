@@ -65,6 +65,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None,
         frozen (int):
             Number of core orbitals to be frozen.
     """
+    log = logger.Logger(cell.stdout, cell.verbose)
     cput0 = (logger.process_clock(), logger.perf_counter())
 
     dtype = np.complex128
@@ -74,7 +75,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None,
 
     if frozen is not None:
         if isinstance(frozen, int):
-            logger.info(cell, "freezing %d orbitals", frozen)
+            log.info("freezing %d orbitals", frozen)
             moe_ks = [moe_k[frozen:] for moe_k in moe_ks]
             mocc_ks = [mocc_k[frozen:] for mocc_k in mocc_ks]
         else:
@@ -106,7 +107,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None,
         nvir_lst = [nvir_max]
     nvir_lst = np.asarray(nvir_lst)
     nnvir = len(nvir_lst)
-    logger.info(cell, "Compute emp2 for these nvir's: %s", nvir_lst)
+    log.info("Compute emp2 for these nvir's: %s", nvir_lst)
 
     # estimate memory requirement if done outcore
     est_mem = (nocc_max*nvir_max)**2*4      # for caching oovv_ka/kb, eijab, wijab
@@ -128,17 +129,17 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None,
     incore = est_mem_incore < cur_mem
     est_mem = est_mem_incore if incore else est_mem_outcore
 
-    logger.debug(cell, "Currently available memory total   %9.2f MB, "
-                 "safe   %9.2f MB", cur_mem, safe_mem)
-    logger.debug(cell, "Estimated required  memory outcore %9.2f MB, "
-                 "incore %9.2f MB", est_mem_outcore, est_mem_incore)
-    logger.debug(cell, "Incore mode: %r", incore)
+    log.debug("Currently available memory total   %9.2f MB, "
+              "safe   %9.2f MB", cur_mem, safe_mem)
+    log.debug("Estimated required  memory outcore %9.2f MB, "
+              "incore %9.2f MB", est_mem_outcore, est_mem_incore)
+    log.debug("Incore mode: %r", incore)
     if est_mem > safe_mem:
         rec_mem = est_mem / frac + lib.current_memory()[0]
-        logger.warn(cell, "Estimate memory (%.2f MB) exceeds %.0f%% of "
-                    "currently available memory (%.2f MB). Calculations may "
-                    "fail and `cell.max_memory = %.2f` is recommended.",
-                    est_mem, frac*100, safe_mem, rec_mem)
+        log.warn("Estimate memory (%.2f MB) exceeds %.0f%% of currently "
+                 "available memory (%.2f MB). Calculations may fail and "
+                 "`cell.max_memory = %.2f` is recommended.",
+                 est_mem, frac*100, safe_mem, rec_mem)
 
     buf1 = np.empty(nocc_max*nvir_max*ngrids, dtype=dtype)
     buf2 = np.empty(nocc_max*nocc_max*nvir_max*nvir_max, dtype=dtype)
@@ -166,7 +167,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None,
     C_ks = None
     fchk.close()
 
-    cput1 = logger.timer(cell, 'initialize pwmp2', *cput0)
+    cput1 = log.timer('initialize pwmp2', *cput0)
 
     tick = np.zeros(2)
     tock = np.zeros(2)
@@ -347,8 +348,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None,
 
                 oovv_ka = oovv_kb = eijab = woovv = None
 
-        cput1 = logger.timer(cell, 'kpt %d (%6.3f %6.3f %6.3f)'%(ki,*kpti),
-                             *cput1)
+        cput1 = log.timer('kpt %d (%6.3f %6.3f %6.3f)'%(ki,*kpti), *cput1)
 
     buf1 = buf2 = buf3 = None
 
@@ -369,7 +369,7 @@ def kernel_dx_(cell, kpts, chkfile_name, summary, nvir=None, nvir_lst=None,
     summary["e_corr_os_lst"] = emp2_os
     summary["e_corr_lst"] = emp2
 
-    cput1 = logger.timer(cell, 'pwmp2', *cput0)
+    cput1 = log.timer('pwmp2', *cput0)
     tspans[6] = np.asarray(cput1) - np.asarray(cput0)
     for tspan, tcomp in zip(tspans,tcomps):
         summary["t-%s"%tcomp] = tspan

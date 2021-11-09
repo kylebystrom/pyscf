@@ -88,6 +88,8 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
                 If provided, the orbitals are written to it.
     """
 
+    log = logger.Logger(cell0.stdout, cell0.verbose)
+
     nkpts = len(kpts)
     if out is None:
         out = [[None]*nkpts, [None]*nkpts]
@@ -111,7 +113,7 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
                 continue
             else:
                 gth_pseudo[atm] = "gth-pade-q%d"%q
-        logger.debug(cell0, "Using the GTH-PP for init guess: %s", gth_pseudo)
+        log.debug("Using the GTH-PP for init guess: %s", gth_pseudo)
         cell.pseudo = gth_pseudo
         cell.ecp = cell._ecp = cell._ecpbas = None
     else:
@@ -120,7 +122,7 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
     cell.verbose = 0
     cell.build()
 
-    logger.info(cell0, "generating init guess using %s basis", cell.basis)
+    log.info("generating init guess using %s basis", cell.basis)
 
     if len(kpts) < 30:
         pmf = scf.KUHF(cell, kpts)
@@ -145,7 +147,7 @@ def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
     else:
         raise NotImplementedError("Init guess %s not implemented" % key)
 
-    logger.debug1(cell0, "converting init MOs from GTO basis to PW basis")
+    log.debug1("converting init MOs from GTO basis to PW basis")
 
     # TODO: support specifying nvir for each kpt (useful for e.g., metals)
     if isinstance(nvir, int): nvir = [nvir,nvir]
