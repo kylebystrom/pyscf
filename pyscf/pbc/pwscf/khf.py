@@ -806,7 +806,7 @@ def update_k(mf, C_ks, mocc_ks):
     if "t-ace" not in mf.scf_summary:
         mf.scf_summary["t-ace"] = np.zeros(2)
 
-    mesh = mf.cell.mesh
+    mesh = np.array(mf.cell.mesh)
     if np.all(abs(mesh-mesh/2*2)>0):   # all odd --> s2 symm for occ bands
         mf.with_jk.update_k_support_vec(C_ks, mocc_ks, mf.kpts)
     else:

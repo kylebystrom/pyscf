@@ -487,6 +487,8 @@ def get_vpplocG_ccecp(cell, Gv, _ecp=None):
 
 
 def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
+    log = logger.Logger(cell.stdout, cell.verbose)
+
     if _ecp is None: _ecp = format_ccecp_param(cell)
     Gv = cell.get_Gv()
     SI = cell.get_SI(Gv)
@@ -524,8 +526,8 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
     buf = np.empty(Gblksize*ngrids, dtype=dtype)
     buf2 = np.empty(Gblksize*ngrids, dtype=dtype0)
     buf3 = np.empty(Gblksize*ngrids, dtype=dtype0)
-    logger.debug1(cell, "Computing v^nl*C_k in %d segs with blksize %d",
-                      (ngrids-1)//Gblksize+1, Gblksize)
+    log.debug1("Computing v^nl*C_k in %d segs with blksize %d",
+               (ngrids-1)//Gblksize+1, Gblksize)
 
     Gk = Gv + kpt
     G_rad = lib.norm(Gk, axis=1)
@@ -554,7 +556,8 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
                 al, cl = _ecpnl[(1+il*2):(3+il*2)]
                 fakemol._bas[0,gto.ANG_OF] = l
                 fakemol._env[ptr+3] = 0.25 / al
-                fakemol._env[ptr+4] = 2.*np.pi**1.25 * cl**0.5 / al**0.75
+                fakemol._env[ptr+4] = 2.*np.pi**1.25 * abs(cl)**0.5 / al**0.75
+                flip_sign = cl < 0
                 # pYlm_part.shape = (ngrids, (2*l+1)*len(iatm_lst))
                 pYlm_part = np.einsum("gl,ag->gla",
                                       fakemol.eval_gto('GTOval', Gk),
@@ -564,8 +567,8 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
                 G_red = G_rad * (0.5 / al)
                 iblk = 0
                 for p0,p1 in lib.prange(0,ngrids,Gblksize):
-                    logger.debug2(cell, "Gblk [%d/%d], %d ~ %d", iblk,
-                                  (ngrids-1)//Gblksize+1, p0, p1)
+                    log.debug2("Gblk [%d/%d], %d ~ %d", iblk,
+                               (ngrids-1)//Gblksize+1, p0, p1)
                     iblk += 1
                     vnlGG = np.ndarray((p1-p0,ngrids), dtype=dtype, buffer=buf)
                     G_rad2 = np.ndarray((p1-p0,ngrids), dtype=dtype0,
@@ -573,8 +576,12 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
                     SBin = np.ndarray((p1-p0,ngrids), dtype=dtype0, buffer=buf3)
                     np.multiply(G_rad[p0:p1,None], G_red, out=G_rad2)
                     # use np.dot since a slice is neither F nor C-contiguous
-                    vnlGG = np.dot(pYlm_part[p0:p1], pYlm_part.conj().T,
-                                   out=vnlGG)
+                    if flip_sign:
+                        vnlGG = np.dot(pYlm_part[p0:p1], -pYlm_part.conj().T,
+                                       out=vnlGG)
+                    else:
+                        vnlGG = np.dot(pYlm_part[p0:p1], pYlm_part.conj().T,
+                                       out=vnlGG)
                     tick = np.array([logger.process_clock(), logger.perf_counter()])
                     SBin = fSBin(l, G_rad2, out=SBin)
                     tock = np.array([logger.process_clock(), logger.perf_counter()])
@@ -596,8 +603,8 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
     for tname, tspan in zip(tnames, tspans):
         tc, tw = tspan
         rc, rw = tspan / tspans[-1] * 100
-        logger.debug1(cell, 'CPU time for %10s %9.2f  ( %6.2f%% ), wall time '
-                      '%9.2f  ( %6.2f%% )', tname.ljust(10), tc, rc, tw, rw)
+        log.debug1('CPU time for %10s %9.2f  ( %6.2f%% ), wall time '
+                   '%9.2f  ( %6.2f%% )', tname.ljust(10), tc, rc, tw, rw)
 
     return Cbar_k
 
@@ -621,6 +628,7 @@ def apply_vppnl_kpt_ccecp(cell, C_k, kpt, Gv, _ecp=None):
 
 def get_ccecp_support_vec(cell, C_ks, kpts, out, _ecp=None, ke_cutoff_nloc=None,
                           ncomp=1, thr_eig=1e-12, use_numexpr=False):
+    log = logger.Logger(cell.stdout, cell.verbose)
 
     if out is None:
         out = {}
@@ -643,15 +651,14 @@ def get_ccecp_support_vec(cell, C_ks, kpts, out, _ecp=None, ke_cutoff_nloc=None,
     mesh_map = cell_nloc = None
     if ke_cutoff_nloc is not None:
         if ke_cutoff_nloc < cell.ke_cutoff:
-            logger.debug1(cell, "Using ke_cutoff_nloc %s for KB support vector", ke_cutoff_nloc)
+            log.debug1("Using ke_cutoff_nloc %s for KB support vector", ke_cutoff_nloc)
             mesh_map = get_mesh_map(cell, cell.ke_cutoff, ke_cutoff_nloc)
             cell_nloc = cell.copy()
             cell_nloc.ke_cutoff = ke_cutoff_nloc
             cell_nloc.build()
         else:
-            logger.warn(cell, "Input ke_cutoff_nloc %s is greater than "
-                        "cell.ke_cutoff %s and will be ignored.",
-                        ke_cutoff_nloc, cell.ke_cutoff)
+            log.warn("Input ke_cutoff_nloc %s is greater than cell.ke_cutoff "
+                     "%s and will be ignored.", ke_cutoff_nloc, cell.ke_cutoff)
 
     nkpts = len(kpts)
     for k in range(nkpts):
@@ -764,10 +771,13 @@ def get_ccecp_kb_support_vec(cell, kb_basis, kpts, out, ke_cutoff_nloc=None,
         else:
             Cg_ks = W_ks_blk = None
 
-    nsv_ks = [get_kcomp(W_ks, k, load=False).shape[0]
-              for k in range(nkpts)]
+    nsv_ks = np.array([get_kcomp(W_ks, k, load=False).shape[0]
+                       for k in range(nkpts)])
+    mem_W_ks = nsv_ks.sum() * ngrids * 16 / 1024**2.
 
     log.debug("keeping %s KB support vectors", nsv_ks)
+    log.debug("estimated %s usage: %.2f MB", "disk" if outcore else "memory",
+              mem_W_ks)
 
     if ncomp > 1:
         for comp in range(1,ncomp):
