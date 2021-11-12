@@ -1549,19 +1549,21 @@ class PWKRHF(pbc_hf.KSCF):
                             damp_factor=self.damp_factor,
                             conv_check=self.conv_check,
                             callback=self.callback, **kwargs)
-        self._finalize()
+        self._finalize(**kwargs)
         return self.e_tot
     kernel = lib.alias(scf, alias_name='kernel')
 
-    def _finalize(self):
+    def _finalize(self, **kwargs):
         pbc_hf.KSCF._finalize(self)
 
         with_pp = self.with_pp
         if not with_pp.outcore:
             if with_pp.pptype == "ccecp":
-                # release memory of support vec
-                with_pp._ecpnloc_initialized = False
-                with_pp.vppnlocWks = None
+                save_ccecp_kb = kwargs.get("save_ccecp_kb", False)
+                if not save_ccecp_kb:
+                    # release memory of support vec
+                    with_pp._ecpnloc_initialized = False
+                    with_pp.vppnlocWks = None
 
     def get_cpw_virtual(self, basis, amin=None, amax=None, thr_lindep=1e-14):
         self.e_tot, self.mo_energy, self.mo_occ = get_cpw_virtual(

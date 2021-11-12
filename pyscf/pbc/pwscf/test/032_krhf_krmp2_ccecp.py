@@ -44,7 +44,7 @@ if __name__ == "__main__":
     pwmf = pwscf.KRHF(cell, kpts)
     pwmf.nvir = 10 # request 10 virtual states
     pwmf.chkfile = chkfile
-    pwmf.kernel()
+    pwmf.kernel(save_ccecp_kb=True)
 
     e_tot0 = -10.6261884956522
     assert(abs(pwmf.e_tot - e_tot0) < 1.e-6)
