@@ -2,6 +2,7 @@
 """
 
 
+import os
 import sys
 import copy
 import h5py
@@ -1441,30 +1442,19 @@ class PWKRHF(pbc_hf.KSCF):
         if init_guess is None: init_guess = self.init_guess
         if nvir is None: nvir = self.nvir
         if chkfile is None: chkfile = self.chkfile
-        if init_guess[:3] == "chk" and C0 is None:
-            C_ks, mocc_ks = self.init_guess_by_chkfile(chk=chkfile, nvir=nvir,
-                                                       out=out)
-            dump_chk = True
+
+        if C0 is not None:
+            C_ks, mocc_ks = self.get_init_guess_C0(C0, nvir=nvir, out=out)
         else:
-            # if isinstance(chkfile, str):
-            #     fchk = h5py.File(chkfile, "w")
-            #     dump_chk = True
-            # else:
-            #     # tempfile (discarded after SCF)
-            #     swapfile = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
-            #     fchk = lib.H5TmpFile(swapfile.name)
-            #     swapfile = None
-            #     dump_chk = False
-
-            # C_ks = fchk.create_group("mo_coeff")
-            C_ks = out
-
-            if C0 is None:
+            if os.path.isfile(chkfile) and init_guess[:3] == "chk":
+                C_ks, mocc_ks = self.init_guess_by_chkfile(chk=chkfile,
+                                                           nvir=nvir,
+                                                           out=out)
+                dump_chk = True
+            else:
                 C_ks, mocc_ks = self.get_init_guess_key(nvir=nvir,
                                                         key=init_guess,
-                                                        out=C_ks)
-            else:
-                C_ks, mocc_ks = self.get_init_guess_C0(C0, nvir=nvir, out=C_ks)
+                                                        out=out)
 
         return C_ks, mocc_ks
 
