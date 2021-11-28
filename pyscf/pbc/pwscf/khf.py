@@ -332,13 +332,16 @@ def get_ace_error(mf, C_ks, moe_ks, mocc_ks, nband=None, comp=None, exxdiv=None,
         err_Rs = np.zeros(nkpts)
         for k in range(nkpts):
             nband_ = len(mocc_ks[k]) if nband is None else nband
-            C_k = get_kcomp(C_ks, k)[:nband_]
-            Cbar_k = mf.apply_Fock_kpt(C_k, kpts[k], mocc_ks, mesh, Gv, vj_R,
-                                       "none", comp=comp, ret_E=False)
-            R_k = lib.dot(C_k.conj(),
-                          (Cbar_k - C_k*moe_ks_noewald[k][:nband_,None]).T)
-            err_Rs[k] = abs(R_k).max()
-            C_k = Cbar_k = None
+            if nband_ == 0:
+                err_Rs[k] = 0.
+            else:
+                C_k = get_kcomp(C_ks, k)[:nband_]
+                Cbar_k = mf.apply_Fock_kpt(C_k, kpts[k], mocc_ks, mesh, Gv, vj_R,
+                                           "none", comp=comp, ret_E=False)
+                R_k = lib.dot(C_k.conj(),
+                              (Cbar_k - C_k*moe_ks_noewald[k][:nband_,None]).T)
+                err_Rs[k] = abs(R_k).max()
+                C_k = Cbar_k = None
     else:
         ncomp = len(moe_ks)
         err_Rs = np.zeros(ncomp)
