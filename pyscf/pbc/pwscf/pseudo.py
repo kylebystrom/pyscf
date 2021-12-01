@@ -513,8 +513,13 @@ def apply_vppnlocGG_kpt_ccecp(cell, C_k, kpt, _ecp=None, use_numexpr=False):
         uniq_atm_map[atm].append(iatm)
 
     nmo = C_k.shape[0]
-    lmax = np.max([_ecpnlitem[0] for _ecpitem in _ecp.values()
-                  for _ecpnlitem in _ecpitem[1]])
+
+    angls_nl = [_ecpnlitem[0] for _ecpitem in _ecp.values()
+                for _ecpnlitem in _ecpitem[1]]
+    if len(angls_nl) == 0:
+        return np.zeros_like(C_k)
+
+    lmax = np.max(angls_nl)
     natmmax = np.max([len(iatm_lst) for iatm_lst in uniq_atm_map.values()])
 
     dtype0 = np.float64
