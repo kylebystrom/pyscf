@@ -91,12 +91,13 @@ class KnownValues(unittest.TestCase):
         v2 = dft.numint._dot_ao_dm(h4, ao, dm, None, None, None)
         self.assertAlmostEqual(abs(v1-v2).max(), 0, 9)
 
-        dm = mf_he2.get_init_guess(key='minao')
-        ao_loc = he2.ao_loc_nr()
-        ao = mf_he2._numint.eval_ao(he2, mf_he2.grids.coords).copy()
-        v1 = dft.numint._dot_ao_dm(he2, ao, dm, mf_he2.grids.non0tab, (0,he2.nbas), ao_loc)
-        v2 = dft.numint._dot_ao_dm(he2, ao, dm, None, None, None)
-        self.assertAlmostEqual(abs(v1-v2).max(), 0, 9)
+        for shls_slice in [(0, he2.nbas), (2, he2.nbas-2)]:
+            dm = mf_he2.get_init_guess(key='minao')
+            ao_loc = he2.ao_loc_nr()
+            ao = mf_he2._numint.eval_ao(he2, mf_he2.grids.coords, shls_slice=shls_slice).copy()
+            v1 = dft.numint._dot_ao_dm(he2, ao, dm, mf_he2.grids.non0tab, shls_slice, ao_loc)
+            v2 = dft.numint._dot_ao_dm(he2, ao, dm, None, None, None)
+            self.assertAlmostEqual(abs(v1-v2).max(), 0, 9)
 
     def test_dot_ao_dm_high_cost(self):
         non0tab = mf._numint.make_mask(mol, mf.grids.coords)
@@ -120,13 +121,14 @@ class KnownValues(unittest.TestCase):
         v2 = dft.numint._dot_ao_ao(h4, ao, ao, None, None, None)
         self.assertAlmostEqual(abs(v1-v2).max(), 0, 9)
 
-        dm = mf_he2.get_init_guess(key='minao')
-        ao_loc = he2.ao_loc_nr()
-        ao = mf_he2._numint.eval_ao(he2, mf_he2.grids.coords).copy()
-        nao = he2.nao_nr()
-        v1 = dft.numint._dot_ao_ao(he2, ao, ao, mf_he2.grids.non0tab, (0,he2.nbas), ao_loc)
-        v2 = dft.numint._dot_ao_ao(he2, ao, ao, None, None, None)
-        self.assertAlmostEqual(abs(v1-v2).max(), 0, 9)
+        for shls_slice in [(0, he2.nbas), (2, he2.nbas-2)]:
+            dm = mf_he2.get_init_guess(key='minao')
+            ao_loc = he2.ao_loc_nr()
+            ao = mf_he2._numint.eval_ao(he2, mf_he2.grids.coords, shls_slice=shls_slice).copy()
+            nao = he2.nao_nr()
+            v1 = dft.numint._dot_ao_ao(he2, ao, ao, mf_he2.grids.non0tab, shls_slice, ao_loc)
+            v2 = dft.numint._dot_ao_ao(he2, ao, ao, None, None, None)
+            self.assertAlmostEqual(abs(v1-v2).max(), 0, 9)
 
     def test_dot_ao_ao_high_cost(self):
         non0tab = mf.grids.make_mask(mol, mf.grids.coords)
