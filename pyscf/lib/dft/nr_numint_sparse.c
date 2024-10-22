@@ -563,7 +563,7 @@ for (jsh = jsh0; jsh < jsh1; jsh++) {
         }
 }
 
-void VXCdot_aow_ao_dense(double *out, double *bra, double *ket, double *wv,
+void _VXCdot_aow_ao_dense(double *out, double *bra, double *ket, double *wv,
                          int nao, int ngrids)
 {
         const size_t Nao = nao;
@@ -595,6 +595,150 @@ void VXCdot_aow_ao_dense(double *out, double *bra, double *ket, double *wv,
                                &D1, out+i0*Nao, &nao);
                 }
         }
+        free(buf);
+}
+}
+
+void __VXCdot_aow_ao_dense(double *out, double *bra, double *ket, double *wv,
+                         int nao, int ngrids)
+{
+        const size_t Nao = nao;
+        const size_t Ngrids = ngrids;
+        const int nao_blksize = BOXSIZE1_N * 4;
+        const int ngrids_blksize = BOXSIZE1_M;
+        const char TRANS_T = 'T';
+        const char TRANS_N = 'N';
+        const double D1 = 1;
+#pragma omp parallel
+{
+        int i, j, ig0, ig1, dg;
+        double *cpriv = malloc(sizeof(double) * (Nao * Nao + 2));
+        double *buf = malloc(sizeof(double) * (ngrids_blksize * nao + ALIGNMENT));
+        double *braw = (double *)((uintptr_t)(buf + ALIGNMENT - 1) & (-(uintptr_t)(ALIGNMENT*8)));
+        for (i = 0; i < Nao * Nao + 2; i++) {
+                cpriv[i] = 0;
+        }
+        size_t ib0, ib1, ij;
+        const int nblk = (Ngrids + ngrids_blksize - 1) / ngrids_blksize;
+        NPomp_split(&ib0, &ib1, nblk);
+        for (ig0 = ib0 * ngrids_blksize; ig0 < ib1 * ngrids_blksize; ig0 += ngrids_blksize) {
+                ig1 = MIN(ig0 + ngrids_blksize, Ngrids);
+                for (i = 0; i < Nao; i++) {
+                for (dg = 0; dg < ig1 - ig0; dg++) {
+                        braw[i*ngrids_blksize+dg] = bra[i*Ngrids+ig0+dg] * wv[ig0+dg];
+                } }
+                dg = ig1 - ig0;
+                dgemm_(&TRANS_T, &TRANS_N, &nao, &nao, &dg,
+                       &D1, ket + ig0, &ngrids, braw, &ngrids_blksize,
+                       &D1, cpriv, &nao);
+        }
+#pragma omp critical
+        if (ib1 - ib0 > 0) {
+                for (ij = 0, i = 0; i < Nao; i++) {
+                for (j = 0; j < Nao; j++, ij++) {
+                        out[i*Nao+j] += cpriv[ij];
+                } }
+        }
+
+        free(cpriv);
+        free(buf);
+}
+}
+
+void VXCdot_aow_ao_dense(double *out, double *bra, double *ket, double *wv,
+                         int nao, int ngrids)
+{
+        const size_t Nao = nao;
+        const size_t Ngrids = ngrids;
+        const int nao_blksize = BOXSIZE1_N * 4;
+        const int ngrids_blksize = BOXSIZE1_M;
+        const char TRANS_T = 'T';
+        const char TRANS_N = 'N';
+        const double D1 = 1;
+#pragma omp parallel
+{
+        int i, j, ig0, ig1, dg;
+        double *cpriv = malloc(sizeof(double) * (Nao * Nao + 2));
+        double *buf = malloc(sizeof(double) * (ngrids_blksize * nao + ALIGNMENT));
+        double *braw = (double *)((uintptr_t)(buf + ALIGNMENT - 1) & (-(uintptr_t)(ALIGNMENT*8)));
+        for (i = 0; i < Nao * Nao + 2; i++) {
+                cpriv[i] = 0;
+        }
+        size_t ib0, ib1, ij;
+        const int nblk = (Ngrids + ngrids_blksize - 1) / ngrids_blksize;
+#pragma omp for schedule(dynamic, 8) nowait
+        for (ig0 = 0; ig0 < Ngrids; ig0 += ngrids_blksize) {
+                ig1 = MIN(ig0 + ngrids_blksize, Ngrids);
+                for (i = 0; i < Nao; i++) {
+                for (dg = 0; dg < ig1 - ig0; dg++) {
+                        braw[i*ngrids_blksize+dg] = bra[i*Ngrids+ig0+dg] * wv[ig0+dg];
+                } }
+                dg = ig1 - ig0;
+                dgemm_(&TRANS_T, &TRANS_N, &nao, &nao, &dg,
+                       &D1, ket + ig0, &ngrids, braw, &ngrids_blksize,
+                       &D1, cpriv, &nao);
+        }
+#pragma omp critical
+        for (ij = 0, i = 0; i < Nao; i++) {
+        for (j = 0; j < Nao; j++, ij++) {
+                out[i*Nao+j] += cpriv[ij];
+        } }
+
+        free(cpriv);
+        free(buf);
+}
+}
+
+void ___VXCdot_aow_ao_dense(double *out, double *bra, double *ket, double *wv,
+                         int nao, int ngrids, int nbas, int *ao_loc)
+{
+        const size_t Nao = nao;
+        const size_t Ngrids = ngrids;
+        const int nao_blksize = BOXSIZE1_N * 4;
+        const int ngrids_blksize = BOXSIZE1_M;
+        const char TRANS_T = 'T';
+        const char TRANS_N = 'N';
+        const double D1 = 1;
+        const int I1 = 1;
+#pragma omp parallel
+{
+        int i, j, ig0, ig1, dg;
+        int nj;
+        double *cpriv = malloc(sizeof(double) * (Nao * Nao + 2));
+        double *buf = malloc(sizeof(double) * (ngrids_blksize + ALIGNMENT));
+        double *braw = (double *)((uintptr_t)(buf + ALIGNMENT - 1) & (-(uintptr_t)(ALIGNMENT*8)));
+        for (i = 0; i < Nao * Nao + 2; i++) {
+                cpriv[i] = 0;
+        }
+        size_t ib0, ib1, ij;
+        const int nblk = (Ngrids + ngrids_blksize - 1) / ngrids_blksize;
+#pragma omp for schedule(dynamic, 8) nowait
+        for (ig0 = 0; ig0 < Ngrids; ig0 += ngrids_blksize) {
+                ig1 = MIN(ig0 + ngrids_blksize, Ngrids);
+                const int delta_g = ig1 - ig0;
+                for (i = 0; i < Nao; i++) {
+                        for (dg = 0; dg < ig1 - ig0; dg++) {
+                                braw[dg] = bra[i*Ngrids+ig0+dg] * wv[ig0+dg];
+                        }
+                        for (j = 0; j < Nao; j++) {
+#pragma GCC ivdep
+                            for (dg = 0; dg < delta_g; dg++) {
+                                cpriv[i * Nao + j] += ket[j*Ngrids +ig0+dg] * braw[dg];
+                            }
+                            //dgemm_(&TRANS_T, &TRANS_N, &I1, &I1, &dg,
+                            //       &D1, ket + j * Ngrids + ig0, &ngrids,
+                            //       braw, &ngrids_blksize,
+                            //       &D1, cpriv + i*Nao + j, &I1);
+                        }
+                }
+        }
+#pragma omp critical
+        for (ij = 0, i = 0; i < Nao; i++) {
+        for (j = 0; j < Nao; j++, ij++) {
+                out[i*Nao+j] += cpriv[i*Nao+j];
+        } }
+
+        free(cpriv);
         free(buf);
 }
 }

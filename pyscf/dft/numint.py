@@ -978,6 +978,25 @@ def _tau_dot_sparse(bra, ket, wv, nbins, screen_index, pair_mask, ao_loc, out=No
                       ao_loc, hermi, out)
     return out
 
+def __tau_dot_sparse(bra, ket, wv, nbins, screen_index, pair_mask, ao_loc, out=None):
+    '''Similar to _tau_dot, while sparsity is explicitly considered. Note the
+    return may have ~1e-13 difference to _tau_dot.
+    '''
+    nao = bra.shape[1]
+    if out is None:
+        out = numpy.zeros((nao, nao), dtype=bra.dtype)
+    hermi = 1
+    aow = _scale_ao_sparse(bra[1], wv, screen_index, ao_loc)
+    _dot_ao_ao_sparse(aow, ket[1], None, nbins, screen_index, pair_mask,
+                      ao_loc, hermi, out)
+    aow = _scale_ao_sparse(bra[2], wv, screen_index, ao_loc, out=aow) 
+    _dot_ao_ao_sparse(aow, ket[2], None, nbins, screen_index, pair_mask,
+                      ao_loc, hermi, out)
+    aow = _scale_ao_sparse(bra[3], wv, screen_index, ao_loc, out=aow)
+    _dot_ao_ao_sparse(aow, ket[3], None, nbins, screen_index, pair_mask,
+                      ao_loc, hermi, out)
+    return out
+
 def nr_vxc(mol, grids, xc_code, dms, spin=0, relativity=0, hermi=0,
            max_memory=2000, verbose=None):
     '''
