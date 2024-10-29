@@ -19,7 +19,7 @@
 '''
 Numerical integration functions for RKS and UKS with real AO basis
 '''
-
+import time
 import warnings
 import ctypes
 import numpy
@@ -966,16 +966,24 @@ def _tau_dot_sparse(bra, ket, wv, nbins, screen_index, pair_mask, ao_loc, out=No
     '''Similar to _tau_dot, while sparsity is explicitly considered. Note the
     return may have ~1e-13 difference to _tau_dot.
     '''
+    t0 = time.monotonic()
     nao = bra.shape[1]
     if out is None:
         out = numpy.zeros((nao, nao), dtype=bra.dtype)
     hermi = 1
+    if pair_mask is not None and isinstance(screen_index, numpy.ndarray):
+        print("SPARSITY", pair_mask.sum() / pair_mask.size)
+        print("SPARSITY2", (screen_index==0).sum() / screen_index.size)
+    else:
+        print("DENSE")
     _dot_ao_ao_sparse(bra[1], ket[1], wv, nbins, screen_index, pair_mask,
                       ao_loc, hermi, out)
     _dot_ao_ao_sparse(bra[2], ket[2], wv, nbins, screen_index, pair_mask,
                       ao_loc, hermi, out)
     _dot_ao_ao_sparse(bra[3], ket[3], wv, nbins, screen_index, pair_mask,
                       ao_loc, hermi, out)
+    t1 = time.monotonic()
+    print("TIME", t1 - t0)
     return out
 
 def __tau_dot_sparse(bra, ket, wv, nbins, screen_index, pair_mask, ao_loc, out=None):
@@ -1153,7 +1161,10 @@ def nr_rks(ni, mol, grids, xc_code, dms, relativity=0, hermi=1,
         for ao, mask, weight, coords \
                 in ni.block_loop(mol, grids, nao, ao_deriv, max_memory=max_memory):
             for i in range(nset):
+                t0  = time.monotonic()
                 rho = make_rho(i, ao, mask, xctype)
+                t1 = time.monotonic()
+                print("RHO_TIME", t1 - t0)
                 exc, vxc = ni.eval_xc_eff(xc_code, rho, deriv=1, xctype=xctype)[:2]
                 if xctype == 'LDA':
                     den = rho * weight
@@ -2836,7 +2847,7 @@ class NumInt(lib.StreamObject, LibXCMixin):
             # TODO: pass grids.cutoff to eval_ao
             ao = self.eval_ao(mol, coords, deriv=deriv, non0tab=mask,
                               cutoff=grids.cutoff, out=buf)
-            if not allow_sparse and not _sparse_enough(mask):
+            if True: #not allow_sparse and not _sparse_enough(mask):
                 # Unset mask for dense AO tensor. It determines which eval_rho
                 # to be called in make_rho
                 mask = None
@@ -2876,7 +2887,7 @@ class NumInt(lib.StreamObject, LibXCMixin):
             pair_mask = numpy.asarray(pair_mask, dtype=numpy.uint8)
 
         def make_rho(idm, ao, sindex, xctype):
-            if sindex is not None and grids is not None:
+            if sindex is not None and grids is not None and mo_coeff is None:
                 return self.eval_rho1(mol, ao, dms[idm], sindex, xctype, hermi,
                                       with_lapl, cutoff=self.cutoff,
                                       ao_cutoff=grids.cutoff, pair_mask=pair_mask)
