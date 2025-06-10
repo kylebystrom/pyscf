@@ -19,18 +19,24 @@ from pyscf.pbc.df import aft
 import pyscf.pbc.gto as pgto
 from pyscf.pbc.lib import kpts_helper
 
-L = 5.
-n = 3
-cell = pgto.Cell()
-cell.a = numpy.diag([L,L,L])
-cell.mesh = numpy.array([n,n,n])
+def setUpModule():
+    global cell, nao
+    L = 5.
+    n = 3
+    cell = pgto.Cell()
+    cell.a = numpy.diag([L,L,L])
+    cell.mesh = numpy.array([n,n,n])
 
-cell.atom = '''He    3.    2.       3.
-               He    1.    1.       1.'''
-cell.basis = 'ccpvdz'
-cell.verbose = 0
-cell.build(0,0)
-nao = cell.nao_nr()
+    cell.atom = '''He    3.    2.       3.
+                   He    1.    1.       1.'''
+    cell.basis = 'ccpvdz'
+    cell.verbose = 0
+    cell.build(0,0)
+    nao = cell.nao_nr()
+
+def tearDownModule():
+    global cell
+    del cell
 
 
 class KnownValues(unittest.TestCase):
@@ -47,7 +53,7 @@ class KnownValues(unittest.TestCase):
         eri0 = numpy.einsum('ijpl,pk->ijkl', eri0, mo.conj())
         eri0 = numpy.einsum('ijkp,pl->ijkl', eri0, mo       )
         eri1 = with_df.ao2mo(mo, kpts)
-        self.assertAlmostEqual(abs(eri1.reshape(eri0.shape)-eri0).sum(), 0, 9)
+        self.assertAlmostEqual(abs(eri1.reshape(eri0.shape)-eri0).max(), 0, 9)
 
     def test_eri0110(self):
         kpts = numpy.random.random((4,3)) * .25
@@ -63,7 +69,7 @@ class KnownValues(unittest.TestCase):
         eri0 = numpy.einsum('ijpl,pk->ijkl', eri0, mo.conj())
         eri0 = numpy.einsum('ijkp,pl->ijkl', eri0, mo       )
         eri1 = with_df.ao2mo(mo, kpts)
-        self.assertAlmostEqual(abs(eri1.reshape(eri0.shape)-eri0).sum(), 0, 9)
+        self.assertAlmostEqual(abs(eri1.reshape(eri0.shape)-eri0).max(), 0, 9)
 
     def test_eri0000(self):
         with_df = aft.AFTDF(cell)
@@ -76,7 +82,7 @@ class KnownValues(unittest.TestCase):
         eri0 = numpy.einsum('ijpl,pk->ijkl', eri0, mo.conj())
         eri0 = numpy.einsum('ijkp,pl->ijkl', eri0, mo       )
         eri1 = with_df.ao2mo(mo, with_df.kpts)
-        self.assertAlmostEqual(abs(eri1.reshape(eri0.shape)-eri0).sum(), 0, 9)
+        self.assertAlmostEqual(abs(eri1.reshape(eri0.shape)-eri0).max(), 0, 9)
 
         mo = mo.real
         eri0 = numpy.einsum('pjkl,pi->ijkl', eri , mo.conj())
@@ -84,7 +90,7 @@ class KnownValues(unittest.TestCase):
         eri0 = numpy.einsum('ijpl,pk->ijkl', eri0, mo.conj())
         eri0 = numpy.einsum('ijkp,pl->ijkl', eri0, mo       )
         eri1 = with_df.ao2mo(mo, with_df.kpts, compact=False)
-        self.assertAlmostEqual(abs(eri1.reshape(eri0.shape)-eri0).sum(), 0, 9)
+        self.assertAlmostEqual(abs(eri1.reshape(eri0.shape)-eri0).max(), 0, 9)
 
     def test_ao2mo_7d(self):
         L = 3.
@@ -96,6 +102,7 @@ class KnownValues(unittest.TestCase):
                        He    1.2   1.       1.'''
         cell.basis = {'He': [[0, (1.2, 1)], [1, (0.6, 1)]]}
         cell.verbose = 0
+        cell.precision = 1e-12
         cell.build(0,0)
 
         kpts = cell.make_kpts([1,3,1])
@@ -120,4 +127,3 @@ class KnownValues(unittest.TestCase):
 if __name__ == '__main__':
     print("Full Tests for aft ao2mo")
     unittest.main()
-

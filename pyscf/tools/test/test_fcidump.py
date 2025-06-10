@@ -22,19 +22,21 @@ from pyscf import gto, scf, ao2mo
 from pyscf.tools import fcidump
 import tempfile
 
-mol = gto.Mole()
-mol.atom = '''
-N  0.0000000000   0.0000000000   0.0000000000
-N  0.0000000000   0.0000000000   1.0977000000
-           '''
-mol.basis = 'sto-3g'
-mol.symmetry = 'D2h'
-mol.charge = 0
-mol.spin = 0 #2*S; multiplicity-1
-mol.verbose = 0
-mol.build(0, 0)
+def setUpModule():
+    global mol, mf
+    mol = gto.Mole()
+    mol.atom = '''
+    N  0.0000000000   0.0000000000   0.0000000000
+    N  0.0000000000   0.0000000000   1.0977000000
+               '''
+    mol.basis = 'sto-3g'
+    mol.symmetry = 'D2h'
+    mol.charge = 0
+    mol.spin = 0 #2*S; multiplicity-1
+    mol.verbose = 0
+    mol.build(0, 0)
 
-mf = scf.RHF(mol).run()
+    mf = mol.RHF(chkfile=tempfile.NamedTemporaryFile().name).run()
 
 def tearDownModule():
     global mol, mf
@@ -93,9 +95,15 @@ ORBSYM=1,2,3,4,
         self.assertTrue(abs(mf1.e_tot - mf.e_tot).max() < 1e-9)
         self.assertTrue(numpy.array_equal(mf.orbsym, mf1.orbsym))
 
+    def test_to_scf_with_symmetry(self):
+        with tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR) as tmpfcidump:
+            mol = gto.M(atom='H 0 0 0; H 1 0 0', symmetry=True)
+            mf = mol.RHF(mol).run()
+            fcidump.from_scf(mf, tmpfcidump.name)
+            mf = fcidump.to_scf(tmpfcidump.name)
+            self.assertEqual(mf.mol.groupname, 'D2h')
+
+
 if __name__ == "__main__":
     print("Full Tests for fcidump")
     unittest.main()
-
-
-

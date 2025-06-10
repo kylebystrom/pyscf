@@ -26,7 +26,8 @@ from pyscf import lib
 from pyscf.lib import logger
 from pyscf import __config__
 from pyscf import ao2mo
-from pyscf.agf2 import aux, ragf2, uagf2, ragf2_slow
+from pyscf.agf2 import ragf2, uagf2, ragf2_slow
+from pyscf.agf2 import aux_space as aux
 
 
 def build_se_part(agf2, eri, gf_occ, gf_vir, os_factor=1.0, ss_factor=1.0):
@@ -204,14 +205,14 @@ class UAGF2(uagf2.UAGF2):
             Auxiliaries of the Green's function for each spin
     '''
 
+    _keys = {'nmom'}
+
     def __init__(self, mf, nmom=(None,0), frozen=None, mo_energy=None, mo_coeff=None, mo_occ=None):
 
         uagf2.UAGF2.__init__(self, mf, frozen=frozen, mo_energy=mo_energy,
                              mo_coeff=mo_coeff, mo_occ=mo_occ)
 
         self.nmom = nmom
-
-        self._keys.update(['nmom'])
 
     build_se_part = build_se_part
 
@@ -249,7 +250,7 @@ class UAGF2(uagf2.UAGF2):
         if os_factor is None: os_factor = self.os_factor
         if ss_factor is None: ss_factor = self.ss_factor
 
-        facs = dict(os_factor=os_factor, ss_factor=ss_factor)
+        facs = {'os_factor': os_factor, 'ss_factor': ss_factor}
         gf_occ = (gf[0].get_occupied(), gf[1].get_occupied())
         gf_vir = (gf[0].get_virtual(), gf[1].get_virtual())
 

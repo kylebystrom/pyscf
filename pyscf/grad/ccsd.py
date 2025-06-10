@@ -23,15 +23,17 @@ CCSD analytical nuclear gradients
 
 import ctypes
 import numpy
-from pyscf import lib
 from functools import reduce
+from pyscf import lib
+from pyscf import gto
 from pyscf.lib import logger
 from pyscf.cc import ccsd
 from pyscf.cc import _ccsd
 from pyscf.cc import ccsd_rdm
+from pyscf.ao2mo import _ao2mo
 from pyscf.scf import cphf
 from pyscf.grad import rhf as rhf_grad
-from pyscf.grad.mp2 import _shell_prange, _index_frozen_active
+from pyscf.grad.mp2 import _shell_prange, _index_frozen_active, has_frozen_orbitals
 
 
 #
@@ -69,9 +71,7 @@ def grad_elec(cc_grad, t1=None, t2=None, l1=None, l2=None, eris=None, atmlst=Non
     mo_energy = mycc._scf.mo_energy
     nao, nmo = mo_coeff.shape
     nocc = numpy.count_nonzero(mycc.mo_occ > 0)
-    with_frozen = not ((mycc.frozen is None)
-                       or (isinstance(mycc.frozen, (int, numpy.integer)) and mycc.frozen == 0)
-                       or (len(mycc.frozen) == 0))
+    with_frozen = has_frozen_orbitals(mycc)
     OA, VA, OF, VF = _index_frozen_active(mycc.get_frozen_mask(), mycc.mo_occ)
 
     log.debug('symmetrized rdm2 and MO->AO transformation')
@@ -220,53 +220,52 @@ def as_scanner(grad_cc):
         return grad_cc
 
     logger.info(grad_cc, 'Create scanner for %s', grad_cc.__class__)
+    name = grad_cc.__class__.__name__ + CCSD_GradScanner.__name_mixin__
+    return lib.set_class(CCSD_GradScanner(grad_cc),
+                         (CCSD_GradScanner, grad_cc.__class__), name)
 
-    class CCSD_GradScanner(grad_cc.__class__, lib.GradScanner):
-        def __init__(self, g):
-            lib.GradScanner.__init__(self, g)
+class CCSD_GradScanner(lib.GradScanner):
+    def __init__(self, g):
+        lib.GradScanner.__init__(self, g)
 
-        def __call__(self, mol_or_geom, **kwargs):
-            if isinstance(mol_or_geom, gto.Mole):
-                mol = mol_or_geom
-            else:
-                mol = self.mol.set_geom_(mol_or_geom, inplace=False)
+    def __call__(self, mol_or_geom, **kwargs):
+        if isinstance(mol_or_geom, gto.MoleBase):
+            assert mol_or_geom.__class__ == gto.Mole
+            mol = mol_or_geom
+        else:
+            mol = self.mol.set_geom_(mol_or_geom, inplace=False)
 
-            cc = self.base
-            if cc.t2 is not None:
-                last_size = cc.vector_size()
-            else:
-                last_size = 0
+        cc = self.base
+        if cc.t2 is not None:
+            last_size = cc.vector_size()
+        else:
+            last_size = 0
 
-            cc.reset(mol)
-            mf_scanner = cc._scf
-            mf_scanner(mol)
-            cc.mo_coeff = mf_scanner.mo_coeff
-            cc.mo_occ = mf_scanner.mo_occ
-            if last_size != cc.vector_size():
-                cc.t1 = cc.t2 = cc.l1 = cc.l2 = None
+        self.reset(mol)
+        mf_scanner = cc._scf
+        mf_scanner(mol)
+        cc.mo_coeff = mf_scanner.mo_coeff
+        cc.mo_occ = mf_scanner.mo_occ
+        if last_size != cc.vector_size():
+            cc.t1 = cc.t2 = cc.l1 = cc.l2 = None
 
-            self.mol = mol
-            eris = cc.ao2mo(cc.mo_coeff)
-            # Update cc.t1 and cc.t2
-            cc.kernel(t1=cc.t1, t2=cc.t2, eris=eris)
-            # Update cc.l1 and cc.l2
-            cc.solve_lambda(l1=cc.l1, l2=cc.l2, eris=eris)
+        eris = cc.ao2mo(cc.mo_coeff)
+        # Update cc.t1 and cc.t2
+        cc.kernel(t1=cc.t1, t2=cc.t2, eris=eris)
+        # Update cc.l1 and cc.l2
+        cc.solve_lambda(l1=cc.l1, l2=cc.l2, eris=eris)
 
-            de = self.kernel(cc.t1, cc.t2, cc.l1, cc.l2, eris=eris, **kwargs)
-            return cc.e_tot, de
-        @property
-        def converged(self):
-            cc = self.base
-            return all((cc._scf.converged, cc.converged, cc.converged_lambda))
-
-    return CCSD_GradScanner(grad_cc)
+        de = self.kernel(cc.t1, cc.t2, cc.l1, cc.l2, eris=eris, **kwargs)
+        return cc.e_tot, de
+    @property
+    def converged(self):
+        cc = self.base
+        return all((cc._scf.converged, cc.converged, cc.converged_lambda))
 
 def _response_dm1(mycc, Xvo, eris=None):
     nvir, nocc = Xvo.shape
     nmo = nocc + nvir
-    with_frozen = not ((mycc.frozen is None)
-                       or (isinstance(mycc.frozen, (int, numpy.integer)) and mycc.frozen == 0)
-                       or (len(mycc.frozen) == 0))
+    with_frozen = has_frozen_orbitals(mycc)
     if eris is None or with_frozen:
         mo_energy = mycc._scf.mo_energy
         mo_occ = mycc.mo_occ
@@ -319,8 +318,8 @@ def _rdm2_mo2ao(mycc, d2, mo_coeff, fsave=None):
     nao_pair = nao * (nao+1) // 2
     nvir_pair = nvir * (nvir+1) //2
 
-    fdrv = getattr(_ccsd.libcc, 'AO2MOnr_e2_drv')
-    ftrans = _ccsd.libcc.AO2MOtranse2_nr_s1
+    fdrv = _ao2mo.libao2mo.AO2MOnr_e2_drv
+    ftrans = _ao2mo.libao2mo.AO2MOtranse2_nr_s1
     fmm = _ccsd.libcc.CCmmm_transpose_sum
     pao_loc = ctypes.POINTER(ctypes.c_void_p)()
     def _trans(vin, orbs_slice, out=None):
@@ -413,9 +412,9 @@ def _load_block_tril(h5dat, row0, row1, nao, out=None):
     return out
 
 def _cp(a):
-    return numpy.array(a, copy=False, order='C')
+    return numpy.asarray(a, order='C')
 
-class Gradients(rhf_grad.GradientsMixin):
+class Gradients(rhf_grad.GradientsBase):
 
     grad_elec = grad_elec
 
@@ -453,84 +452,8 @@ class Gradients(rhf_grad.GradientsMixin):
 
     as_scanner = as_scanner
 
+    to_gpu = lib.to_gpu
+
 Grad = Gradients
 
 ccsd.CCSD.Gradients = lib.class_as_method(Gradients)
-
-
-if __name__ == '__main__':
-    from pyscf import gto
-    from pyscf import scf
-
-    mol = gto.M(
-        atom = [
-            ["O" , (0. , 0.     , 0.)],
-            [1   , (0. ,-0.757  , 0.587)],
-            [1   , (0. , 0.757  , 0.587)]],
-        basis = '631g'
-    )
-    mf = scf.RHF(mol).run()
-    mycc = ccsd.CCSD(mf).run()
-    g1 = mycc.Gradients().kernel()
-#[[ 0   0                1.00950925e-02]
-# [ 0   2.28063426e-02  -5.04754623e-03]
-# [ 0  -2.28063426e-02  -5.04754623e-03]]
-    print(lib.finger(g1) - -0.036999389889460096)
-
-    mcs = mycc.as_scanner()
-    mol.set_geom_([
-            ["O" , (0. , 0.     , 0.001)],
-            [1   , (0. ,-0.757  , 0.587)],
-            [1   , (0. , 0.757  , 0.587)]])
-    e1 = mcs(mol)
-    mol.set_geom_([
-            ["O" , (0. , 0.     ,-0.001)],
-            [1   , (0. ,-0.757  , 0.587)],
-            [1   , (0. , 0.757  , 0.587)]])
-    e2 = mcs(mol)
-    print(g1[0,2] - (e1-e2)/0.002*lib.param.BOHR)
-
-    print('-----------------------------------')
-    mol = gto.M(
-        atom = [
-            ["O" , (0. , 0.     , 0.)],
-            [1   , (0. ,-0.757  , 0.587)],
-            [1   , (0. , 0.757  , 0.587)]],
-        basis = '631g'
-    )
-    mf = scf.RHF(mol).run()
-    mycc = ccsd.CCSD(mf)
-    mycc.frozen = [0,1,10,11,12]
-    mycc.max_memory = 1
-    mycc.kernel()
-    g1 = Gradients(mycc).kernel()
-#[[ -7.81105940e-17   3.81840540e-15   1.20415540e-02]
-# [  1.73095055e-16  -7.94568837e-02  -6.02077699e-03]
-# [ -9.49844615e-17   7.94568837e-02  -6.02077699e-03]]
-    print(lib.finger(g1) - 0.10599632044533455)
-
-    mcs = mycc.as_scanner()
-    mol.set_geom_([
-            ["O" , (0. , 0.     , 0.001)],
-            [1   , (0. ,-0.757  , 0.587)],
-            [1   , (0. , 0.757  , 0.587)]])
-    e1 = mcs(mol)
-    mol.set_geom_([
-            ["O" , (0. , 0.     ,-0.001)],
-            [1   , (0. ,-0.757  , 0.587)],
-            [1   , (0. , 0.757  , 0.587)]])
-    e2 = mcs(mol)
-    print(g1[0,2] - (e1-e2)/0.002*lib.param.BOHR)
-
-    mol = gto.M(
-        atom = 'H 0 0 0; H 0 0 1.76',
-        basis = '631g',
-        unit='Bohr')
-    mf = scf.RHF(mol).run(conv_tol=1e-14)
-    mycc = ccsd.CCSD(mf)
-    mycc.conv_tol = 1e-10
-    mycc.conv_tol_normt = 1e-10
-    mycc.kernel()
-    g1 = Gradients(mycc).kernel()
-#[[ 0.          0.         -0.07080036]
-# [ 0.          0.          0.07080036]]

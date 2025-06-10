@@ -23,7 +23,7 @@ Non-relativistic analytical nuclear gradients for restricted Kohn Sham with kpoi
 from pyscf.pbc.grad import krhf as rhf_grad
 from pyscf.grad import rks as rks_grad
 import numpy as np
-from pyscf.pbc.dft import numint
+from pyscf.dft import numint
 from pyscf import lib
 from pyscf.lib import logger
 
@@ -43,8 +43,6 @@ def get_veff(ks_grad, dm=None, kpts=None):
     if grids.coords is None:
         grids.build(with_non0tab=True)
 
-    omega, alpha, hyb = ni.rsh_and_hybrid_coeff(mf.xc, spin=cell.spin)
-
     mem_now = lib.current_memory()[0]
     max_memory = max(2000, ks_grad.max_memory*.9-mem_now)
     if ks_grad.grid_response:
@@ -53,13 +51,14 @@ def get_veff(ks_grad, dm=None, kpts=None):
         vxc = get_vxc(ni, cell, grids, mf.xc, dm, kpts,
                            max_memory=max_memory, verbose=ks_grad.verbose)
     t0 = logger.timer(ks_grad, 'vxc', *t0)
-    if abs(hyb) < 1e-10 and abs(alpha) < 1e-10:
+    if not ni.libxc.is_hybrid_xc(mf.xc):
         vj = ks_grad.get_j(dm, kpts)
         vxc += vj
     else:
+        omega, alpha, hyb = ni.rsh_and_hybrid_coeff(mf.xc, spin=cell.spin)
         vj, vk = ks_grad.get_jk(dm, kpts)
         vk *= hyb
-        if abs(omega) > 1e-10:  # For range separated Coulomb operator
+        if omega != 0:
             with cell.with_range_coulomb(omega):
                 vk += ks_grad.get_k(dm, kpts) * (alpha - hyb)
         vxc += vj - vk * .5
@@ -73,7 +72,7 @@ def get_vxc(ni, cell, grids, xc_code, dms, kpts, kpts_band=None, relativity=0, h
     ao_loc = cell.ao_loc_nr()
     nkpts = len(kpts)
     vmat = np.zeros((3,nset,nkpts,nao,nao), dtype=dms.dtype)
-    if xctype == 'LDA':
+    if xctype in (None, 'LDA', 'HF'):
         ao_deriv = 1
         for ao_k1, ao_k2, mask, weight, coords \
                 in ni.block_loop(cell, grids, nao, ao_deriv, kpts, kpts_band, max_memory):
@@ -82,6 +81,8 @@ def get_vxc(ni, cell, grids, xc_code, dms, kpts, kpts_band=None, relativity=0, h
             for i in range(nset):
                 rho = make_rho(i, ao_k2[:,0], mask, xctype)
                 vxc = ni.eval_xc(xc_code, rho, 0, relativity, 1)[1]
+                if vxc is None:
+                    vxc = np.zeros_like(rho)
                 vrho = vxc[0]
                 aow = np.einsum('xpi,p->xpi', ao_k1[:,0], weight*vrho)
                 for kn in range(nkpts):
@@ -113,11 +114,12 @@ def get_vxc(ni, cell, grids, xc_code, dms, kpts, kpts_band=None, relativity=0, h
         return -vmat
 
 class Gradients(rhf_grad.Gradients):
+    _keys = {'grid_response', 'grids'}
+
     def __init__(self, mf):
         rhf_grad.Gradients.__init__(self, mf)
         self.grids = None
         self.grid_response = False
-        self._keys = self._keys.union(['grid_response', 'grids'])
 
     def dump_flags(self, verbose=None):
         rhf_grad.Gradients.dump_flags(self, verbose)

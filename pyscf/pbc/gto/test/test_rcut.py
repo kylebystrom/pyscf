@@ -15,21 +15,29 @@
 import unittest
 import numpy
 from pyscf.pbc import gto, scf
-cell = gto.M(atom='''
-C 4.826006352031   3.412501814582   8.358888185226
-C 0.689429478862   0.487500259226   1.194126883604
-             ''',
-a='''
-4.136576868, 0.000000000, 2.388253772
-1.378858962, 3.900002074, 2.388253772
-0.000000000, 0.000000000, 4.776507525
-             ''',
-unit='B',
-precision=1e-14,
-basis='gth-tzv2p',
-pseudo='gth-lda',
-mesh=[15]*3,
-verbose=0)
+from pyscf.pbc.gto import eval_gto
+
+def setUpModule():
+    global cell
+    cell = gto.M(atom='''
+    C 4.826006352031   3.412501814582   8.358888185226
+    C 0.689429478862   0.487500259226   1.194126883604
+                 ''',
+    a='''
+    4.136576868, 0.000000000, 2.388253772
+    1.378858962, 3.900002074, 2.388253772
+    0.000000000, 0.000000000, 4.776507525
+                 ''',
+    unit='B',
+    precision=1e-14,
+    basis='gth-tzv2p',
+    pseudo='gth-lda',
+    mesh=[15]*3,
+    verbose=0)
+
+def tearDownModule():
+    global cell
+    del cell
 
 class KnownValues(unittest.TestCase):
     def test_rcut(self):
@@ -46,7 +54,26 @@ class KnownValues(unittest.TestCase):
             self.assertTrue(abs(t1-t0).max() < prec*1e-0)
             self.assertTrue(abs(s1-s0).max() < prec*1e-1)
 
+    def test_loose_rcut(self):
+        from pyscf.gto.mole import ANG_OF
+        from pyscf.pbc.gto.cell import _extract_pgto_params
+        cell1 = cell.copy()
+        cell1.use_loose_rcut = True
+        for i in range(1, 10):
+            cell1.precision = prec = 1e-13 * 10**i
+            cell1.build()
+            exps, cs = _extract_pgto_params(cell, 'min')
+            ls = cell._bas[:,ANG_OF]
+            r = cell1.rcut
+            val = cs * r**(ls+2) * numpy.exp(-exps * r**2)
+            self.assertTrue(abs(val - prec).max() < prec * 1.01)
+
+    # For atoms out of the rcut on the non-periodic directions. See issue #2460
+    def test_lattice_Ls_low_dim(self):
+        cell = gto.M(atom='H 0 9 9', a=numpy.diag([1.,2.,2.]), dimension=1)
+        Ls = eval_gto.get_lattice_Ls(cell)
+        self.assertTrue(len(Ls) > 15)
+
 if __name__ == '__main__':
     print("Test rcut and the errorsin pbc.gto.cell")
     unittest.main()
-

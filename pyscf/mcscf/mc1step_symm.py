@@ -32,7 +32,7 @@ class SymAdaptedCASSCF(mc1step.CASSCF):
     def __init__(self, mf_or_mol, ncas, nelecas, ncore=None, frozen=None):
         mc1step.CASSCF.__init__(self, mf_or_mol, ncas, nelecas, ncore, frozen)
 
-        assert(self.mol.symmetry)
+        assert (self.mol.symmetry)
         fcisolver = self.fcisolver
         if isinstance(fcisolver, fci.direct_spin0.FCISolver):
             self.fcisolver = fci.direct_spin0_symm.FCISolver(self.mol)
@@ -56,6 +56,8 @@ class SymAdaptedCASSCF(mc1step.CASSCF):
     def kernel(self, mo_coeff=None, ci0=None, callback=None, _kern=None):
         if mo_coeff is None:
             mo_coeff = self.mo_coeff
+        else: # overwrite self.mo_coeff because it is needed in many methods of this class
+            self.mo_coeff = mo_coeff
         if callback is None: callback = self.callback
         if _kern is None: _kern = mc1step.kernel
 
@@ -71,7 +73,7 @@ class SymAdaptedCASSCF(mc1step.CASSCF):
                 _kern(self, mo_coeff,
                       tol=self.conv_tol, conv_tol_grad=self.conv_tol_grad,
                       ci0=ci0, callback=callback, verbose=self.verbose)
-        log.note('CASSCF energy = %.15g', self.e_tot)
+        log.note('CASSCF energy = %#.15g', self.e_tot)
         self._finalize()
         return self.e_tot, self.e_cas, self.ci, self.mo_coeff, self.mo_energy
 
@@ -107,13 +109,13 @@ class SymAdaptedCASSCF(mc1step.CASSCF):
 
     def newton(self):
         from pyscf.mcscf import newton_casscf_symm
+        from pyscf.mcscf.addons import StateAverageMCSCFSolver
         mc1 = newton_casscf_symm.CASSCF(self._scf, self.ncas, self.nelecas)
         mc1.__dict__.update(self.__dict__)
         mc1.max_cycle_micro = 10
         # MRH, 04/08/2019: enable state-average CASSCF second-order algorithm
-        from pyscf.mcscf.addons import StateAverageMCSCFSolver
         if isinstance (self, StateAverageMCSCFSolver):
-            mc1 = mc1.state_average_(self.weights)
+            mc1 = mc1.state_average_(self.weights, self.wfnsym)
         return mc1
 
 CASSCF = SymAdaptedCASSCF

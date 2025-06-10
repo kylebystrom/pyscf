@@ -27,7 +27,8 @@ from pyscf.lib import logger
 from pyscf import __config__
 from pyscf import ao2mo
 from pyscf.scf import _vhf
-from pyscf.agf2 import aux, mpi_helper, _agf2
+from pyscf.agf2 import mpi_helper, _agf2
+from pyscf.agf2 import aux_space as aux
 from pyscf.agf2 import chkfile as chkutil
 from pyscf.agf2.chempot import binsearch_chempot, minimize_chempot
 from pyscf.mp.mp2 import get_frozen_mask as _get_frozen_mask
@@ -149,7 +150,7 @@ def build_se_part(agf2, eri, gf_occ, gf_vir, os_factor=1.0, ss_factor=1.0):
 
     nmo = eri.nmo
     tol = agf2.weight_tol
-    facs = dict(os_factor=os_factor, ss_factor=ss_factor)
+    facs = {'os_factor': os_factor, 'ss_factor': ss_factor}
 
     ci, ei = gf_occ.coupling, gf_occ.energy
     ca, ea = gf_vir.coupling, gf_vir.energy
@@ -283,7 +284,7 @@ def fock_loop(agf2, eri, gf, se):
 
     Returns:
         :class:`SelfEnergy`, :class:`GreensFunction` and a boolean
-        indicating wheter convergence was successful.
+        indicating whether convergence was successful.
     '''
 
     assert type(gf) is aux.GreensFunction
@@ -303,7 +304,7 @@ def fock_loop(agf2, eri, gf, se):
     nqmo = nmo + naux
     buf = np.zeros((nqmo, nqmo))
     converged = False
-    opts = dict(tol=agf2.conv_tol_nelec, maxiter=agf2.max_cycle_inner)
+    opts = {'tol': agf2.conv_tol_nelec, 'maxiter': agf2.max_cycle_inner}
     rdm1_prev = 0
 
     for niter1 in range(1, agf2.max_cycle_outer+1):
@@ -506,6 +507,16 @@ class RAGF2(lib.StreamObject):
     async_io = getattr(__config__, 'agf2_async_io', True)
     incore_complete = getattr(__config__, 'agf2_incore_complete', False)
 
+    _keys = {
+        'async_io', 'mol', 'incore_complete',
+        'conv_tol', 'conv_tol_rdm1', 'conv_tol_nelec', 'max_cycle',
+        'max_cycle_outer', 'max_cycle_inner', 'weight_tol', 'fock_diis_space',
+        'fock_diis_min_space', 'diis', 'diis_space', 'diis_min_space',
+        'os_factor', 'ss_factor', 'damping',
+        'mo_energy', 'mo_coeff', 'mo_occ', 'se', 'gf', 'e_1b', 'e_2b', 'e_init',
+        'frozen', 'converged', 'chkfile',
+    }
+
     def __init__(self, mf, frozen=None, mo_energy=None, mo_coeff=None, mo_occ=None):
 
         if mo_energy is None: mo_energy = mpi_helper.bcast(mf.mo_energy)
@@ -548,7 +559,6 @@ class RAGF2(lib.StreamObject):
         self._nocc = None
         self.converged = False
         self.chkfile = mf.chkfile
-        self._keys = set(self.__dict__.keys())
 
     energy_1body = energy_1body
     energy_2body = energy_2body
@@ -687,7 +697,7 @@ class RAGF2(lib.StreamObject):
         if os_factor is None: os_factor = self.os_factor
         if ss_factor is None: ss_factor = self.ss_factor
 
-        facs = dict(os_factor=os_factor, ss_factor=ss_factor)
+        facs = {'os_factor': os_factor, 'ss_factor': ss_factor}
         gf_occ = gf.get_occupied()
         gf_vir = gf.get_virtual()
 
@@ -828,6 +838,12 @@ class RAGF2(lib.StreamObject):
     def dump_chk(self, chkfile=None, key='agf2', gf=None, se=None,
                  frozen=None, nmom=None,
                  mo_energy=None, mo_coeff=None, mo_occ=None):
+        if chkfile is None:
+            chkfile = self.chkfile
+
+        if not chkfile:
+            return self
+
         chkutil.dump_agf2(self, chkfile, key,
                           gf, se, frozen, None,
                           mo_energy, mo_coeff, mo_occ)
@@ -853,12 +869,10 @@ class RAGF2(lib.StreamObject):
             myagf2.with_df = with_df
 
         if auxbasis is not None and myagf2.with_df.auxbasis != auxbasis:
-            import copy
-            myagf2.with_df = copy.copy(myagf2.with_df)
+            myagf2.with_df = myagf2.with_df.copy()
             myagf2.with_df.auxbasis = auxbasis
 
         return myagf2
-
 
     def get_ip(self, gf, nroots=5):
         gf_occ = gf.get_occupied()
@@ -942,6 +956,7 @@ class RAGF2(lib.StreamObject):
 
     @property
     def e_corr(self):
+        # TODO Should HF energy be recalculated in case DFT orbitals or so were used?
         e_hf = mpi_helper.bcast(self._scf.e_tot)
         return self.e_tot - e_hf
 

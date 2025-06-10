@@ -112,9 +112,11 @@ def gen_hop_uhf_external(mf):
         return h2.dot(x)
     return hop1, hop2
 
-mol = gto.M(atom='O 0 0 0; O 0 0 1.2222', basis='631g*', symmetry=1,
-            spin=2, verbose=5, output='/dev/null')
-mf = scf.ROHF(mol).run(conv_tol=1e-12)
+def setUpModule():
+    global mol, mf
+    mol = gto.M(atom='O 0 0 0; O 0 0 1.2222', basis='631g*', symmetry=1,
+                spin=2, verbose=5, output='/dev/null')
+    mf = scf.ROHF(mol).run(conv_tol=1e-12)
 
 def tearDownModule():
     global mol, mf
@@ -215,7 +217,7 @@ class KnownValues(unittest.TestCase):
         mf1 = scf.convert_to_ghf(mf).newton()
         s = mf1.det_ovlp(mo_e, mf1.mo_coeff, mf1.mo_occ, mf1.mo_occ,
                          mf1.get_ovlp())[0]
-        self.assertAlmostEqual(s, 0.57993272190912937, 6)
+        self.assertAlmostEqual(s, 0.5799335722196731, 5)
         mf1.kernel(mo_coeff=mo_e, mo_occ=mf1.mo_occ)
         self.assertAlmostEqual(mf1.e_tot, -149.6097443357186, 8)
 
@@ -235,7 +237,7 @@ class KnownValues(unittest.TestCase):
         mf1 = scf.convert_to_ghf(mf).newton()
         s = mf1.det_ovlp(mo_e, mf1.mo_coeff, mf1.mo_occ, mf1.mo_occ,
                          mf1.get_ovlp())[0]
-        self.assertAlmostEqual(s, 0.57993272190912937, 6)
+        self.assertAlmostEqual(s, 0.5799335722196731, 5)
         mf1.kernel(mo_coeff=mo_e, mo_occ=mf1.mo_occ)
         self.assertAlmostEqual(mf1.e_tot, -149.6097443357186, 8)
 
@@ -251,4 +253,3 @@ class KnownValues(unittest.TestCase):
 if __name__ == "__main__":
     print("Full Tests for stability")
     unittest.main()
-

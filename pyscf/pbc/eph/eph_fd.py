@@ -26,7 +26,7 @@ from pyscf.data.nist import MP_ME
 
 def copy_mf(mf, cell):
     mf1 = mf.__class__(cell)
-    if hasattr(mf, 'xc'):
+    if isinstance(mf, scf.hf.KohnShamDFT):
         mf1.xc = mf.xc
     mf1.kpts = mf.kpts
     mf1.exxdiv = getattr(mf, 'exxdiv', None)
@@ -137,7 +137,7 @@ def kernel(mf, disp=1e-4, mo_rep=False):
     mo_coeff = np.asarray(mf.mo_coeff)
     RESTRICTED= (mo_coeff.ndim==3)
     cell = mf.cell
-    cells_a, cells_b = gen_cells(cell, disp/2.0) # generate a bunch of cells with disp/2 on each cartesion coord
+    cells_a, cells_b = gen_cells(cell, disp/2.0) # generate a bunch of cells with disp/2 on each cartesian coord
     mfset = run_mfs(mf, cells_a, cells_b) # run mean field calculations on all these cells
     vmat = get_vmat(mf, mfset, disp) # extracting <u|dV|v>/dR
     hmat = run_hess(mfset, disp)

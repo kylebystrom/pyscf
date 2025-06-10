@@ -15,7 +15,7 @@ import ase
 import ase.lattice
 from ase.lattice.cubic import Diamond
 from ase.units import kJ
-from ase.utils.eos import EquationOfState
+from ase.eos import EquationOfState
 
 
 ase_atom=Diamond(symbol='C', latticeconstant=3.5668)
@@ -48,7 +48,7 @@ volumes = []
 energies = []
 for x in np.linspace(0.95, 1.2, 5):
     ase_atom.set_cell(ase_cell * x, scale_atoms = True)
-    print "[x: %f, E: %f]" % (x, ase_atom.get_potential_energy())
+    print("[x: %f, E: %f]" % (x, ase_atom.get_potential_energy()))
     volumes.append(ase_atom.get_volume())
     energies.append(ase_atom.get_potential_energy())
 

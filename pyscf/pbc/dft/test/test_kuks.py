@@ -19,16 +19,19 @@
 import unittest
 import numpy as np
 from pyscf.pbc import gto as pbcgto
+from pyscf.pbc import scf as pbcscf
 from pyscf.pbc import dft as pbcdft
 
 
-L = 4.
-cell = pbcgto.Cell()
-cell.verbose = 0
-cell.a = np.eye(3)*L
-cell.atom =[['He' , ( L/2+0., L/2+0. ,   L/2+1.)],]
-cell.basis = {'He': [[0, (4.0, 1.0)], [0, (1.0, 1.0)]]}
-cell.build()
+def setUpModule():
+    global cell
+    L = 4.
+    cell = pbcgto.Cell()
+    cell.verbose = 0
+    cell.a = np.eye(3)*L
+    cell.atom =[['He' , ( L/2+0., L/2+0. ,   L/2+1.)],]
+    cell.basis = {'He': [[0, (4.0, 1.0)], [0, (1.0, 1.0)]]}
+    cell.build()
 
 def tearDownModule():
     global cell
@@ -36,6 +39,17 @@ def tearDownModule():
 
 
 class KnownValues(unittest.TestCase):
+    def test_klda(self):
+        cell = pbcgto.M(atom='H 0 0 0; H 1 0 0', a=np.eye(3)*2, basis=[[0, [1, 1]]])
+        cell.build()
+        mf = cell.KUKS(kpts=cell.make_kpts([2,2,1]))
+        mf.run()
+        self.assertAlmostEqual(mf.e_tot, -0.3846075202893169, 7)
+
+        mf.kpts = cell.make_kpts([2,2,1])
+        mf.run()
+        self.assertAlmostEqual(mf.e_tot, -0.3846075202893169, 7)
+
     def test_klda8_cubic_kpt_222_high_cost(self):
         cell = pbcgto.Cell()
         cell.unit = 'A'
@@ -65,20 +79,42 @@ C, 0.8917,  2.6751,  2.6751'''
         e1 = mf.scf()
         self.assertAlmostEqual(e1, -45.42583489512954, 8)
 
-    def test_rsh_df(self):
+    def test_rsh_fft(self):
+        mf = pbcdft.KUKS(cell)
+        mf.xc = 'hse06'
+        mf.kernel()
+        self.assertAlmostEqual(mf.e_tot, -2.482418296326724, 7)
+
         mf = pbcdft.KUKS(cell)
         mf.xc = 'camb3lyp'
         mf.kernel()
-        self.assertAlmostEqual(mf.e_tot, -2.3032261128220544, 7)
+        self.assertAlmostEqual(mf.e_tot, -2.4745140703871877, 7)
 
+    def test_rsh_df(self):
         mf = pbcdft.KUKS(cell).density_fit()
+        mf.xc = 'wb97'
+        mf.kernel()
+        self.assertAlmostEqual(mf.e_tot, -2.4916945546399165, 6)
+
         mf.xc = 'camb3lyp'
         mf.omega = .15
         mf.kernel()
-        self.assertAlmostEqual(mf.e_tot, -2.3987656490734555, 7)
+        self.assertAlmostEqual(mf.e_tot, -2.4766238116030683, 6)
+
+    def test_to_hf(self):
+        mf = pbcdft.KUKS(cell).density_fit()
+        mf.with_df._j_only = True
+        a_hf = mf.to_hf()
+        self.assertTrue(a_hf.with_df._j_only)
+        self.assertTrue(isinstance(a_hf, pbcscf.kuhf.KUHF))
+
+        mf = pbcdft.KUKS(cell, kpts=cell.make_kpts([2,1,1])).density_fit()
+        mf.with_df._j_only = True
+        a_hf = mf.to_hf()
+        self.assertTrue(not a_hf.with_df._j_only)
+        self.assertTrue(isinstance(a_hf, pbcscf.kuhf.KUHF))
 
 
 if __name__ == '__main__':
     print("Full Tests for pbc.dft.kuks")
     unittest.main()
-

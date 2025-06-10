@@ -23,13 +23,15 @@ from pyscf import lib
 from pyscf import gto
 from pyscf import ao2mo
 
-mol = gto.Mole()
-mol.verbose = 0
-mol.atom = '''
-      h     0    -0.757   0.587
-      h     0    0.757    0.587'''
-mol.basis = 'cc-pvdz'
-mol.build()
+def setUpModule():
+    global mol
+    mol = gto.Mole()
+    mol.verbose = 0
+    mol.atom = '''
+          h     0    -0.757   0.587
+          h     0    0.757    0.587'''
+    mol.basis = 'cc-pvdz'
+    mol.build()
 
 def tearDownModule():
     global mol
@@ -104,5 +106,3 @@ class KnowValues(unittest.TestCase):
 if __name__ == '__main__':
     print('Full Tests for __init__')
     unittest.main()
-
-

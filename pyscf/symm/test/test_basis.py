@@ -19,6 +19,7 @@
 import unittest
 import numpy
 from pyscf import gto
+from pyscf import lib
 from pyscf import symm
 
 def get_so(atoms, basis, cart=False):
@@ -33,7 +34,7 @@ def get_so(atoms, basis, cart=False):
     for c in so:
         if c.size > 0:
             n += c.shape[1]
-    assert(n == mol.nao_nr())
+    assert n == mol.nao_nr()
     return n, so
 
 
@@ -140,6 +141,11 @@ class KnowValues(unittest.TestCase):
         self.assertEqual(get_so(atoms,basis)[0], 220)
 
     def test_symm_orb_c3v_as_cs(self):
+        # This molecule has an approximate C3v symmetry for TOLERANCE>1e-5
+        # When using its subgroup cs, a mirror perpedicular to [-.5, -.866, 0]
+        # will be adopted as the mirror. This mirror leads to more errors in
+        # atomic coordinates than the yz-mirror. In this case, one can adjust
+        # TOLERANCE to pass the check_symm or symm_identical_atoms functions.
         atoms = [['Fe', ( 0.000000  , 0.000000  , 0.015198 )],
                  ['C',  ( 0.000000  , 0.000000  , -1.938396)],
                  ['C',  ( 0.000000  , -1.394127 , -1.614155)],
@@ -157,6 +163,10 @@ class KnowValues(unittest.TestCase):
                  ['O',  ( 0.000000  , 2.572496  , 1.441607 )],
                  ['O',  ( 2.227847  , -1.286248 , 1.441607 )],
                  ['O',  ( -2.227847 , -1.286248 , 1.441607 )],]
+        numpy.random.seed(2)
+        u = numpy.linalg.svd(numpy.random.rand(3,3))[0]
+        r = numpy.array([a[1] for a in atoms])
+        atoms = [[a[0], x] for a, x in zip(atoms, r.dot(u))]
         basis = {'Fe':gto.basis.load('def2svp', 'C'),
                  'C': gto.basis.load('def2svp', 'C'),
                  'H': gto.basis.load('def2svp', 'C'),
@@ -171,6 +181,21 @@ class KnowValues(unittest.TestCase):
         idx, idy = numpy.where(numpy.hstack(so) != 0)
         self.assertEqual(idy.argsort().tolist(),
                          [0,1,2,3,4,6,9,12,15,7,10,13,16,5,8,11,14,17,22,18,23,19,24,20,25,21,26,27,28,29,30,31,32,33])
+
+    def test_so3_symb2id(self):
+        ref = symm.basis._SO3_SYMB2ID
+        with lib.temporary_env(symm.basis, _SO3_SYMB2ID={}):
+            for s in ['p+1', 'd+0', 'f-2', 'g+4', 'f+0']:
+                self.assertEqual(ref[s], symm.basis.so3_irrep_symb2id(s))
+        self.assertRaises(KeyError, symm.basis.so3_irrep_symb2id, 'k-8')
+
+    def test_so3_id2symb(self):
+        ref = symm.basis._SO3_ID2SYMB
+        with lib.temporary_env(symm.basis, _SO3_ID2SYMB={}):
+            for s in [200, 202, 314, 317, 421, 420]:
+                self.assertEqual(ref[s], symm.basis.so3_irrep_id2symb(s))
+        self.assertRaises(KeyError, symm.basis.so3_irrep_id2symb, 746)
+        self.assertRaises(KeyError, symm.basis.so3_irrep_id2symb, 729)
 
 
 if __name__ == "__main__":

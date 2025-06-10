@@ -20,13 +20,14 @@
 Non-relativistic Unrestricted Kohn-Sham
 '''
 
+from pyscf import lib
 from pyscf.lib import logger
 from pyscf.scf import uhf_symm
 from pyscf.dft import uks
 from pyscf.dft import rks
 
 
-class SymAdaptedUKS(uhf_symm.UHF, rks.KohnShamDFT):
+class SymAdaptedUKS(rks.KohnShamDFT, uhf_symm.UHF):
     ''' Restricted Kohn-Sham '''
     def __init__(self, mol, xc='LDA,VWN'):
         uhf_symm.UHF.__init__(self, mol)
@@ -43,11 +44,11 @@ class SymAdaptedUKS(uhf_symm.UHF, rks.KohnShamDFT):
 
     init_guess_by_vsap = rks.init_guess_by_vsap
 
-    reset = rks.KohnShamDFT.reset
-
     def nuc_grad_method(self):
         from pyscf.grad import uks
         return uks.Gradients(self)
+
+    to_gpu = lib.to_gpu
 
 UKS = SymAdaptedUKS
 
@@ -66,4 +67,3 @@ if __name__ == '__main__':
     m = UKS(mol)
     m.xc = 'b3lyp'
     print(m.scf())  # -2.89992555753
-

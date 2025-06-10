@@ -22,11 +22,13 @@ try:
 except ImportError:
     berny_solver = False
 
-mol = gto.M(atom='''
-    O  0.   0.       0.
-    H  0.   -0.757   0.587
-    H  0.   0.757    0.587
-            ''', symmetry=True, verbose=0)
+def setUpModule():
+    global mol
+    mol = gto.M(atom='''
+        O  0.   0.       0.
+        H  0.   -0.757   0.587
+        H  0.   0.757    0.587
+                ''', symmetry=True, verbose=0)
 
 def tearDownModule():
     global mol
@@ -54,4 +56,3 @@ class KnownValues(unittest.TestCase):
 if __name__ == "__main__":
     print("Tests for berny_solver")
     unittest.main()
-

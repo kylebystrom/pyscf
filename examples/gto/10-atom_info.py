@@ -14,9 +14,9 @@ from pyscf import gto
 
 mol = gto.M(
     atom = '''
-        O  0 0.     0
-        H1 0 -2.757 2.587
-        H2 0 2.757  2.587''',
+O        0.000000    0.000000    0.117790
+H        0.000000    0.755453   -0.471161
+H        0.000000   -0.755453   -0.471161''',
     basis = 'ccpvdz',
 )
 
@@ -26,5 +26,9 @@ for i in range(mol.natm):
                                         mol.atom_charge(i),
                                         mol.atom_coord(i)))
 
-print("Atoms' charges in a vector\n%s" % mol.atom_charges())
-print("Atoms' coordinates in an array\n%s" % mol.atom_coords())
+print("Atomic charges:")
+print(mol.atom_charges())
+print("Atomic coordinates (Bohr):")
+print(mol.atom_coords())
+print("Atomic coordinates (Angstrom):")
+print(mol.atom_coords(unit='Ang'))

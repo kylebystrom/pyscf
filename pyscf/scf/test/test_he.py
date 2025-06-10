@@ -21,14 +21,17 @@ import numpy
 from pyscf import scf
 from pyscf import gto
 from pyscf import lib
+from pyscf.scf import atom_hf, atom_ks
 
-# for cgto
-mol = gto.Mole()
-mol.verbose = 0
-mol.output = None
-mol.atom.extend([[2, (0.,0.,0.)], ])
-mol.basis = {"He": 'cc-pvdz'}
-mol.build()
+def setUpModule():
+    global mol
+    # for cgto
+    mol = gto.Mole()
+    mol.verbose = 0
+    mol.output = None
+    mol.atom.extend([[2, (0.,0.,0.)], ])
+    mol.basis = {"He": 'cc-pvdz'}
+    mol.build()
 
 def tearDownModule():
     global mol
@@ -69,8 +72,17 @@ class KnownValues_NR(unittest.TestCase):
 #        mol.nucmod = {1:1}
 #        mol.build()
 
+    def test_atomic_ks(self):
+        mol = gto.M(
+            atom = [["N", (0. , 0., .5)],
+                    ["N", (0. , 0.,-.5)] ],
+            basis = {"N": '6-31g'}
+        )
+        result = atom_hf.get_atm_nrhf(mol)
+        self.assertAlmostEqual(result['N'][0], -53.823206125468346, 9)
+        result = atom_ks.get_atm_nrks(mol)
+        self.assertAlmostEqual(result['N'][0], -53.53518426665269, 9)
 
 if __name__ == "__main__":
     print("Full Tests for He")
     unittest.main()
-

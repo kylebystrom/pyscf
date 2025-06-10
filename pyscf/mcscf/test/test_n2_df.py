@@ -22,33 +22,35 @@ from pyscf import df
 from pyscf import ao2mo
 from pyscf import mcscf
 
-b = 1.4
-mol = gto.M(
-verbose = 5,
-output = '/dev/null',
-atom = [
-    ['N',(  0.000000,  0.000000, -b/2)],
-    ['N',(  0.000000,  0.000000,  b/2)], ],
-basis = {'N': 'ccpvdz', },
-max_memory = 1,
-)
-m = scf.RHF(mol)
-m.conv_tol = 1e-9
-m.scf()
+def setUpModule():
+    global mol, molsym, m, msym
+    b = 1.4
+    mol = gto.M(
+    verbose = 5,
+    output = '/dev/null',
+    atom = [
+        ['N',(  0.000000,  0.000000, -b/2)],
+        ['N',(  0.000000,  0.000000,  b/2)], ],
+    basis = {'N': 'ccpvdz', },
+    max_memory = 1,
+    )
+    m = scf.RHF(mol)
+    m.conv_tol = 1e-9
+    m.scf()
 
-molsym = gto.M(
-verbose = 5,
-output = '/dev/null',
-atom = [
-    ['N',(  0.000000,  0.000000, -b/2)],
-    ['N',(  0.000000,  0.000000,  b/2)], ],
-basis = {'N': 'ccpvdz', },
-max_memory = 1,
-symmetry = True,
-)
-msym = scf.RHF(molsym)
-msym.conv_tol = 1e-9
-msym.scf()
+    molsym = gto.M(
+        verbose = 5,
+        output = '/dev/null',
+        atom = [
+            ['N',(  0.000000,  0.000000, -b/2)],
+            ['N',(  0.000000,  0.000000,  b/2)], ],
+        basis = {'N': 'ccpvdz', },
+        max_memory = 1,
+        symmetry = True,
+        )
+    msym = scf.RHF(molsym)
+    msym.conv_tol = 1e-9
+    msym.scf()
 
 def tearDownModule():
     global mol, molsym, m, msym
@@ -190,11 +192,11 @@ class KnownValues(unittest.TestCase):
         from pyscf.mcscf import df
         mf = scf.RHF(mol)
         self.assertTrue(isinstance(mcscf.CASCI(mf, 2, 2), mcscf.casci.CASCI))
-        self.assertTrue(isinstance(mcscf.CASCI(mf.density_fit(), 2, 2), df._DFCASSCF))
+        self.assertTrue(isinstance(mcscf.CASCI(mf.density_fit(), 2, 2), df._DFCASCI))
         self.assertTrue(isinstance(mcscf.CASCI(mf.newton(), 2, 2), mcscf.casci.CASCI))
-        self.assertTrue(isinstance(mcscf.CASCI(mf.density_fit().newton(), 2, 2), df._DFCASSCF))
+        self.assertTrue(isinstance(mcscf.CASCI(mf.density_fit().newton(), 2, 2), df._DFCASCI))
         self.assertTrue(isinstance(mcscf.CASCI(mf.newton().density_fit(), 2, 2), mcscf.casci.CASCI))
-        self.assertTrue(isinstance(mcscf.CASCI(mf.density_fit().newton().density_fit(), 2, 2), df._DFCASSCF))
+        self.assertTrue(isinstance(mcscf.CASCI(mf.density_fit().newton().density_fit(), 2, 2), df._DFCASCI))
 
         self.assertTrue(isinstance(mcscf.CASSCF(mf, 2, 2), mcscf.mc1step.CASSCF))
         self.assertTrue(isinstance(mcscf.CASSCF(mf.density_fit(), 2, 2), df._DFCASSCF))
@@ -203,12 +205,12 @@ class KnownValues(unittest.TestCase):
         self.assertTrue(isinstance(mcscf.CASSCF(mf.newton().density_fit(), 2, 2), mcscf.mc1step.CASSCF))
         self.assertTrue(isinstance(mcscf.CASSCF(mf.density_fit().newton().density_fit(), 2, 2), df._DFCASSCF))
 
-        self.assertTrue(isinstance(mcscf.DFCASCI(mf, 2, 2), df._DFCASSCF))
-        self.assertTrue(isinstance(mcscf.DFCASCI(mf.density_fit(), 2, 2), df._DFCASSCF))
-        self.assertTrue(isinstance(mcscf.DFCASCI(mf.newton(), 2, 2), df._DFCASSCF))
-        self.assertTrue(isinstance(mcscf.DFCASCI(mf.density_fit().newton(), 2, 2), df._DFCASSCF))
-        self.assertTrue(isinstance(mcscf.DFCASCI(mf.newton().density_fit(), 2, 2), df._DFCASSCF))
-        self.assertTrue(isinstance(mcscf.DFCASCI(mf.density_fit().newton().density_fit(), 2, 2), df._DFCASSCF))
+        self.assertTrue(isinstance(mcscf.DFCASCI(mf, 2, 2), df._DFCASCI))
+        self.assertTrue(isinstance(mcscf.DFCASCI(mf.density_fit(), 2, 2), df._DFCASCI))
+        self.assertTrue(isinstance(mcscf.DFCASCI(mf.newton(), 2, 2), df._DFCASCI))
+        self.assertTrue(isinstance(mcscf.DFCASCI(mf.density_fit().newton(), 2, 2), df._DFCASCI))
+        self.assertTrue(isinstance(mcscf.DFCASCI(mf.newton().density_fit(), 2, 2), df._DFCASCI))
+        self.assertTrue(isinstance(mcscf.DFCASCI(mf.density_fit().newton().density_fit(), 2, 2), df._DFCASCI))
 
         self.assertTrue(isinstance(mcscf.DFCASSCF(mf, 2, 2), df._DFCASSCF))
         self.assertTrue(isinstance(mcscf.DFCASSCF(mf.density_fit(), 2, 2), df._DFCASSCF))
@@ -218,11 +220,11 @@ class KnownValues(unittest.TestCase):
         self.assertTrue(isinstance(mcscf.DFCASSCF(mf.density_fit().newton().density_fit(), 2, 2), df._DFCASSCF))
 
         self.assertTrue(isinstance(mcscf.CASCI(msym, 2, 2), mcscf.casci_symm.CASCI))
-        self.assertTrue(isinstance(mcscf.CASCI(msym.density_fit(), 2, 2), df._DFCASSCF))
+        self.assertTrue(isinstance(mcscf.CASCI(msym.density_fit(), 2, 2), df._DFCASCI))
         self.assertTrue(isinstance(mcscf.CASCI(msym.newton(), 2, 2), mcscf.casci_symm.CASCI))
-        self.assertTrue(isinstance(mcscf.CASCI(msym.density_fit().newton(), 2, 2), df._DFCASSCF))
+        self.assertTrue(isinstance(mcscf.CASCI(msym.density_fit().newton(), 2, 2), df._DFCASCI))
         self.assertTrue(isinstance(mcscf.CASCI(msym.newton().density_fit(), 2, 2), mcscf.casci_symm.CASCI))
-        self.assertTrue(isinstance(mcscf.CASCI(msym.density_fit().newton().density_fit(), 2, 2), df._DFCASSCF))
+        self.assertTrue(isinstance(mcscf.CASCI(msym.density_fit().newton().density_fit(), 2, 2), df._DFCASCI))
 
         self.assertTrue(isinstance(mcscf.CASSCF(msym, 2, 2), mcscf.mc1step_symm.CASSCF))
         self.assertTrue(isinstance(mcscf.CASSCF(msym.density_fit(), 2, 2), df._DFCASSCF))
@@ -242,4 +244,3 @@ class KnownValues(unittest.TestCase):
 if __name__ == "__main__":
     print("Full Tests for density fitting N2")
     unittest.main()
-

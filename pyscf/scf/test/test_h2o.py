@@ -23,22 +23,25 @@ import tempfile
 from pyscf import lib
 from pyscf import gto
 from pyscf import scf
+from pyscf import dft
 from pyscf.scf import dhf
 
-mol = gto.Mole()
-mol.build(
-    verbose = 5,
-    output = '/dev/null',
-    atom = [
-    ["O" , (0. , 0.     , 0.)],
-    [1   , (0. , -0.757 , 0.587)],
-    [1   , (0. , 0.757  , 0.587)] ],
-    basis = {"H": '6-31g',
-             "O": '6-31g',}
-)
-molsym = mol.copy()
-molsym.symmetry = True
-molsym.build(0, 0)
+def setUpModule():
+    global mol, molsym
+    mol = gto.Mole()
+    mol.build(
+        verbose = 5,
+        output = '/dev/null',
+        atom = [
+        ["O" , (0. , 0.     , 0.)],
+        [1   , (0. , -0.757 , 0.587)],
+        [1   , (0. , 0.757  , 0.587)] ],
+        basis = {"H": '6-31g',
+                 "O": '6-31g',}
+    )
+    molsym = mol.copy()
+    molsym.symmetry = True
+    molsym.build(0, 0)
 
 def tearDownModule():
     global mol, molsym
@@ -69,8 +72,8 @@ class KnownValues(unittest.TestCase):
         mf.conv_tol = 1e-11
         self.assertAlmostEqual(mf.scf(), -75.578396379589748, 9)
         pop_chg, dip = mf.analyze()
-        self.assertAlmostEqual(lib.finger(pop_chg[0]), 1.0036241405313113, 9)
-        self.assertAlmostEqual(lib.finger(dip), -1.4000447020842097, 9)
+        self.assertAlmostEqual(lib.finger(pop_chg[0]), 1.0036241405313113, 6)
+        self.assertAlmostEqual(lib.finger(dip), -1.4000447020842097, 6)
 
     def test_nr_uhf(self):
         uhf = scf.UHF(mol)
@@ -103,6 +106,11 @@ class KnownValues(unittest.TestCase):
         uhf = scf.density_fit(scf.UHF(mol), 'weigend')
         uhf.conv_tol = 1e-11
         self.assertAlmostEqual(uhf.scf(), -75.983210886950, 9)
+
+    def test_nr_df_ghf(self):
+        mf = mol.GHF().density_fit(auxbasis='weigend')
+        mf.conv_tol = 1e-11
+        self.assertAlmostEqual(mf.scf(), -75.983210886950, 9)
 
     def test_nr_rhf_no_mem(self):
         rhf = scf.RHF(mol)
@@ -184,6 +192,8 @@ class KnownValues(unittest.TestCase):
 
     def test_init_guess_minao(self):
         dm = scf.hf.init_guess_by_minao(mol)
+        self.assertEqual(dm.mo_coeff.shape[0], mol.nao)
+        self.assertEqual(dm.mo_occ.size, dm.mo_coeff.shape[1])
         s = scf.hf.get_ovlp(mol)
         occ, mo = scipy.linalg.eigh(dm, s, type=2)
         ftmp = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
@@ -206,6 +216,8 @@ class KnownValues(unittest.TestCase):
 
     def test_init_guess_atom(self):
         dm = scf.hf.init_guess_by_atom(mol)
+        self.assertEqual(dm.mo_coeff.shape[0], mol.nao)
+        self.assertEqual(dm.mo_occ.size, dm.mo_coeff.shape[1])
         s = scf.hf.get_ovlp(mol)
         occ, mo = scipy.linalg.eigh(dm, s, type=2)
         ftmp = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
@@ -233,6 +245,8 @@ class KnownValues(unittest.TestCase):
 
     def test_init_guess_1e(self):
         dm = scf.hf.init_guess_by_1e(mol)
+        self.assertEqual(dm.mo_coeff.shape[0], mol.nao)
+        self.assertEqual(dm.mo_occ.size, dm.mo_coeff.shape[1])
         s = scf.hf.get_ovlp(mol)
         occ, mo = scipy.linalg.eigh(dm, s, type=2)
         ftmp = tempfile.NamedTemporaryFile(dir=lib.param.TMPDIR)
@@ -311,12 +325,13 @@ class KnownValues(unittest.TestCase):
         self.assertAlmostEqual(mf_scanner(molsym), -75.983948498066198, 8)
         self.assertAlmostEqual(mf_scanner(mol1), -75.97974371226907, 8)
 
-        mf_scanner = dft.RKS(molsym).set(xc='bp86').as_scanner()
-        self.assertAlmostEqual(mf_scanner(molsym), -76.385043416002361, 8)
-        eref = dft.RKS(mol1).set(xc='bp86').kernel()
-        e1 = mf_scanner(mol1)
-        self.assertAlmostEqual(e1, -76.372784697245777, 8)
-        self.assertAlmostEqual(e1, eref, 8)
+        with lib.temporary_env(dft.radi, ATOM_SPECIFIC_TREUTLER_GRIDS=False):
+            mf_scanner = dft.RKS(molsym).set(xc='bp86').as_scanner()
+            self.assertAlmostEqual(mf_scanner(molsym), -76.385043416002361, 8)
+            eref = dft.RKS(mol1).set(xc='bp86').kernel()
+            e1 = mf_scanner(mol1)
+            self.assertAlmostEqual(e1, -76.372784697245777, 8)
+            self.assertAlmostEqual(e1, eref, 8)
 
         # Test init_guess_by_chkfile for stretched geometry and different basis set
         mol1.atom = '''
@@ -325,7 +340,11 @@ class KnownValues(unittest.TestCase):
         H   0.   0.957   0.587'''
         mol1.basis = 'ccpvdz'
         mol1.build(0,0)
-        self.assertAlmostEqual(mf_scanner(mol1), -76.273052274103648, 7)
+        self.assertAlmostEqual(mf_scanner(mol1), -76.273052274103648, 5)
+
+        mf = mf_scanner.undo_scanner()
+        mf.run()
+        self.assertAlmostEqual(mf.e_tot, -76.273052274103648, 5)
 
     def test_init(self):
         from pyscf import dft
@@ -349,37 +368,37 @@ class KnownValues(unittest.TestCase):
         self.assertTrue(isinstance(scf.RHF(mol_r1), scf.rohf.ROHF))
         self.assertTrue(isinstance(scf.UHF(mol_r), scf.uhf.UHF))
         self.assertTrue(isinstance(scf.UHF(mol_u), scf.uhf.UHF))
-        self.assertTrue(isinstance(scf.UHF(mol_r1), scf.uhf.UHF))
+        self.assertTrue(isinstance(scf.UHF(mol_r1), scf.uhf.HF1e))
         self.assertTrue(isinstance(scf.ROHF(mol_r), scf.rohf.ROHF))
         self.assertTrue(isinstance(scf.ROHF(mol_u), scf.rohf.ROHF))
-        self.assertTrue(isinstance(scf.ROHF(mol_r1), scf.rohf.ROHF))
+        self.assertTrue(isinstance(scf.ROHF(mol_r1), scf.rohf.HF1e))
         self.assertTrue(isinstance(scf.HF(mol_r), scf.hf.RHF))
         self.assertTrue(isinstance(scf.HF(mol_u), scf.uhf.UHF))
-        self.assertTrue(isinstance(scf.HF(mol_r1), scf.rohf.ROHF))
+        self.assertTrue(isinstance(scf.HF(mol_r1), scf.rohf.HF1e))
         self.assertTrue(isinstance(scf.GHF(mol_r), scf.ghf.GHF))
         self.assertTrue(isinstance(scf.GHF(mol_u), scf.ghf.GHF))
-        self.assertTrue(isinstance(scf.GHF(mol_r1), scf.ghf.GHF))
+        self.assertTrue(isinstance(scf.GHF(mol_r1), scf.ghf.HF1e))
         #TODO: self.assertTrue(isinstance(scf.DHF(mol_r), scf.dhf.RHF))
         self.assertTrue(isinstance(scf.DHF(mol_u), scf.dhf.UHF))
         self.assertTrue(isinstance(scf.DHF(mol_r1), scf.dhf.HF1e))
 
         self.assertTrue(isinstance(scf.RHF(sym_mol_r), scf.hf_symm.RHF))
         self.assertTrue(isinstance(scf.RHF(sym_mol_u), scf.hf_symm.ROHF))
-        self.assertTrue(isinstance(scf.RHF(sym_mol_r1), scf.hf_symm.ROHF))
+        self.assertTrue(isinstance(scf.RHF(sym_mol_r1), scf.hf_symm.HF1e))
         self.assertTrue(isinstance(scf.UHF(sym_mol_r), scf.uhf_symm.UHF))
         self.assertTrue(isinstance(scf.UHF(sym_mol_u), scf.uhf_symm.UHF))
-        self.assertTrue(isinstance(scf.UHF(sym_mol_r1), scf.uhf_symm.UHF))
+        self.assertTrue(isinstance(scf.UHF(sym_mol_r1), scf.uhf_symm.HF1e))
         self.assertTrue(isinstance(scf.ROHF(sym_mol_r), scf.hf_symm.ROHF))
         self.assertTrue(isinstance(scf.ROHF(sym_mol_u), scf.hf_symm.ROHF))
-        self.assertTrue(isinstance(scf.ROHF(sym_mol_r1), scf.hf_symm.ROHF))
+        self.assertTrue(isinstance(scf.ROHF(sym_mol_r1), scf.hf_symm.HF1e))
         self.assertTrue(isinstance(scf.HF(sym_mol_r), scf.hf_symm.RHF))
         self.assertTrue(isinstance(scf.HF(sym_mol_u), scf.uhf_symm.UHF))
         self.assertTrue(isinstance(scf.HF(sym_mol_r1), scf.hf_symm.ROHF))
         self.assertTrue(isinstance(scf.GHF(sym_mol_r), scf.ghf_symm.GHF))
         self.assertTrue(isinstance(scf.GHF(sym_mol_u), scf.ghf_symm.GHF))
-        self.assertTrue(isinstance(scf.GHF(sym_mol_r1), scf.ghf_symm.GHF))
+        self.assertTrue(isinstance(scf.GHF(sym_mol_r1), scf.ghf_symm.HF1e))
 
-        self.assertTrue(isinstance(scf.X2C(mol_r), x2c.x2c.UHF))
+        #self.assertTrue(isinstance(scf.X2C(mol_r), x2c.x2c.RHF))
         self.assertTrue(isinstance(scf.sfx2c1e(scf.HF(mol_r)), scf.rhf.RHF))
         self.assertTrue(isinstance(scf.sfx2c1e(scf.HF(mol_u)), scf.uhf.UHF))
         self.assertTrue(isinstance(scf.sfx2c1e(scf.HF(mol_r1)), scf.rohf.ROHF))

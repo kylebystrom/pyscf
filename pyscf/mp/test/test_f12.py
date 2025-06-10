@@ -22,16 +22,18 @@ from pyscf import scf
 from pyscf.mp import mp2f12_slow as mp2f12
 from pyscf import mp
 
-mol = gto.Mole()
-mol.verbose = 0
-mol.output = None
-mol.atom = [
-    [8 , (0. , 0.     , 0.)],
-    [1 , (0. , -0.757 , 0.587)],
-    [1 , (0. , 0.757  , 0.587)]]
+def setUpModule():
+    global mol
+    mol = gto.Mole()
+    mol.verbose = 0
+    mol.output = None
+    mol.atom = [
+        [8 , (0. , 0.     , 0.)],
+        [1 , (0. , -0.757 , 0.587)],
+        [1 , (0. , 0.757  , 0.587)]]
 
-mol.basis = 'ccpvdz'
-mol.build()
+    mol.basis = 'ccpvdz'
+    mol.build()
 
 def tearDownModule():
     global mol
@@ -66,4 +68,3 @@ class KnowValues(unittest.TestCase):
 if __name__ == "__main__":
     print("Full Tests for mp2-f12")
     unittest.main()
-

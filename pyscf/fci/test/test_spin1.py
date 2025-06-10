@@ -22,42 +22,45 @@ from pyscf import ao2mo
 from pyscf import fci
 from pyscf.fci import fci_slow
 
-mol = gto.Mole()
-mol.verbose = 0
-mol.output = None#"out_h2o"
-mol.atom = [
-    ['H', ( 1.,-1.    , 0.   )],
-    ['H', ( 0.,-1.    ,-1.   )],
-    ['H', ( 0.,-0.5   ,-0.   )],
-    ['H', ( 0.,-0.    ,-1.   )],
-    ['H', ( 1.,-0.5   , 0.   )],
-    ['H', ( 0., 1.    , 1.   )],
-]
+def setUpModule():
+    global mol, m, h1e, g2e, ci0, ci1, ci2, ci3
+    global norb, nelec, neleci
+    mol = gto.Mole()
+    mol.verbose = 0
+    mol.output = None#"out_h2o"
+    mol.atom = [
+        ['H', ( 1.,-1.    , 0.   )],
+        ['H', ( 0.,-1.    ,-1.   )],
+        ['H', ( 0.,-0.5   ,-0.   )],
+        ['H', ( 0.,-0.    ,-1.   )],
+        ['H', ( 1.,-0.5   , 0.   )],
+        ['H', ( 0., 1.    , 1.   )],
+    ]
 
-mol.basis = {'H': 'sto-3g'}
-mol.build()
+    mol.basis = {'H': 'sto-3g'}
+    mol.build()
 
-m = scf.RHF(mol)
-m.conv_tol = 1e-15
-ehf = m.scf()
+    m = scf.RHF(mol)
+    m.conv_tol = 1e-15
+    ehf = m.scf()
 
-norb = m.mo_coeff.shape[1]
-nelec = (mol.nelectron//2, mol.nelectron//2)
-h1e = reduce(numpy.dot, (m.mo_coeff.T, m.get_hcore(), m.mo_coeff))
-g2e = ao2mo.incore.general(m._eri, (m.mo_coeff,)*4, compact=False)
-na = fci.cistring.num_strings(norb, nelec[0])
-nb = fci.cistring.num_strings(norb, nelec[1])
-numpy.random.seed(15)
-ci0 = numpy.random.random((na,nb))
-ci0 = (ci0 + ci0.T) * .5
-ci1 = numpy.random.random((na,nb))
+    norb = m.mo_coeff.shape[1]
+    nelec = (mol.nelectron//2, mol.nelectron//2)
+    h1e = reduce(numpy.dot, (m.mo_coeff.T, m.get_hcore(), m.mo_coeff))
+    g2e = ao2mo.incore.general(m._eri, (m.mo_coeff,)*4, compact=False)
+    na = fci.cistring.num_strings(norb, nelec[0])
+    nb = fci.cistring.num_strings(norb, nelec[1])
+    numpy.random.seed(15)
+    ci0 = numpy.random.random((na,nb))
+    ci0 = (ci0 + ci0.T) * .5
+    ci1 = numpy.random.random((na,nb))
 
-neleci = (mol.nelectron//2, mol.nelectron//2-1)
-na = fci.cistring.num_strings(norb, neleci[0])
-nb = fci.cistring.num_strings(norb, neleci[1])
-numpy.random.seed(15)
-ci2 = numpy.random.random((na,nb))
-ci3 = numpy.random.random((na,nb))
+    neleci = (mol.nelectron//2, mol.nelectron//2-1)
+    na = fci.cistring.num_strings(norb, neleci[0])
+    nb = fci.cistring.num_strings(norb, neleci[1])
+    numpy.random.seed(15)
+    ci2 = numpy.random.random((na,nb))
+    ci3 = numpy.random.random((na,nb))
 
 def tearDownModule():
     global mol, m, h1e, g2e, ci0, ci1, ci2, ci3
@@ -195,8 +198,18 @@ class KnownValues(unittest.TestCase):
         h = fci.direct_spin1.pspace(h1e, g2e, norb, nelec)[1]
         self.assertAlmostEqual(abs(h-h.T).max(), 0, 12)
 
+    def test_many_roots(self):
+        norb = 4
+        nelec = (2, 2)
+        nroots = 36
+        h1 = numpy.eye(norb) * -.5
+        h2 = numpy.zeros((norb, norb, norb, norb))
+        for i in range(norb):
+            h2[i,i,i,i] = .1
+        e, fcivec = fci.direct_spin1.kernel(h1, h2, norb, nelec, nroots=nroots, davidson_only=True)
+        self.assertAlmostEqual(e[0], -2, 9)
+
 
 if __name__ == "__main__":
     print("Full Tests for spin1")
     unittest.main()
-
