@@ -1593,10 +1593,11 @@ if __name__ == "__main__":
         ke_cutoff=50,
         pseudo="gth-pade",
     )
+    cell.mesh = [13, 13, 13]
     cell.build()
     cell.verbose = 6
 
-    kmesh = [2,1,1]
+    kmesh = [2, 1, 1]
     kpts = cell.make_kpts(kmesh)
 
     mf = PWKRHF(cell, kpts)
