@@ -34,7 +34,7 @@ def dump_moe(mf, moe_ks, mocc_ks, nband=None, trigger_level=logger.DEBUG):
     if isinstance(nband, int): nband = [nband,nband]
     for s in [0,1]:
         khf.dump_moe(mf, moe_ks[s], mocc_ks[s],
-                      nband=nband[s], trigger_level=trigger_level)
+                     nband=nband[s], trigger_level=trigger_level)
 
 
 def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
@@ -81,11 +81,11 @@ def get_mo_occ(cell, moe_ks=None, C_ks=None):
 def get_init_guess(cell0, kpts, basis=None, pseudo=None, nvir=0,
                    key="hcore", out=None):
     """
-        Args:
-            nvir (int):
-                Number of virtual bands to be evaluated. Default is zero.
-            out (h5py group):
-                If provided, the orbitals are written to it.
+    Args:
+        nvir (int):
+            Number of virtual bands to be evaluated. Default is zero.
+        out (h5py group):
+            If provided, the orbitals are written to it.
     """
 
     log = logger.Logger(cell0.stdout, cell0.verbose)
@@ -267,7 +267,7 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
     e_ks = np.zeros(nkpts)
     if moe_ks is None:
         if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks)
-        e_comp = np.zeros(5)
+        e_comp = 0  # np.zeros(5)
         for s in [0,1]:
             C_ks_s = get_spin_component(C_ks, s)
             for k in range(nkpts):
@@ -284,7 +284,7 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
 
         if exxdiv == "ewald":
             e_comp[mf.scf_summary["e_comp_name_lst"].index("ex")] += \
-                                                        mf._etot_shift_ewald
+                                                        mf.etot_shift_ewald
 
         for comp,e in zip(mf.scf_summary["e_comp_name_lst"],e_comp):
             mf.scf_summary[comp] = e
@@ -305,7 +305,7 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
     if moe_ks is None and exxdiv == "ewald":
         # Note: ewald correction is not needed if e_tot is computed from moe_ks
         # since the correction is already in the mo energy
-        e_scf += mf._etot_shift_ewald
+        e_scf += mf.etot_shift_ewald
 
     return e_scf
 
@@ -429,6 +429,7 @@ if __name__ == "__main__":
         pseudo="gth-pade",
         spin=2,
     )
+    cell.mesh = [25, 25, 25]
     cell.build()
     cell.verbose = 6
 

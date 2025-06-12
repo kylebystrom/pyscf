@@ -462,8 +462,8 @@ class SimpleMixing(_Mixing):
         for kw in ["vxc_R", "vtau_R"]:
             if kw in kwargs and kwargs[kw] is not None:
                 kwargs[kw] = self._next_step(
-                    mf, kwargs[kw], kwargs[kw] - kwargslast[kw]
-                )
+                    mf, kwargs[kw].ravel(), (kwargs[kw] - kwargslast[kw]).ravel()
+                ).reshape(kwargs[kw].shape)
         return self._tag(self._next_step(mf, f, ferr), kwargs)
 
 from pyscf.lib.diis import DIIS
