@@ -31,16 +31,16 @@ def apply_j_kpt(C_k, mesh, vj_R, C_k_R=None):
     return tools.fft(C_k_R * vj_R, mesh)
 
 
-def apply_j(C_ks, mesh, vj_R, C_ks_R=None, out=None):
-    nkpts = len(C_ks)
-    if out is None: out = [None] * nkpts
-    for k in range(nkpts):
-        C_k = get_kcomp(C_ks, k)
-        C_k_R = None if C_ks_R is None else get_kcomp(C_ks_R, k)
-        Cbar_k = apply_j_kpt(C_k, mesh, vj_R, C_k_R=C_k_R)
-        set_kcomp(Cbar_k, out, k)
-
-    return out
+# def apply_j(C_ks, mesh, vj_R, C_ks_R=None, out=None):
+#     nkpts = len(C_ks)
+#     if out is None: out = [None] * nkpts
+#     for k in range(nkpts):
+#         C_k = get_kcomp(C_ks, k)
+#         C_k_R = None if C_ks_R is None else get_kcomp(C_ks_R, k)
+#         Cbar_k = apply_j_kpt(C_k, mesh, vj_R, C_k_R=C_k_R)
+#         set_kcomp(Cbar_k, out, k)
+#
+#     return out
 
 
 def apply_k_kpt(cell, C_k, kpt1, C_ks, mocc_ks, kpts, mesh, Gv,
@@ -389,10 +389,12 @@ class PWJK:
         if vj_R is None: vj_R = self.vj_R
         return apply_j_kpt(C_k, mesh, vj_R, C_k_R=None)
 
-    def apply_j(self, C_ks, mesh=None, vj_R=None, C_ks_R=None, out=None):
-        if mesh is None: mesh = self.mesh
-        if vj_R is None: vj_R = self.vj_R
-        return apply_j(C_ks, mesh, vj_R, C_ks_R=out, out=out)
+    # NOTE seems this was never used, and since we are adding MGGA term
+    # to apply_j_kpt we should remove this to avoid accidentally calling it.
+    # def apply_j(self, C_ks, mesh=None, vj_R=None, C_ks_R=None, out=None):
+    #     if mesh is None: mesh = self.mesh
+    #     if vj_R is None: vj_R = self.vj_R
+    #     return apply_j(C_ks, mesh, vj_R, C_ks_R=out, out=out)
 
     def apply_k_kpt(self, C_k, kpt, mesh=None, Gv=None, exxdiv=None, comp=None):
         if comp is None:

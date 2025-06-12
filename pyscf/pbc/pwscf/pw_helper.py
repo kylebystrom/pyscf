@@ -9,6 +9,7 @@ import numpy as np
 import scipy.linalg
 
 from pyscf.pbc import tools, df
+from pyscf.pbc.dft import rks
 from pyscf.pbc.lib.kpts_helper import gamma_point
 from pyscf import lib
 from pyscf.lib import logger
@@ -410,25 +411,70 @@ def apply_kin_kpt(C_k, kpt, mesh, Gv):
 
 """ Charge mixing methods
 """
-class SimpleMixing:
-    def __init__(self, mf, beta=0.3):
-        self.beta = beta
+class _Mixing:
+    def __init__(self, mf):
         self.cycle = 0
+        if isinstance(mf, rks.KohnShamDFT):
+            self._ks = True
+        else:
+            self._ks = False
 
-    def next_step(self, mf, f, ferr):
+    def _extract_kwargs(self, f):
+        if self._ks:
+            return {
+                "exc": f.exc,
+                "vxcdot": f.vxcdot,
+                "vxc_R": f.vxc_R,
+                "vtau_R": f.vtau_R,
+            }
+        else:
+            return {}
+
+    def _tag(self, f, kwargs):
+        if self._ks:
+            return lib.tag_array(f, **kwargs)
+        else:
+            return f
+
+    def _next_step(self, mf, f, ferr):
+        raise NotImplementedError
+
+    def next_step(self, mf, f, flast):
+        ferr = f - flast
+        kwargs = self._extract_kwargs(f)
+        return self._tag(self._next_step(mf, f, ferr), kwargs)
+
+
+class SimpleMixing(_Mixing):
+    def __init__(self, mf, beta=0.3):
+        super().__init__(mf)
+        self.beta = beta
+
+    def _next_step(self, mf, f, ferr):
         self.cycle += 1
 
         return f - ferr * self.beta
 
+    def next_step(self, mf, f, flast):
+        ferr = f - flast
+        kwargs = self._extract_kwargs(f)
+        kwargslast = self._extract_kwargs(flast)
+        for kw in ["vxc_R", "vtau_R"]:
+            if kw in kwargs and kwargs[kw] is not None:
+                kwargs[kw] = self._next_step(
+                    mf, kwargs[kw], kwargs[kw] - kwargslast[kw]
+                )
+        return self._tag(self._next_step(mf, f, ferr), kwargs)
+
 from pyscf.lib.diis import DIIS
-class AndersonMixing:
+class AndersonMixing(_Mixing):
     def __init__(self, mf, ndiis=10, diis_start=1):
+        super().__init__(mf)
         self.diis = DIIS()
         self.diis.space = ndiis
         self.diis.min_space = diis_start
-        self.cycle = 0
 
-    def next_step(self, mf, f, ferr):
+    def _next_step(self, mf, f, ferr):
         self.cycle += 1
 
         return self.diis.update(f, ferr)

@@ -451,7 +451,8 @@ def kernel_charge(mf, C_ks, mocc_ks, kpts, nband, mesh=None, Gv=None,
             # update coulomb potential
             last_vj_R = vj_R
             vj_R = mf.get_vj_R(C_ks, mocc_ks)
-            vj_R = chgmixer.next_step(mf, vj_R, vj_R-last_vj_R)
+            # vj_R = chgmixer.next_step(mf, vj_R, vj_R-last_vj_R)
+            vj_R = chgmixer.next_step(mf, vj_R, last_vj_R)
 
         conv_ks, moe_ks, C_ks, fc_ks = mf.converge_band(
                             C_ks, mocc_ks, kpts,
@@ -911,8 +912,8 @@ def apply_hcore_kpt(mf, C_k, kpt, mesh, Gv, with_pp, C_k_R=None, comp=None,
         return Cbar_k
 
 
-def apply_jk_kpt(mf, C_k, kpt, mocc_ks, kpts, mesh, Gv, vj_R, with_jk,
-                 exxdiv, C_k_R=None, comp=None, ret_E=False):
+def apply_veff_kpt(mf, C_k, kpt, mocc_ks, kpts, mesh, Gv, vj_R, with_jk,
+                   exxdiv, C_k_R=None, comp=None, ret_E=False):
     r""" Apply non-local part of the Fock opeartor to orbitals at given
     k-point. The non-local part includes the exact exchange.
     """
@@ -922,7 +923,7 @@ def apply_jk_kpt(mf, C_k, kpt, mocc_ks, kpts, mesh, Gv, vj_R, with_jk,
     es = np.zeros(2, dtype=np.complex128)
 
     tick = np.asarray([logger.process_clock(), logger.perf_counter()])
-    tmp = with_jk.apply_j_kpt(C_k, mesh=mesh, vj_R=vj_R, C_k_R=C_k_R)
+    tmp = with_jk.apply_j_kpt(C_k, mesh, vj_R, C_k_R=C_k_R)
     Cbar_k = tmp * 2.
     es[0] = np.einsum("ig,ig->", C_k.conj(), tmp) * 2.
     tock = np.asarray([logger.process_clock(), logger.perf_counter()])
@@ -966,8 +967,8 @@ def apply_Fock_kpt(mf, C_k, kpt, mocc_ks, mesh, Gv, vj_R, exxdiv,
     res_1e = mf.apply_hcore_kpt(C_k, kpt, mesh, Gv, with_pp, comp=comp,
                                 C_k_R=C_k_R, ret_E=ret_E)
 # 2e part
-    res_2e = mf.apply_jk_kpt(C_k, kpt, mocc_ks, kpts, mesh, Gv, vj_R, with_jk,
-                             exxdiv, C_k_R=C_k_R, comp=comp, ret_E=ret_E)
+    res_2e = mf.apply_veff_kpt(C_k, kpt, mocc_ks, kpts, mesh, Gv, vj_R, with_jk,
+                               exxdiv, C_k_R=C_k_R, comp=comp, ret_E=ret_E)
     C_k_R = None
 
     if ret_E:
@@ -1016,7 +1017,7 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
                                    exxdiv, comp=comp, ret_E=False)
         moe_k = np.einsum("ig,ig->i", C_k.conj(), Cbar_k)
         C_k = Cbar_k = None
-        if (moe_k.imag > 1e-6).any():
+        if (np.abs(moe_k.imag) > 1e-6).any():
             log.warn("MO energies have imaginary part %s for kpt %d", moe_k, k)
         moe_ks[k] = moe_k.real
 
@@ -1048,7 +1049,7 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
     e_ks = np.zeros(nkpts)
     if moe_ks is None:
         if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks)
-        e_comp = np.zeros(5)
+        e_comp = 0  # np.zeros(5)
         for k in range(nkpts):
             kpt = kpts[k]
             occ = np.where(mocc_ks[k] > THR_OCC)[0]
@@ -1061,9 +1062,9 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
 
         if exxdiv == "ewald":
             e_comp[mf.scf_summary["e_comp_name_lst"].index("ex")] += \
-                                                        mf._etot_shift_ewald
+                                                        mf.etot_shift_ewald
 
-        for comp,e in zip(mf.scf_summary["e_comp_name_lst"],e_comp):
+        for comp,e in zip(mf.scf_summary["e_comp_name_lst"], e_comp):
             mf.scf_summary[comp] = e
     else:
         for k in range(nkpts):
@@ -1078,7 +1079,7 @@ def energy_elec(mf, C_ks, mocc_ks, mesh=None, Gv=None, moe_ks=None,
     if moe_ks is None and exxdiv == "ewald":
         # Note: ewald correction is not needed if e_tot is computed from
         # moe_ks since the correction is already in the mo energy
-        e_scf += mf._etot_shift_ewald
+        e_scf += mf.etot_shift_ewald
 
     return e_scf
 
@@ -1330,8 +1331,7 @@ class PWKRHF(pbc_hf.KSCF):
         self.kpts = kpts
         self.exxdiv = exxdiv
         if self.exxdiv == "ewald":
-            self._madelung = tools.pbc.madelung(self.cell, self.kpts)
-            self._etot_shift_ewald = -0.5*self._madelung*cell.nelectron
+            self._set_madelung()
         self.scf_summary["nuc"] = self.cell.energy_nuc()
         self.scf_summary["e_comp_name_lst"] = ["kin", "ppl", "ppnl", "coul", "ex"]
 
@@ -1344,6 +1344,10 @@ class PWKRHF(pbc_hf.KSCF):
 
         self._keys = self._keys.union(['cell', 'exxdiv'])
 
+    def _set_madelung(self):
+        self._madelung = tools.pbc.madelung(self.cell, self.kpts)
+        self._etot_shift_ewald = -0.5*self._madelung*self.cell.nelectron
+
     @property
     def kpts(self):
         return self._kpts
@@ -1351,8 +1355,14 @@ class PWKRHF(pbc_hf.KSCF):
     def kpts(self, x):
         self._kpts = np.reshape(x, (-1,3))
         # update madelung constant and energy shift for exxdiv
-        self._madelung = tools.pbc.madelung(self.cell, self.kpts)
-        self._etot_shift_ewald = -0.5*self._madelung*self.cell.nelectron
+        self._set_madelung()
+
+    @property
+    def etot_shift_ewald(self):
+        return self._etot_shift_ewald
+    @etot_shift_ewald.setter
+    def etot_shift_ewald(self, x):
+        raise RuntimeError("Cannot set etot_shift_ewald directly")
 
     def dump_flags(self):
 
@@ -1406,7 +1416,8 @@ class PWKRHF(pbc_hf.KSCF):
         write('Local PP Energy =                 %24.15f', 'ppl')
         write('Non-local PP Energy =             %24.15f', 'ppnl')
         write('Two-electron Coulomb Energy =     %24.15f', 'coul')
-        write('Two-electron Exchjange Energy =   %24.15f', 'ex')
+        write('Two-electron Exchange Energy =    %24.15f', 'ex')
+        write('Semilocal XC Energy =             %24.15f', 'xc')
         write('Empirical Dispersion Energy =     %24.15f', 'dispersion')
         write('PCM Polarization Energy =         %24.15f', 'epcm')
         write('EFP Energy =                      %24.15f', 'efp')
@@ -1574,7 +1585,7 @@ class PWKRHF(pbc_hf.KSCF):
     eig_subspace = eig_subspace
     get_mo_energy = get_mo_energy
     apply_hcore_kpt = apply_hcore_kpt
-    apply_jk_kpt = apply_jk_kpt
+    apply_veff_kpt = apply_veff_kpt
     apply_Fock_kpt = apply_Fock_kpt
     energy_elec = energy_elec
     energy_tot = energy_tot
@@ -1596,11 +1607,14 @@ if __name__ == "__main__":
     cell.mesh = [13, 13, 13]
     cell.build()
     cell.verbose = 6
+    print(cell.nelectron)
 
     kmesh = [2, 1, 1]
     kpts = cell.make_kpts(kmesh)
 
     mf = PWKRHF(cell, kpts)
+    mf.damp_type = "simple"
+    mf.damp_factor = 0.7
     mf.nvir = 4 # converge first 4 virtual bands
     mf.kernel()
     mf.dump_scf_summary()
