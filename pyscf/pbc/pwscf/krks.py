@@ -227,7 +227,6 @@ class PWKohnShamDFT(rks.KohnShamDFT):
     def get_vj_R(self, C_ks, mocc_ks, mesh=None, Gv=None):
         # Override get_vj_R to include XC potential
         cell = self.cell
-        nkpts = len(C_ks)
         if mesh is None: mesh = cell.mesh
         if Gv is None: Gv = cell.get_Gv(mesh)
         ng = np.prod(mesh)
@@ -238,13 +237,14 @@ class PWKohnShamDFT(rks.KohnShamDFT):
             # non-spin-polarized
             spinfac = 2
             rho_R = rhovec_R[0]
+            nkpts = len(C_ks)
         else:
             # spin-polarized
-            spinfac = 2
+            spinfac = 1
             rho_R = rhovec_R[:, 0].mean(0)
+            nkpts = len(C_ks[0])
         vj_R = self.with_jk.get_vj_R_from_rho_R(rho_R, mesh=mesh, Gv=Gv)
-        for rho_R in rhovec_R:
-            rho_R[:] *= (spinfac / nkpts) * ng / dv
+        rhovec_R[:] *= (spinfac / nkpts) * ng / dv
         exc, vxcdot, vxc_R, vtau_R = self.eval_xc(
             self.xc, rhovec_R, xctype, mesh=mesh, Gv=Gv
         )

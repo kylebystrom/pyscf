@@ -1034,7 +1034,7 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
         return moe_ks
 
     mocc_ks = get_mo_occ(cell, moe_ks=moe_ks)
-    if mf.exxdiv == "ewald":
+    if mf.exxdiv == "ewald" and comp is None:
         moe_ks = ewald_correction(moe_ks, mocc_ks, mf.madelung)
 
     if ret_mocc:

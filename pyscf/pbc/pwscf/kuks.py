@@ -1,4 +1,5 @@
 from pyscf import __config__
+from pyscf import lib
 from pyscf.pbc import gto
 from pyscf.pbc.pwscf import khf, kuhf, krks
 import numpy as np
@@ -22,11 +23,11 @@ class PWKUKS(krks.PWKohnShamDFT, kuhf.PWKUHF):
         return out
 
     def get_mo_energy(self, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
-                      vj_R=None, comp=None, ret_mocc=True):
+                      vj_R=None, ret_mocc=True, full_ham=False):
         if vj_R is None: vj_R = self.get_vj_R(C_ks, mocc_ks)
         res = kuhf.PWKUHF.get_mo_energy(self, C_ks, mocc_ks, mesh=mesh, Gv=Gv,
-                                        exxdiv=exxdiv, vj_R=vj_R, comp=comp,
-                                        ret_mocc=ret_mocc)
+                                        exxdiv=exxdiv, vj_R=vj_R,
+                                        ret_mocc=ret_mocc, full_ham=full_ham)
         if ret_mocc:
             moe_ks = res[0]
         else:

@@ -38,7 +38,12 @@ def dump_moe(mf, moe_ks, mocc_ks, nband=None, trigger_level=logger.DEBUG):
 
 
 def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
-                  vj_R=None, ret_mocc=True):
+                  vj_R=None, ret_mocc=True, full_ham=False):
+    cell = mf.cell
+    if vj_R is None: vj_R = mf.get_vj_R(C_ks, mocc_ks)
+    if mesh is None: mesh = cell.mesh
+    if Gv is None: Gv = cell.get_Gv(mesh)
+    if exxdiv is None: exxdiv = mf.exxdiv
 
     moe_ks = [None] * 2
     for s in [0,1]:
@@ -46,7 +51,10 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
         moe_ks[s] = khf.get_mo_energy(mf, C_ks_s, mocc_ks[s],
                                       mesh=mesh, Gv=Gv, exxdiv="none",
                                       vj_R=vj_R, comp=s,
-                                      ret_mocc=False)
+                                      ret_mocc=False, full_ham=full_ham)
+
+    if full_ham:
+        return moe_ks
 
     # determine mo occ and apply ewald shift if requested
     mocc_ks = mf.get_mo_occ(moe_ks)
@@ -55,8 +63,7 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
         nkpts = len(mf.kpts)
         for s in [0,1]:
             for k in range(nkpts):
-                # TODO is this double-counting? madelung already applied
-                # in the RHF call above?
+                # TODO why does it not work to apply ewald in khf.get_mo_energy
                 moe_ks[s][k][mocc_ks[s][k] > khf.THR_OCC] -= mf.madelung
 
     if ret_mocc:
