@@ -55,7 +55,9 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
         nkpts = len(mf.kpts)
         for s in [0,1]:
             for k in range(nkpts):
-                moe_ks[s][k][mocc_ks[s][k] > khf.THR_OCC] -= mf._madelung
+                # TODO is this double-counting? madelung already applied
+                # in the RHF call above?
+                moe_ks[s][k][mocc_ks[s][k] > khf.THR_OCC] -= mf.madelung
 
     if ret_mocc:
         return moe_ks, mocc_ks
@@ -249,7 +251,8 @@ def eig_subspace(mf, C_ks, mocc_ks, mesh=None, Gv=None, vj_R=None, exxdiv=None,
         nkpts = len(mf.kpts)
         for s in [0,1]:
             for k in range(nkpts):
-                moe_ks[s][k][mocc_ks[s][k] > khf.THR_OCC] -= mf._madelung
+                # TODO double-counting?
+                moe_ks[s][k][mocc_ks[s][k] > khf.THR_OCC] -= mf.madelung
 
     return C_ks, moe_ks, mocc_ks
 

@@ -102,7 +102,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
                             vj_R=vj_R)
     log.info('init E= %.15g', e_tot)
     if mf.exxdiv == "ewald":
-        moe_ks = ewald_correction(moe_ks, mocc_ks, mf._madelung)
+        moe_ks = ewald_correction(moe_ks, mocc_ks, mf.madelung)
     mf.dump_moe(moe_ks, mocc_ks, nband=nband)
 
     scf_conv = False
@@ -154,7 +154,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
             log.warn("  Charge SCF not converged.")
 
         if mf.exxdiv == "ewald":
-            moe_ks = ewald_correction(moe_ks, mocc_ks, mf._madelung)
+            moe_ks = ewald_correction(moe_ks, mocc_ks, mf.madelung)
         de_band = get_band_err(moe_ks, last_hf_moe, nband, joint=True)
         de = e_tot - last_hf_e
 
@@ -210,7 +210,7 @@ def kernel_doubleloop(mf, kpts, C0=None,
         fc_tot += fc_this
 
         if mf.exxdiv == "ewald":
-            moe_ks = ewald_correction(moe_ks, mocc_ks, mf._madelung)
+            moe_ks = ewald_correction(moe_ks, mocc_ks, mf.madelung)
         de_band = get_band_err(moe_ks, last_hf_moe, nband, joint=True)
         de = e_tot - last_hf_e
 
@@ -326,7 +326,7 @@ def get_ace_error(mf, C_ks, moe_ks, mocc_ks, nband=None, comp=None, exxdiv=None,
 
     if isinstance(moe_ks[0][0], float): # RHF
         if exxdiv == "ewald":
-            moe_ks_noewald = ewald_correction(moe_ks, mocc_ks, -mf._madelung)
+            moe_ks_noewald = ewald_correction(moe_ks, mocc_ks, -mf.madelung)
         else:
             moe_ks_noewald = moe_ks
         err_Rs = np.zeros(nkpts)
@@ -857,7 +857,7 @@ def eig_subspace(mf, C_ks, mocc_ks, mesh=None, Gv=None, vj_R=None, exxdiv=None,
 
     mocc_ks = get_mo_occ(cell, moe_ks=moe_ks)
     if mf.exxdiv == "ewald":
-        moe_ks = ewald_correction(moe_ks, mocc_ks, mf._madelung)
+        moe_ks = ewald_correction(moe_ks, mocc_ks, mf.madelung)
 
     return C_ks, moe_ks, mocc_ks
 
@@ -997,7 +997,7 @@ def ewald_correction(moe_ks, mocc_ks, madelung):
 
 
 def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
-                  vj_R=None, comp=None, ret_mocc=True):
+                  vj_R=None, comp=None, ret_mocc=True, full_ham=False):
 
     log = logger.Logger(mf.stdout, mf.verbose)
 
@@ -1015,15 +1015,27 @@ def get_mo_energy(mf, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
         C_k = get_kcomp(C_ks, k)
         Cbar_k = mf.apply_Fock_kpt(C_k, kpt, mocc_ks, mesh, Gv, vj_R,
                                    exxdiv, comp=comp, ret_E=False)
-        moe_k = np.einsum("ig,ig->i", C_k.conj(), Cbar_k)
-        C_k = Cbar_k = None
-        if (np.abs(moe_k.imag) > 1e-6).any():
-            log.warn("MO energies have imaginary part %s for kpt %d", moe_k, k)
-        moe_ks[k] = moe_k.real
+        if full_ham:
+            # moe_k = np.einsum("ig,jg->ij", C_k.conj(), Cbar_k)
+            moe_k = np.dot(C_k.conj(), Cbar_k.T)
+        else:
+            moe_k = np.einsum("ig,ig->i", C_k.conj(), Cbar_k)
+        if full_ham:
+            moe_ks[k] = 0.5 * (moe_k + moe_k.conj().T)
+            set_kcomp(C_k, C_ks, k)
+            C_k = Cbar_k = None
+        else:
+            if (np.abs(moe_k.imag) > 1e-6).any():
+                log.warn("MO energies have imaginary part %s for kpt %d", moe_k, k)
+            moe_ks[k] = moe_k.real
+            C_k = Cbar_k = None
+
+    if full_ham:
+        return moe_ks
 
     mocc_ks = get_mo_occ(cell, moe_ks=moe_ks)
     if mf.exxdiv == "ewald":
-        moe_ks = ewald_correction(moe_ks, mocc_ks, mf._madelung)
+        moe_ks = ewald_correction(moe_ks, mocc_ks, mf.madelung)
 
     if ret_mocc:
         return moe_ks, mocc_ks
@@ -1274,7 +1286,7 @@ def get_cpw_virtual(mf, basis, amin=None, amax=None, thr_lindep=1e-14,
         Cbar = C = None
         moe_ks[k] = e
     if mf.exxdiv == "ewald":
-        moe_ks = ewald_correction(moe_ks, mocc_ks, mf._madelung)
+        moe_ks = ewald_correction(moe_ks, mocc_ks, mf.madelung)
     e_tot = mf.energy_tot(C_ks, mocc_ks, vj_R=vj_R)
     de_tot = e_tot - mf.e_tot
     log.info("SCF energy before %.10f  after CPW %.10f  change %.10f",
@@ -1364,6 +1376,13 @@ class PWKRHF(pbc_hf.KSCF):
     def etot_shift_ewald(self, x):
         raise RuntimeError("Cannot set etot_shift_ewald directly")
 
+    @property
+    def madelung(self):
+        return self._madelung
+    @etot_shift_ewald.setter
+    def madelung(self, x):
+        raise RuntimeError("Cannot set madelung directly")
+
     def dump_flags(self):
 
         log = logger.Logger(self.stdout, self.verbose)
@@ -1396,7 +1415,7 @@ class PWKRHF(pbc_hf.KSCF):
         cell = self.cell
         if ((cell.dimension >= 2 and cell.low_dim_ft_type != 'inf_vacuum') and
             isinstance(self.exxdiv, str) and self.exxdiv.lower() == 'ewald'):
-            madelung = self._madelung
+            madelung = self.madelung
             log.info('    madelung (= occupied orbital energy shift) = %s',
                      madelung)
             log.info('    Total energy shift due to Ewald probe charge'

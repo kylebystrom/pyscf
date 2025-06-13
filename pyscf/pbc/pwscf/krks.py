@@ -55,7 +55,7 @@ def get_rho_for_xc(mf, xctype, C_ks, mocc_ks, mesh=None, Gv=None,
             const = 1j * np.sqrt(0.5)
             for v in range(3):
                 for k, C_k in enumerate(C_ks[s]):
-                    ikgv = const * (kpts[k][v] + Gv[:, v])
+                    ikgv = const * (mf.kpts[k][v] + Gv[:, v])
                     dC_ks[k][:] = ikgv * C_k
                 rhovec_R[s, 4] += mf.with_jk.get_rho_R(
                     dC_ks, mocc_ks[s], mesh=mesh, Gv=Gv
@@ -206,6 +206,17 @@ class PWKohnShamDFT(rks.KohnShamDFT):
             raise NotImplementedError
         return hyb * self._etot_shift_ewald
 
+    @property
+    def madelung(self):
+        ni = self._numint
+        omega, alpha, hyb = ni.rsh_and_hybrid_coeff(
+            self.xc, spin=self.cell.spin
+        )
+        if omega != 0:
+            # TODO range-separated hybrid functionals
+            raise NotImplementedError
+        return hyb * self._madelung
+
     def nuc_grad_method(self):
         raise NotImplementedError
 
@@ -263,11 +274,11 @@ class PWKRKS(PWKohnShamDFT, khf.PWKRHF):
         return out
 
     def get_mo_energy(self, C_ks, mocc_ks, mesh=None, Gv=None, exxdiv=None,
-                      vj_R=None, comp=None, ret_mocc=True):
+                      vj_R=None, comp=None, ret_mocc=True, full_ham=False):
         if vj_R is None: vj_R = self.get_vj_R(C_ks, mocc_ks)
         res = khf.PWKRHF.get_mo_energy(self, C_ks, mocc_ks, mesh=mesh, Gv=Gv,
                                        exxdiv=exxdiv, vj_R=vj_R, comp=comp,
-                                       ret_mocc=ret_mocc)
+                                       ret_mocc=ret_mocc, full_ham=full_ham)
         if ret_mocc:
             moe_ks = res[0]
         else:
