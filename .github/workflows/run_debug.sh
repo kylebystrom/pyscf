@@ -11,6 +11,8 @@ else
     exit 1
 fi
 
+echo "RUNNING GDB DEBUG VERSION"
+
 ./.github/workflows/ci_"$os"/deps_apt.sh
 ./.github/workflows/ci_"$os"/python_deps.sh
 ./.github/workflows/ci_"$os"/build_pyscf.sh

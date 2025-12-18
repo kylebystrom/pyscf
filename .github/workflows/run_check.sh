@@ -11,9 +11,15 @@ echo "dftd3_DFTD3PATH = './pyscf/lib/deps/lib'" >> .pyscf_conf.py
 echo "scf_hf_SCF_mute_chkfile = True" >> .pyscf_conf.py
 echo 'TMPDIR = "./pyscftmpdir"' >> .pyscf_conf.py
 
+echo "GDB TESTS STARTING"
+
 version=$(python -c 'import sys; print("{0}.{1}".format(*sys.version_info[:2]))')
+gdb -batch -ex=r -ex=where --args python pyscf/sgx/test/test_dm_screening.py
+gdb -batch -ex=r -ex=where --args python pyscf/sgx/grad/test/test_rhf.py
+gdb -batch -ex=r -ex=where --args python pyscf/sgx/grad/test/test_uhf.py
+gdb -batch -ex=r -ex=where --args python pyscf/sgx/grad/test/test_rks.py
+gdb -batch -ex=r -ex=where --args python pyscf/sgx/grad/test/test_uks.py
 pytest pyscf/sgx/ -s --import-mode=importlib pyscf
-gdb -batch -ex=r -ex=where --args pytest pyscf/sgx/ -s --import-mode=importlib pyscf
 
 pytest_status=$?
 
