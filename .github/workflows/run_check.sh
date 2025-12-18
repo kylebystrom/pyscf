@@ -19,7 +19,7 @@ gdb -batch -ex=r -ex=where --args python pyscf/sgx/grad/test/test_rhf.py
 gdb -batch -ex=r -ex=where --args python pyscf/sgx/grad/test/test_uhf.py
 gdb -batch -ex=r -ex=where --args python pyscf/sgx/grad/test/test_rks.py
 gdb -batch -ex=r -ex=where --args python pyscf/sgx/grad/test/test_uks.py
-pytest pyscf/sgx/ -s --import-mode=importlib pyscf
+pytest pyscf/sgx/ -s --import-mode=importlib
 
 pytest_status=$?
 

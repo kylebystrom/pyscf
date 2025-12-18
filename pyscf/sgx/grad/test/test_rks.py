@@ -23,6 +23,7 @@ def setUpModule():
         [1   , (0. , 0.757  , 0.587)],
     ])
     mol.basis = '6-31g'
+    mol.max_memory = 2000
     mol.build()
 
 

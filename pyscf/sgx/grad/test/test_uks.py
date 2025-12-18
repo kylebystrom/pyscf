@@ -25,6 +25,7 @@ def setUpModule():
     mol.basis = '6-31g'
     mol.spin = 1
     mol.charge = 1
+    mol.max_memory = 2000
     mol.build()
 
 
