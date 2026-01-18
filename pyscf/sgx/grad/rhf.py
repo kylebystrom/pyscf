@@ -402,6 +402,7 @@ def get_k_grad_only(sgx, dm, hermi=1, direct_scf_tol=1e-13):
 
     aoslices = mol.aoslice_by_atom()
     if sgx.fit_ovlp and include_grid_response:
+        print("OVERLAP FITTING AND GRID RESPONSE")
         if sgx._symm_ovlp_fit:
             proj = 2 * proj - numpy.identity(proj.shape[0])
         else:
@@ -458,6 +459,7 @@ def get_k_grad_only(sgx, dm, hermi=1, direct_scf_tol=1e-13):
                 p0, p1 = aoslices[ia, 2:]
                 dek[ia, x] += lib.einsum("uv,uv->", mat[x, p0 : p1], Cmat[p0 : p1])
     elif include_grid_response:
+        print("INCLUDING GRID RESPONSE")
         for items in scalable_grids_response_cc(grids, blksize):
             # atm_idx is an array shape (ngrids,)
             # coords is an array shape (ngrids, 3)

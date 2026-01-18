@@ -616,6 +616,16 @@ def _get_lko_partition_functions(mol, ia, radii_adjust, atomic_radii):
         coords = numpy.asarray(coords, order='F')
         ngrids = coords.shape[0]
         pbecke = numpy.empty((4,mol.natm,ngrids))
+        print(pbecke.ctypes.data_as(ctypes.c_void_p),
+                     dbecke.ctypes.data_as(ctypes.c_void_p),
+                     coords.ctypes.data_as(ctypes.c_void_p),
+                     atm_coords.ctypes.data_as(ctypes.c_void_p),
+                     p_radii_table,
+                     ctypes.c_int(mol.natm), ctypes.c_int(ngrids),
+                     ialist.ctypes.data_as(ctypes.c_void_p))
+        for arr in [pbecke, dbecke, coords, atm_coords, ialist]:
+            print(arr.shape, arr.dtype, arr.flags.c_contiguous, arr.flags.f_contiguous)
+        print(mol.natm, ngrids, numpy.max(ialist), numpy.min(ialist))
         gen_deriv_fn(pbecke.ctypes.data_as(ctypes.c_void_p),
                      dbecke.ctypes.data_as(ctypes.c_void_p),
                      coords.ctypes.data_as(ctypes.c_void_p),
